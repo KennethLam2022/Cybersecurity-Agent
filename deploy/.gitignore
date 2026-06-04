@@ -1,0 +1,48 @@
+# ============ Python ============
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ============ 运行时生成数据 ============
+agent_data/
+packages/vector_store/
+packages/vector_store_test/
+eval_results/
+packages/eval_results/
+archive/
+MD_Backup/
+
+# ============ 临时测试文件 ============
+_test_*.py
+_verify_*.py
+_check_*.py
+_debug_*.py
+temp_*.py
+verify_*.py
+fix_*.py
+tmp/
+
+# ============ Node / JS 遗留 ============
+node_modules/
+dist/
+.next/
+*.env
+.env.local
+
+# ============ IDE / 系统 ============
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ============ 文档临时 ============
+~$*.docx

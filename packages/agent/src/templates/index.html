@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>网络安全智能Agent</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        .source-score{font-size:10px;color:var(--t2);text-align:right;flex-shrink:0}
+        .rating-bar{display:flex;align-items:center;gap:4px;padding:8px 0 4px;border-top:1px solid var(--b);margin-top:8px}
+        .rating-star{cursor:pointer;width:22px;height:22px;transition:transform .15s,filter .15s;flex-shrink:0}
+        .rating-star:hover{transform:scale(1.2)}
+        .rating-star.active{filter:drop-shadow(0 0 3px rgba(255,170,0,.5))}
+        .rating-label{font-size:11px;color:var(--t2);margin-left:6px;white-space:nowrap}
+        .rating-locked{font-size:11px;color:var(--g);margin-left:6px;font-weight:500}
+        .warning-banner{background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:8px 14px;font-size:12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;color:#664d03}
+        .warning-banner .close{cursor:pointer;font-size:16px;opacity:.6;border:none;background:none;color:#664d03;padding:0 4px}
+        .warning-banner .close:hover{opacity:1}
+        .warning-annotation{font-size:11px;color:#999;margin-top:6px;padding-top:6px;border-top:1px dashed #eee;display:flex;align-items:center;gap:4px}
+        .warning-annotation::before{content:"⚠️";font-size:10px}
+        .conv-item{display:flex;flex-direction:column;gap:2px}
+        .conv-item-row{display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0}
+        .conv-item-actions{display:flex;gap:2px;opacity:0;transition:opacity .15s}
+        .conv-item:hover .conv-item-actions{opacity:1}
+        .conv-item-rename{background:none;border:none;cursor:pointer;color:var(--a);font-size:14px;padding:0 4px;line-height:1}
+        .conv-item-rename:hover{color:#005bb5}
+        .rename-input{border:1px solid var(--a);border-radius:4px;padding:2px 6px;font-size:13px;font-family:var(--f);outline:none;width:100%;background:#fff}
+        .last-badge{font-size:9px;background:var(--a);color:#fff;padding:1px 5px;border-radius:6px;font-weight:600;flex-shrink:0}
+        .top-last{border-bottom:2px solid var(--a)!important;background:#f0f7ff}
+    </style>
+</head>
+<body>
+<div class="app" id="app">
+    <!-- 侧边栏遮罩（移动端） -->
+    <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar()"></div>
+
+    <!-- 侧边栏 -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h1>网络安全助手</h1>
+            <p>移动运营商知识库</p>
+        </div>
+        <button class="new-chat-btn" onclick="newConversation()">+ 新对话</button>
+        <button class="new-chat-btn settings-btn" onclick="openSettings()" style="margin-top:0;border-style:solid;opacity:0.7">⚙ 模型设置</button>
+        <div class="conv-list" id="convList"></div>
+    </aside>
+
+    <!-- 主聊天区 -->
+    <main class="chat-area">
+        <div class="chat-header">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0">
+                <button class="menu-toggle" id="menuToggle" onclick="toggleSidebar()">☰</button>
+                <div class="chat-header-title" id="chatTitle" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">新对话</div>
+            </div>
+            <div class="chat-header-status">
+                <span class="status-dot"></span>
+                <span id="statusText">就绪</span>
+            </div>
+        </div>
+
+        <div class="chat-messages" id="chatMessages"></div>
+
+        <div class="chat-input-area">
+            <div id="warningBanner" class="warning-banner" style="display:none;">
+                <span id="warningBannerText"></span>
+                <button class="close" onclick="dismissWarning()">&times;</button>
+            </div>
+            <div class="chat-input-row">
+                <textarea class="chat-input" id="chatInput"
+                          placeholder="输入你的问题，例如：等保三级对安全计算环境有什么要求？"
+                          rows="1" maxlength="2000"></textarea>
+                <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script>
+let currentConvId = null;
+let isLoading = false;
+let llmPresets = {};
+let _savedProviders = {};  // 已保存的提供商配置（含 Key），切换时自动填充
+let _lastWarningMsg = '';  // 上次的 Ollama 告警消息
+
+// ===== 设置模态框 =====
+function openSettings() {
+    document.getElementById('settingsModal').style.display = 'flex';
+    loadCurrentConfig();
+}
+
+function closeSettings() {
+    document.getElementById('settingsModal').style.display = 'none';
+    document.getElementById('testResult').textContent = '';
+    document.getElementById('saveResult').textContent = '';
+}
+
+async function loadCurrentConfig() {
+    try {
+        // 加载预设
+        const presetsResp = await fetch('/api/llm/presets');
+        const presetsData = await presetsResp.json();
+        llmPresets = presetsData.presets || {};
+
+        const sel = document.getElementById('providerSelect');
+        sel.innerHTML = '<option value="">-- 自定义 --</option>';
+        for (const name in llmPresets) {
+            sel.innerHTML += `<option value="${name}">${name}</option>`;
+        }
+
+        // 加载当前配置
+        const configResp = await fetch('/api/llm/config');
+        const configData = await configResp.json();
+        const cfg = configData.config || {};
+
+        // 匹配预设
+        let matched = false;
+        if (cfg.provider && cfg.provider !== '自定义') {
+            for (const name in llmPresets) {
+                if (name === cfg.provider) {
+                    sel.value = name;
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if (!matched) {
+            // Try to match by base_url
+            for (const name in llmPresets) {
+                const p = llmPresets[name];
+                if (cfg.base_url && p.base_url === cfg.base_url.replace(/\/+$/, '')) {
+                    sel.value = name;
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if (!matched) sel.value = '';
+
+        document.getElementById('baseUrlInput').value = cfg.base_url || '';
+        // 后端返回 api_key_mask（掩码），不是完整 Key
+        if (cfg.api_key_mask && cfg.api_key_mask !== '未配置') {
+            document.getElementById('apiKeyInput').value = cfg.api_key_mask;
+            document.getElementById('apiKeyInput').placeholder = 'API Key 已配置（显示掩码）';
+        } else {
+            document.getElementById('apiKeyInput').value = '';
+            document.getElementById('apiKeyInput').placeholder = '请输入 API Key';
+        }
+        _savedProviders = configData.providers_config || {};
+        onProviderChange();
+        fillModel(cfg.model || '');
+    } catch (e) {
+        console.error('加载 LLM 配置失败:', e);
+    }
+}
+
+function onProviderChange() {
+    const name = document.getElementById('providerSelect').value;
+    const modelSel = document.getElementById('modelSelect');
+    const modelInput = document.getElementById('modelInput');
+    const refreshBtn = document.getElementById('refreshModelsBtn');
+    const refreshStatus = document.getElementById('refreshStatus');
+
+    const preset = llmPresets[name];
+    if (preset && preset.can_refresh) {
+        refreshBtn.style.display = '';
+        refreshStatus.textContent = '点击刷新获取最新模型';
+    } else {
+        refreshBtn.style.display = 'none';
+        refreshStatus.textContent = '';
+    }
+
+    if (name && preset) {
+        document.getElementById('baseUrlInput').value = preset.base_url;
+
+        // 自动填充已保存的 API Key（如果存在）
+        const saved = _savedProviders[name] || {};
+        if (saved.api_key) {
+            document.getElementById('apiKeyInput').value = saved.api_key;
+        }
+        // 根据 api_key_mask 设置 placeholder
+        if (saved.api_key_mask && saved.api_key_mask !== '未配置') {
+            document.getElementById('apiKeyInput').placeholder = 'API Key 已配置（显示掩码）';
+        } else {
+            document.getElementById('apiKeyInput').placeholder = '请输入 API Key';
+        }
+
+        // 优先使用已保存的模型列表（刷新过才有），否则用硬编码预设
+        let models = (saved.models && saved.models.length > 0) ? saved.models : (preset.models || []);
+
+        modelSel.innerHTML = '';
+        modelSel.style.display = '';
+        modelInput.style.display = 'none';
+        models.forEach(m => {
+            modelSel.innerHTML += `<option value="${m}">${m}</option>`;
+        });
+
+        // 尝试匹配已保存的 model
+        let matchedModel = false;
+        if (saved.model) {
+            for (const opt of modelSel.options) {
+                if (opt.value === saved.model) { opt.selected = true; matchedModel = true; break; }
+            }
+        }
+        // 如果 saved.model 不在列表中，选第一个
+        if (!matchedModel && modelSel.options.length > 0) {
+            modelSel.options[0].selected = true;
+        }
+    } else {
+        // 自定义：从 _savedProviders 读取已保存的自定义配置
+        const saved = _savedProviders['自定义'] || {};
+        if (saved.base_url) document.getElementById('baseUrlInput').value = saved.base_url;
+        if (saved.api_key) document.getElementById('apiKeyInput').value = saved.api_key;
+        if (saved.api_key_mask && saved.api_key_mask !== '未配置') {
+            document.getElementById('apiKeyInput').placeholder = 'API Key 已配置（显示掩码）';
+        } else {
+            document.getElementById('apiKeyInput').placeholder = '请输入 API Key';
+        }
+        modelSel.style.display = 'none';
+        modelInput.style.display = '';
+        modelInput.value = saved.model || document.getElementById('modelSelect').value || '';
+    }
+}
+
+async function refreshModels() {
+    const btn = document.getElementById('refreshModelsBtn');
+    const status = document.getElementById('refreshStatus');
+    let apiKey = document.getElementById('apiKeyInput').value;
+    const provider = document.getElementById('providerSelect').value;
+    // 如果输入框是掩码（含•字符），发空字符串让后端从 SQLite 读取真实 key
+    if (apiKey.includes('\u2022') || apiKey.includes('•')) {
+        apiKey = '';
+    }
+    btn.disabled = true;
+    btn.textContent = '⏳ 刷新中...';
+    status.textContent = '';
+    status.style.color = '#888';
+
+    try {
+        const resp = await fetch('/api/llm/refresh-models', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({api_key: apiKey, provider: provider}),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            const modelSel = document.getElementById('modelSelect');
+            modelSel.innerHTML = '';
+            data.models.forEach(m => {
+                modelSel.innerHTML += `<option value="${m}">${m}</option>`;
+            });
+            modelSel.style.display = '';
+            document.getElementById('modelInput').style.display = 'none';
+            status.style.color = '#1a7d1a';
+            status.textContent = `✅ ${data.count} 个模型已加载`;
+        } else {
+            status.style.color = '#cc3333';
+            status.textContent = '❌ ' + (data.message || '刷新失败');
+        }
+    } catch (e) {
+        status.style.color = '#cc3333';
+        status.textContent = '❌ 请求失败: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.textContent = '🔄 刷新模型列表';
+}
+
+function fillModel(modelName) {
+    if (!modelName) return;
+    const modelSel = document.getElementById('modelSelect');
+    const modelInput = document.getElementById('modelInput');
+    if (modelSel.style.display !== 'none') {
+        for (const opt of modelSel.options) {
+            if (opt.value === modelName) { opt.selected = true; return; }
+        }
+        // 不在预设中 -> 切自定义
+        modelSel.style.display = 'none';
+        modelInput.style.display = '';
+        modelInput.value = modelName;
+    } else {
+        modelInput.value = modelName;
+    }
+}
+
+function getModelValue() {
+    const modelSel = document.getElementById('modelSelect');
+    const modelInput = document.getElementById('modelInput');
+    if (modelSel.style.display !== 'none') return modelSel.value;
+    return modelInput.value;
+}
+
+async function testConnection() {
+    const btn = document.getElementById('testBtn');
+    const resultDiv = document.getElementById('testResult');
+    let apiKey = document.getElementById('apiKeyInput').value;
+    // 如果输入框是掩码（含•字符），发空字符串让后端从 SQLite 读取真实 key
+    if (apiKey.includes('\u2022') || apiKey.includes('•')) {
+        apiKey = '';
+    }
+    btn.disabled = true;
+    btn.textContent = '测试中...';
+    resultDiv.textContent = '';
+    resultDiv.style.color = '#888';
+
+    try {
+        const resp = await fetch('/api/llm/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                base_url: document.getElementById('baseUrlInput').value,
+                api_key: apiKey,
+                model: getModelValue(),
+            }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            resultDiv.style.color = '#1a7d1a';
+            resultDiv.textContent = `✅ ${data.message}`;
+        } else {
+            resultDiv.style.color = '#cc3333';
+            resultDiv.textContent = `❌ ${data.message}`;
+        }
+    } catch (e) {
+        resultDiv.style.color = '#cc3333';
+        resultDiv.textContent = '❌ 请求失败: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.textContent = '测试连接';
+}
+
+async function saveLLMConfig() {
+    const btn = document.querySelector('.save-btn');
+    const resultDiv = document.getElementById('saveResult');
+    let apiKey = document.getElementById('apiKeyInput').value.trim();
+    // 如果输入框是掩码（含•字符），发空字符串让后端保留已有的 key
+    if (apiKey.includes('\u2022') || apiKey.includes('•')) {
+        apiKey = '';
+    }
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+    resultDiv.textContent = '';
+    resultDiv.style.color = '#888';
+
+    const config = {
+        base_url: document.getElementById('baseUrlInput').value.trim(),
+        api_key: apiKey,
+        model: getModelValue().trim(),
+        provider: document.getElementById('providerSelect').value || '自定义',
+    };
+
+    if (!config.base_url || !config.model) {
+        resultDiv.style.color = '#cc3333';
+        resultDiv.textContent = '请填写 BASE URL 和模型名称';
+        btn.disabled = false;
+        btn.textContent = '💾 保存并应用';
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/llm/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(config),
+        });
+        const data = await resp.json();
+        if (data.status === 'saved') {
+            // 更新本地缓存，避免轮询误触发通知
+            _lastConfigProvider = config.provider;
+            _lastConfigModel = config.model;
+            resultDiv.style.color = '#1a7d1a';
+            resultDiv.textContent = '✅ ' + data.message;
+            setTimeout(() => closeSettings(), 1500);
+        } else {
+            resultDiv.style.color = '#cc3333';
+            resultDiv.textContent = '❌ ' + (data.message || '保存失败');
+        }
+    } catch (e) {
+        resultDiv.style.color = '#cc3333';
+        resultDiv.textContent = '❌ 请求失败: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.textContent = '💾 保存并应用';
+}
+
+// ===== 侧边栏切换（移动端） =====
+function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('open');
+    document.getElementById('sidebarBackdrop').classList.toggle('show');
+}
+
+// ===== 初始加载 =====
+async function init() {
+    await loadConversations();
+    if (currentConvId) {
+        await loadMessages(currentConvId);
+    }
+    // 监听管理员配置变更
+    startConfigMonitor();
+}
+
+// ===== 管理员配置变更监听 =====
+let _lastConfigProvider = '';
+let _lastConfigModel = '';
+
+async function startConfigMonitor() {
+    // 获取当前生效配置
+    try {
+        const r = await fetch('/api/llm/config/current');
+        const cfg = await r.json();
+        _lastConfigProvider = cfg.provider || '';
+        _lastConfigModel = cfg.model || '';
+    } catch(e) {}
+    // 每 30 秒轮询检测变更
+    setInterval(async () => {
+        try {
+            const r = await fetch('/api/llm/config/current');
+            const cfg = await r.json();
+            const newP = cfg.provider || '';
+            const newM = cfg.model || '';
+            if (newP && newM && (newP !== _lastConfigProvider || newM !== _lastConfigModel)) {
+                _lastConfigProvider = newP;
+                _lastConfigModel = newM;
+                showConfigChangeTip(newP, newM);
+            }
+        } catch(e) {}
+    }, 30000);
+}
+
+function showConfigChangeTip(provider, model) {
+    const oldTip = document.getElementById('configChangeTip');
+    if (oldTip) oldTip.remove();
+    const tip = document.createElement('div');
+    tip.id = 'configChangeTip';
+    tip.style.cssText = 'position:fixed;top:16px;right:16px;z-index:9999;background:#1a73e8;color:#fff;padding:16px 20px;border-radius:10px;font-size:14px;box-shadow:0 4px 20px rgba(0,0,0,.2);max-width:360px;animation:slideIn .3s ease;';
+    tip.innerHTML = `<div style="font-weight:600;margin-bottom:4px;">🔄 模型已更换</div>
+<div style="font-size:13px;opacity:.9;">管理员已将对话模型切换为 <strong>${provider}</strong> / <strong>${model}</strong></div>
+<button onclick="this.parentElement.remove()" style="margin-top:8px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">知道了</button>`;
+    document.body.appendChild(tip);
+    // 10秒后自动消失
+    setTimeout(() => { const el = document.getElementById('configChangeTip'); if (el) el.remove(); }, 10000);
+}
+
+// 时间分组工具
+function getDatePeriod(dateStr) {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const weekStart = new Date(today);
+  weekStart.setDate(weekStart.getDate() - today.getDay());
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  if (d >= today) return '今天';
+  if (d >= yesterday) return '昨天';
+  if (d >= weekStart) return '本周';
+  if (d >= monthStart) return '本月';
+  return '更早';
+}
+function getPeriodOrder(p) {
+  return {'今天':0,'昨天':1,'本周':2,'本月':3,'更早':4}[p] || 99;
+}
+
+// ===== 对话列表（需求1: ≤10不折叠; 需求3: 最后一次不折叠） =====
+let collapsedConvGroups = { '昨天': true, '本周': true, '本月': true, '更早': true };
+let _renamingConvId = null;
+
+async function loadConversations() {
+    const resp = await fetch('/api/conversations');
+    const convs = await resp.json();
+    const list = document.getElementById('convList');
+
+    // 需求1: ≤10 条直接展示平铺列表，不分组
+    if (convs.length <= 10) {
+      list.innerHTML = convs.map(c => `
+        <div class="conv-item${c.id === currentConvId ? ' active' : ''}" data-conv-id="${c.id}">
+          <div class="conv-item-row" onclick="switchConversation('${c.id}')">
+            <span class="conv-item-title">${escapeHtml(c.title)}</span>
+          </div>
+          <div class="conv-item-actions">
+            <button class="conv-item-rename" onclick="event.stopPropagation();startRename('${c.id}')" title="重命名">✎</button>
+            <button class="conv-item-del" onclick="event.stopPropagation();deleteConversation('${c.id}')">×</button>
+          </div>
+        </div>
+      `).join('') || '<div class="empty-state">暂无对话</div>';
+      updateConvList();
+      if (!currentConvId && convs.length > 0) {
+          currentConvId = convs[0].id;
+          await loadMessages(currentConvId);
+          updateConvList();
+      }
+      return;
+    }
+
+    // >10 条，按时间分组
+    const groups = {};
+    for (const c of convs) {
+      const period = getDatePeriod(c.updated_at);
+      if (!groups[period]) groups[period] = [];
+      groups[period].push(c);
+    }
+
+    const sortedPeriods = Object.keys(groups).sort((a,b) => getPeriodOrder(a) - getPeriodOrder(b));
+
+    list.innerHTML = sortedPeriods.map(period => {
+      const items = groups[period];
+      // 需求3: 最后一次对话不折叠
+      const lastConv = period === '今天' ? items[0] : null;
+      const isCollapsed = collapsedConvGroups[period];
+      return `
+        <div class="conv-group">
+          <div class="conv-group-header" onclick="toggleConvGroup('${period}')">
+            <span class="arrow ${isCollapsed ? 'collapsed' : ''}">▾</span>
+            <span class="group-label">${period}</span>
+            <span class="group-count">${items.length}</span>
+          </div>
+          <div class="conv-group-items" style="display:${isCollapsed ? 'none' : 'block'}">
+            ${items.map((c, idx) => {
+              // 需求3: 今天分组中的第一条（最新对话）始终展开，不受折叠影响
+              const show = period === '今天' && idx === 0;
+              if (show) return ''; // 在分组外部单独渲染
+              return `
+                <div class="conv-item${c.id === currentConvId ? ' active' : ''}" data-conv-id="${c.id}">
+                  <div class="conv-item-row" onclick="switchConversation('${c.id}')">
+                    <span class="conv-item-title">${escapeHtml(c.title)}</span>
+                  </div>
+                  <div class="conv-item-actions">
+                    <button class="conv-item-rename" onclick="event.stopPropagation();startRename('${c.id}')" title="重命名">✎</button>
+                    <button class="conv-item-del" onclick="event.stopPropagation();deleteConversation('${c.id}')">×</button>
+                  </div>
+                </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+    }).join('');
+
+    // 需求3: 最后一次对话（今天第一条）单独渲染在顶部
+    const todayItems = groups['今天'];
+    if (todayItems && todayItems.length > 0) {
+      const last = todayItems[0];
+      const topItem = document.createElement('div');
+      topItem.className = 'conv-item top-last' + (last.id === currentConvId ? ' active' : '');
+      topItem.dataset.convId = last.id;
+      topItem.innerHTML = `
+        <div class="conv-item-row" onclick="switchConversation('${last.id}')">
+          <span class="conv-item-title">${escapeHtml(last.title)}</span>
+          <span class="last-badge">最新</span>
+        </div>
+        <div class="conv-item-actions">
+          <button class="conv-item-rename" onclick="event.stopPropagation();startRename('${last.id}')" title="重命名">✎</button>
+          <button class="conv-item-del" onclick="event.stopPropagation();deleteConversation('${last.id}')">×</button>
+        </div>
+      `;
+      list.insertBefore(topItem, list.firstChild);
+    }
+
+    updateConvList();
+
+    if (!currentConvId && convs.length > 0) {
+        currentConvId = convs[0].id;
+        await loadMessages(currentConvId);
+        updateConvList();
+    }
+}
+
+// 需求2: 对话改名
+function startRename(convId) {
+  const item = document.querySelector(`.conv-item[data-conv-id="${convId}"]`);
+  if (!item) return;
+  const titleEl = item.querySelector('.conv-item-title');
+  const currentTitle = titleEl.textContent;
+  const input = document.createElement('input');
+  input.className = 'rename-input';
+  input.value = currentTitle;
+  input.maxLength = 100;
+  titleEl.replaceWith(input);
+  input.focus();
+  input.select();
+  _renamingConvId = convId;
+
+  const saveRename = async () => {
+    const newTitle = input.value.trim();
+    if (newTitle && newTitle !== currentTitle) {
+      try {
+        await fetch(`/api/conversations/${convId}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({title: newTitle}),
+        });
+      } catch(e) { console.error('改名失败:', e); }
+    }
+    _renamingConvId = null;
+    await loadConversations();
+  };
+
+  input.addEventListener('blur', saveRename);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { input.blur(); }
+    if (e.key === 'Escape') { _renamingConvId = null; loadConversations(); }
+  });
+}
+
+function toggleConvGroup(period) {
+  collapsedConvGroups[period] = !collapsedConvGroups[period];
+  loadConversations();
+}
+
+async function switchConversation(convId) {
+    currentConvId = convId;
+    document.getElementById('chatTitle').textContent = '对话中...';
+    await loadMessages(convId);
+    updateConvList();
+}
+
+async function newConversation() {
+    const resp = await fetch('/api/conversations', { method: 'POST' });
+    const conv = await resp.json();
+    currentConvId = conv.id;
+    document.getElementById('chatTitle').textContent = '新对话';
+    document.getElementById('chatMessages').innerHTML = '';
+    await loadConversations();
+}
+
+async function deleteConversation(convId) {
+    if (!confirm('确定删除此对话？')) return;
+    await fetch(`/api/conversations/${convId}`, { method: 'DELETE' });
+    if (currentConvId === convId) {
+        currentConvId = null;
+        document.getElementById('chatMessages').innerHTML = '';
+        document.getElementById('chatTitle').textContent = '选择对话';
+    }
+    await loadConversations();
+}
+
+function updateConvList() {
+    document.querySelectorAll('.conv-item').forEach(el => {
+        el.classList.toggle('active', el.dataset?.convId === currentConvId);
+    });
+}
+
+// ===== 消息加载 =====
+async function loadMessages(convId) {
+    const resp = await fetch(`/api/conversations/${convId}/messages`);
+    const messages = await resp.json();
+    const container = document.getElementById('chatMessages');
+    container.innerHTML = '';
+
+    if (messages.length === 0) {
+        container.innerHTML = '<div style="text-align:center;color:#999;margin-top:60px;font-size:14px;">开始一段新的对话</div>';
+        document.getElementById('chatTitle').textContent = '新对话';
+        return;
+    }
+
+    messages.forEach(m => {
+        appendMessage(m.role, m.content, m.sources);
+    });
+
+    // 更新标题
+    if (messages.length > 0) {
+        const firstUser = messages.find(m => m.role === 'user');
+        if (firstUser) {
+            document.getElementById('chatTitle').textContent = firstUser.content.substring(0, 50);
+        }
+    }
+
+    scrollToBottom();
+}
+
+// ===== 发送消息（流式 SSE） =====
+async function sendMessage() {
+    if (isLoading) return;
+    const input = document.getElementById('chatInput');
+    const query = input.value.trim();
+    if (!query) return;
+
+    isLoading = true;
+    document.getElementById('sendBtn').disabled = true;
+    document.getElementById('statusText').textContent = '生成中...';
+
+    if (!currentConvId) {
+        const resp = await fetch('/api/conversations', { method: 'POST' });
+        const conv = await resp.json();
+        currentConvId = conv.id;
+        await loadConversations();
+    }
+
+    // 显示用户消息
+    appendMessage('user', query);
+    scrollToBottom();
+    input.value = '';
+    input.style.height = 'auto';
+
+    // 创建助手消息占位容器（含输入指示器）
+    const container = document.getElementById('chatMessages');
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'message assistant';
+    msgDiv.innerHTML = `<div class="message-role">助手</div><div class="message-bubble"><div class="typing-indicator"><span></span><span></span><span></span></div><span class="typing-text">正在分析...</span></div>`;
+    container.appendChild(msgDiv);
+    const bubble = msgDiv.querySelector('.message-bubble');
+
+    let fullContent = '';
+    let reasoningContent = '';
+    let sourcesData = null;
+    let newConvId = currentConvId;
+
+    try {
+        const response = await fetch('/api/chat/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, conversation_id: currentConvId }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let receivedDone = false;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+                try {
+                    const event = JSON.parse(trimmed.slice(6));
+
+                    switch (event.type) {
+                        case 'status':
+                            document.getElementById('statusText').textContent = event.message || event.stage;
+                            break;
+
+                        case 'reasoning':
+                            reasoningContent += event.content;
+                            bubble.innerHTML = renderReasoning(reasoningContent) + formatContent(fullContent);
+                            scrollToBottom();
+                            break;
+
+                        case 'token':
+                            fullContent += event.content;
+                            bubble.innerHTML = formatContent(fullContent);
+                            scrollToBottom();
+                            break;
+
+                        case 'error':
+                            fullContent += `\n\n<hr><p style="color:#e53e3e;">${event.content}</p>`;
+                            bubble.innerHTML = formatContent(fullContent);
+                            scrollToBottom();
+                            break;
+
+                        case 'done':
+                            receivedDone = true;
+                            sourcesData = event.sources;
+                            newConvId = event.conversation_id;
+                            currentConvId = newConvId;
+                            if (event.reasoning_content) {
+                                reasoningContent = event.reasoning_content;
+                                bubble.innerHTML = renderReasoning(reasoningContent) + formatContent(fullContent);
+                            }
+                            // 追加评分组件
+                            if (event.message_id) {
+                                setTimeout(() => appendRating(bubble, event.message_id), 100);
+                            }
+                            break;
+
+                        case 'warning':
+                            _lastWarningMsg = event.message || '';
+                            showWarningBanner(_lastWarningMsg);
+                            break;
+                    }
+                } catch (e) {
+                    // skip malformed events
+                }
+            }
+        }
+
+        // 流正常结束但没收到 done 事件（连接意外中断）
+        if (!receivedDone && !fullContent) {
+            bubble.innerHTML = '<p style="color:#e53e3e;">抱歉，连接意外中断，请重试。</p>';
+        }
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            bubble.innerHTML = '<p style="color:#e53e3e;">请求已被取消。</p>';
+        } else {
+            bubble.innerHTML = '<p style="color:#e53e3e;">抱歉，请求出错了，请重试。</p>';
+        }
+        console.error('Stream error:', err);
+    }
+
+    // 渲染来源信息
+    if (sourcesData && sourcesData.length > 0) {
+        const items = sourcesData.map(s => {
+            const label = s.label
+                ? `<span class="conf-label conf-${s.label}" title="置信度: ${s.confidence}">${s.label}</span>`
+                : '';
+            return `<div class="source-item">
+                <span class="source-cat">${escapeHtml(s.category || '')}</span>
+                <span class="source-file">${escapeHtml(s.file_name || '')} / ${escapeHtml(s.section || '')}</span>
+                ${label}
+                <span class="source-score">${s.confidence != null ? s.confidence.toFixed(2) : ''}</span>
+            </div>`;
+        }).join('');
+        bubble.innerHTML += `<details class="message-sources">
+            <summary>📎 ${sourcesData.length} 篇参考文档</summary>
+            ${items}
+        </details>`;
+    }
+
+    document.getElementById('chatTitle').textContent = query.substring(0, 50);
+    await loadConversations();
+
+    isLoading = false;
+    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('statusText').textContent = '就绪';
+    scrollToBottom();
+}
+
+// ===== 添加消息气泡 =====
+function appendMessage(role, content, sources) {
+    const container = document.getElementById('chatMessages');
+    const div = document.createElement('div');
+    div.className = `message ${role}`;
+
+    let sourcesHtml = '';
+    if (sources && sources.length > 0) {
+        const items = sources.map(s =>
+            `<div class="source-item">
+                <span class="source-cat">${escapeHtml(s.category || '')}</span>
+                <span class="source-file">${escapeHtml(s.file_name || '')} / ${escapeHtml(s.section || '')}</span>
+                <span class="source-score">${s.score?.toFixed(2) || ''}</span>
+            </div>`
+        ).join('');
+        sourcesHtml = `<details class="message-sources">
+            <summary>📎 ${sources.length} 篇参考文档</summary>
+            ${items}
+        </details>`;
+    }
+
+    div.innerHTML = `
+        <div class="message-role">${role === 'user' ? '你' : '助手'}</div>
+        <div class="message-bubble">
+            ${formatContent(content)}
+            ${sourcesHtml}
+        </div>
+    `;
+    container.appendChild(div);
+}
+
+// ===== 简单 Markdown 渲染 =====
+function formatContent(text) {
+    if (!text) return '';
+    let html = escapeHtml(text);
+    // 代码块
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
+    // 行内代码
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // 加粗
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // 无序列表
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+    // 换行
+    html = html.replace(/\n/g, '<br>');
+    return html;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function renderReasoning(text) {
+    if (!text) return '';
+    return `<details class="reasoning-box" open>
+        <summary>🧠 模型推理过程</summary>
+        <div class="reasoning-content">${escapeHtml(text)}</div>
+    </details>`;
+}
+
+function scrollToBottom() {
+    const container = document.getElementById('chatMessages');
+    requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+    });
+}
+
+// ===== Ollama 兜底警告 =====
+function showWarningBanner(msg) {
+    const banner = document.getElementById('warningBanner');
+    const text = document.getElementById('warningBannerText');
+    text.textContent = msg;
+    banner.style.display = 'flex';
+}
+
+function dismissWarning() {
+    document.getElementById('warningBanner').style.display = 'none';
+}
+
+// ===== 5 星评分组件 =====
+function appendRating(bubble, messageId) {
+    if (!bubble || bubble.querySelector('.rating-bar')) return;
+    const bar = document.createElement('div');
+    bar.className = 'rating-bar';
+    let starsHtml = '';
+    for (let i = 1; i <= 5; i++) {
+        starsHtml += `<svg class="rating-star" data-val="${i}" viewBox="0 0 24 24" onclick="submitRating(this, ${messageId}, ${i})" onmouseover="hoverStar(this,${i})" onmouseout="resetStars(this)">
+            <path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+        </svg>`;
+    }
+    bar.innerHTML = starsHtml + '<span class="rating-label">评价回答质量</span>';
+    bubble.appendChild(bar);
+
+    // 如果有 Ollama 告警，追加灰色标注
+    if (_lastWarningMsg) {
+        const annotation = document.createElement('div');
+        annotation.className = 'warning-annotation';
+        annotation.textContent = '语义评分由本地 Ollama 兜底完成';
+        bubble.appendChild(annotation);
+    }
+}
+
+function hoverStar(el, val) {
+    const bar = el.parentElement;
+    const stars = bar.querySelectorAll('.rating-star');
+    stars.forEach((s, i) => {
+        s.style.color = i < val ? '#ff9500' : '#ddd';
+    });
+}
+
+function resetStars(el) {
+    const bar = el.parentElement;
+    const stars = bar.querySelectorAll('.rating-star');
+    stars.forEach(s => {
+        if (!s.classList.contains('active')) s.style.color = '#ddd';
+    });
+}
+
+function submitRating(el, messageId, rating) {
+    const bar = el.parentElement;
+    const stars = bar.querySelectorAll('.rating-star');
+    stars.forEach((s, i) => {
+        s.style.color = i < rating ? '#ff9500' : '#ddd';
+        s.classList.toggle('active', i < rating);
+        s.onclick = null;
+        s.onmouseover = null;
+        s.onmouseout = null;
+        s.style.cursor = 'default';
+    });
+    const label = bar.querySelector('.rating-label');
+    const labels = ['', '不满意', '不太满意', '一般', '满意', '非常满意'];
+    label.textContent = `⭐ ${labels[rating] || rating}`;
+    label.className = 'rating-locked';
+
+    fetch('/api/rating', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({message_id: messageId, rating}),
+    }).catch(e => console.error('评分提交失败:', e));
+}
+
+// ===== 键盘事件 =====
+document.getElementById('chatInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
+
+document.getElementById('chatInput').addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// ===== 启动 =====
+init();
+</script>
+<!-- 设置模态框 -->
+<div id="settingsModal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeSettings()">&times;</span>
+        <h2>⚙ 大模型配置</h2>
+
+        <div class="settings-section">
+            <label>选择提供商</label>
+            <select id="providerSelect" onchange="onProviderChange()">
+                <option value="">-- 自定义 --</option>
+            </select>
+        </div>
+
+        <div class="settings-section">
+            <label>BASE URL</label>
+            <input type="text" id="baseUrlInput" placeholder="https://api.openai.com/v1" />
+        </div>
+
+        <div class="settings-section">
+            <label>API Key</label>
+            <div style="display:flex;gap:8px;">
+                <input type="password" id="apiKeyInput" placeholder="sk-..." style="flex:1;" />
+                <button class="test-btn" onclick="testConnection()" id="testBtn">测试连接</button>
+            </div>
+            <div id="testResult" style="font-size:12px;margin-top:4px;min-height:18px;"></div>
+        </div>
+
+        <div class="settings-section">
+            <label>模型</label>
+            <select id="modelSelect"></select>
+            <input type="text" id="modelInput" placeholder="输入模型名称..." style="display:none;" />
+            <button id="refreshModelsBtn" class="refresh-btn" onclick="refreshModels()" style="display:none;margin-top:6px;">🔄 刷新模型列表</button>
+            <span id="refreshStatus" style="font-size:12px;margin-left:6px;color:#888;"></span>
+        </div>
+
+        <div class="settings-actions">
+            <button class="save-btn" onclick="saveLLMConfig()">💾 保存并应用</button>
+            <button class="cancel-btn" onclick="closeSettings()">取消</button>
+        </div>
+        <div id="saveResult" style="font-size:13px;margin-top:8px;text-align:center;"></div>
+    </div>
+</div>
+</body>
+</html>

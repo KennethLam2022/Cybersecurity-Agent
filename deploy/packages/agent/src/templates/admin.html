@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>网络安全 Agent · 管理后台</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js"></script>
+<style>
+:root{--bg:#f5f5f7;--card:#fff;--t:#1d1d1f;--t2:#6e6e73;--b:#e5e5ea;--a:#0071e3;--g:#34c759;--y:#ff9500;--r:#ff3b30;--f:-apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+.header{background:var(--card);border-bottom:1px solid var(--b);padding:12px 24px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.header h1{font-size:18px;font-weight:600;letter-spacing:-.01em}
+.header .badge{font-size:11px;background:#e8f0fe;color:var(--a);padding:3px 10px;border-radius:12px;font-weight:500}
+.header .status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.header .status-dot.live{background:var(--g)}
+.header .status-dot.dead{background:var(--r)}
+.layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:320px;min-width:320px;background:var(--card);border-right:1px solid var(--b);display:flex;flex-direction:column;flex-shrink:0}
+.sidebar-header{padding:16px 16px 8px;border-bottom:1px solid var(--b)}
+.sidebar-header input{width:100%;padding:8px 12px;border:1px solid var(--b);border-radius:8px;font-size:13px;font-family:var(--f);outline:none}
+.sidebar-header input:focus{border-color:var(--a)}
+.sidebar-header .stats{display:flex;gap:8px;margin-top:10px;font-size:11px;color:var(--t2)}
+.sidebar-list{flex:1;overflow-y:auto;padding:4px 0}
+.active-panel{background:#fff9e6;border-bottom:2px solid var(--y);padding:8px 16px;max-height:180px;overflow-y:auto}
+.active-panel .active-title{font-size:11px;font-weight:600;color:var(--y);margin-bottom:6px;display:flex;justify-content:space-between}
+.active-item{font-size:12px;padding:4px 0;border-bottom:1px solid #f0e8cc;display:flex;justify-content:space-between}
+.active-item:last-child{border-bottom:none}
+.active-item .ai-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px}
+.active-item .ai-stage{font-size:11px;color:var(--y);flex-shrink:0}
+.active-item .ai-stage::before{content:"⏳";margin-right:2px}
+.conv-item{padding:10px 16px;cursor:pointer;border-bottom:1px solid #f0f0f2;transition:background .15s;position:relative}
+.conv-item:hover{background:#f8f8fa}
+.conv-item.active{background:#e8f0fe;border-left:3px solid var(--a);padding-left:13px}
+.conv-item .title{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:270px}
+.conv-item .meta{font-size:11px;color:var(--t2);margin-top:2px;display:flex;gap:8px}
+.conv-item .meta .dot{color:var(--g);font-size:8px}
+.conv-item .new-badge{font-size:9px;background:var(--a);color:#fff;padding:1px 5px;border-radius:6px;margin-left:6px}
+.main{flex:1;overflow-y:auto;padding:20px 28px;background:var(--bg)}
+.main.empty{display:flex;align-items:center;justify-content:center;color:var(--t2);font-size:15px}
+.main.empty .hint{text-align:center;line-height:1.8}
+.main.empty .hint .icon{font-size:48px;display:block;margin-bottom:8px;opacity:.3}
+.conv-header{margin-bottom:20px}
+.conv-header h2{font-size:20px;font-weight:600}
+.conv-header .meta{font-size:12px;color:var(--t2);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap}
+.stats-row{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
+.stat-card{background:var(--card);border:1px solid var(--b);border-radius:10px;padding:10px 16px;flex:1;min-width:100px;text-align:center}
+.stat-card .num{font-size:22px;font-weight:700;display:block}
+.stat-card .num.blue{color:var(--a)}
+.stat-card .num.green{color:var(--g)}
+.stat-card .num.orange{color:var(--y)}
+.stat-card .num.red{color:var(--r)}
+.stat-card .label{font-size:11px;color:var(--t2);margin-top:2px}
+.msg-card{background:var(--card);border:1px solid var(--b);border-radius:12px;margin-bottom:14px;overflow:hidden}
+.msg-card .msg-header{padding:8px 14px;font-size:11px;font-weight:600;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--b)}
+.msg-card .msg-header.user{background:#e8f0fe;color:var(--a)}
+.msg-card .msg-header.assistant{background:#f0f7f0;color:var(--g)}
+.msg-card .msg-header .time{font-weight:400;color:var(--t2)}
+.msg-card .msg-body{padding:12px 14px;font-size:13px;line-height:1.7;white-space:pre-wrap;max-height:500px;overflow-y:auto}
+.msg-card .msg-sources{padding:8px 14px;background:#fafafa;border-top:1px solid var(--b)}
+.msg-card .msg-sources .src-title{font-size:11px;font-weight:600;color:var(--t2);margin-bottom:6px}
+.src-item{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;border-bottom:1px solid #f0f0f2}
+.src-item:last-child{border-bottom:none}
+.src-item .bar-wrap{flex:1;height:6px;background:#eee;border-radius:3px;overflow:hidden;min-width:60px}
+.src-item .bar-fill{height:100%;border-radius:3px;transition:width .3s}
+.src-item .bar-fill.high{background:var(--g)}
+.src-item .bar-fill.medium{background:var(--y)}
+.src-item .bar-fill.low{background:var(--r)}
+.src-item .file-name{font-size:11px;color:var(--t);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;flex-shrink:1}
+.src-item .conf-badge{font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;flex-shrink:0}
+.src-item .conf-badge.high{background:#e8f5e9;color:#2e7d32}
+.src-item .conf-badge.medium{background:#fff3e0;color:#e65100}
+.src-item .conf-badge.low{background:#fce4ec;color:#c62828}
+.src-item .section{font-size:10px;color:var(--t2);flex-shrink:0}
+.empty-state{padding:40px 20px;text-align:center;color:var(--t2);font-size:13px}
+.del-btn{font-size:11px;color:var(--r);cursor:pointer;padding:2px 6px;border-radius:4px;opacity:0;transition:opacity .15s}
+.conv-item:hover .del-btn{opacity:1}
+.del-btn:hover{background:#fce4ec}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#323232;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;z-index:999;opacity:0;transition:opacity .3s}
+.toast.show{opacity:1}
+.toast.new-conv{background:var(--a)}
+.tab-bar{display:flex;gap:0;border-bottom:1px solid var(--b);margin-bottom:16px;background:var(--card);border-radius:10px 10px 0 0;overflow:hidden;flex-shrink:0}
+.tab-item{padding:10px 20px;font-size:13px;font-weight:500;cursor:pointer;color:var(--t2);border-bottom:2px solid transparent;transition:all .15s;user-select:none}
+.tab-item:hover{color:var(--t);background:#f8f8fa}
+.tab-item.active{color:var(--a);border-bottom-color:var(--a);background:#e8f0fe}
+.tab-content{display:none}
+.tab-content.active{display:block}
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.chart-card{background:var(--card);border:1px solid var(--b);border-radius:10px;padding:16px}
+.chart-card .chart-title{font-size:13px;font-weight:600;color:var(--t2);margin-bottom:8px}
+.chart-card .chart-box{width:100%;height:300px}
+.chart-card.full{grid-column:1/-1}
+.chart-card.full .chart-box{height:380px}
+.health-row{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.health-card{background:var(--card);border:1px solid var(--b);border-radius:10px;padding:12px 16px;flex:1;min-width:120px;text-align:center}
+.health-card .hnum{font-size:18px;font-weight:700;display:block}
+.health-card .hnum.green{color:var(--g)}
+.health-card .hnum.orange{color:var(--y)}
+.health-card .hnum.blue{color:var(--a)}
+.health-card .hlbl{font-size:10px;color:var(--t2);margin-top:2px}
+.conv-item.deleted{opacity:.45;background:#fafafa}
+.conv-item.deleted .deleted-badge{font-size:9px;color:var(--r);padding:1px 4px;border:1px solid var(--r);border-radius:4px;margin-left:6px}
+.group-header{font-size:11px;font-weight:600;color:var(--t2);padding:6px 16px 4px;cursor:pointer;user-select:none;display:flex;justify-content:space-between;border-bottom:1px solid #f0f0f2;margin-top:4px}
+.group-header:hover{color:var(--t)}
+.group-header .arrow{transition:transform .15s;display:inline-block}
+.group-header .arrow.collapsed{transform:rotate(-90deg)}
+.group-items{overflow:hidden;transition:max-height .2s}
+.group-items.collapsed{max-height:0}
+.filter-toggle{display:flex;gap:4px;margin-top:8px;font-size:11px}
+.filter-toggle .opt{padding:2px 8px;border-radius:6px;cursor:pointer;color:var(--t2);border:1px solid var(--b)}
+.filter-toggle .opt.active{background:var(--a);color:#fff;border-color:var(--a)}
+.modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);z-index:1000;display:flex;align-items:center;justify-content:center}
+.modal-content{background:#fff;border-radius:12px;padding:24px;max-width:800px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 30px rgba(0,0,0,.15)}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.modal-header h3{font-size:16px;font-weight:600}
+.modal-close{font-size:22px;cursor:pointer;opacity:.5;border:none;background:none}
+.modal-close:hover{opacity:1}
+.modal-table{width:100%;border-collapse:collapse;font-size:13px}
+.modal-table th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--b);font-weight:600;font-size:11px;color:var(--t2)}
+.modal-table td{padding:8px 10px;border-bottom:1px solid var(--b)}
+.modal-table tr{cursor:pointer;transition:background .1s}
+.modal-table tr:hover{background:#f0f0f2}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>网络安全 Agent · 管理后台</h1>
+  <div>
+    <span class="status-dot" id="connDot"></span>
+    <span id="connStatus" style="font-size:12px;color:var(--t2);margin-right:12px;">连接中...</span>
+    <span class="badge">实时看板</span>
+  </div>
+</div>
+<div class="layout">
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <input id="searchInput" type="text" placeholder="搜索对话..." oninput="filterConversations()">
+      <div class="stats" id="sidebarStats">加载中...</div>
+      <div class="filter-toggle" id="filterToggle">
+        <span class="opt active" data-val="all" onclick="setDeletedFilter('all')">全部</span>
+        <span class="opt" data-val="active" onclick="setDeletedFilter('active')">仅未删除</span>
+        <span class="opt" data-val="deleted" onclick="setDeletedFilter('deleted')">仅已删除</span>
+      </div>
+    </div>
+    <div class="active-panel" id="activePanel">
+      <div class="active-title"><span>正在进行</span><span id="activeCount">0</span></div>
+      <div id="activeList"></div>
+    </div>
+    <div class="sidebar-list" id="convList"></div>
+  </div>
+  <div class="main" id="mainPanel">
+    <div class="tab-bar" id="tabBar">
+      <div class="tab-item active" data-tab="detail" onclick="switchTab('detail')">对话详情</div>
+      <div class="tab-item" data-tab="overview" onclick="switchTab('overview')">概览看板</div>
+      <div class="tab-item" data-tab="performance" onclick="switchTab('performance')">性能看板</div>
+    </div>
+    <div class="tab-content active" id="tabDetail">
+      <div class="empty-state" id="detailEmpty">
+        <span class="icon" style="font-size:48px;opacity:.3">&#x1F4AC;</span>
+        <p style="margin-top:8px">选择一个对话查看详情</p>
+      </div>
+      <div id="detailContent" style="display:none"></div>
+    </div>
+    <div class="tab-content" id="tabOverview">
+      <div class="health-row" id="healthRow"></div>
+      <div class="chart-grid" id="overviewGrid1">
+        <div class="chart-card"><div class="chart-title">文档热度 Top5</div><div class="chart-box" id="chartDocHeat"></div></div>
+        <div class="chart-card"><div class="chart-title">评分分布</div><div class="chart-box" id="chartRatingDist"></div></div>
+      </div>
+      <div class="chart-grid" id="overviewGrid2">
+        <div class="chart-card"><div class="chart-title">评分趋势 (近30天)</div><div class="chart-box" id="chartRatingTrend"></div></div>
+        <div class="chart-card"><div class="chart-title">对话活跃 (近30天)</div><div class="chart-box" id="chartActivity"></div></div>
+      </div>
+      <div class="chart-card full"><div class="chart-title">查询热点</div><div class="chart-box" id="chartHotspot"></div></div>
+    </div>
+    <div class="tab-content" id="tabPerformance">
+      <div class="chart-grid" id="perfGrid1">
+        <div class="chart-card"><div class="chart-title">检索质量趋势 (近30天)</div><div class="chart-box" id="chartRetrieval"></div></div>
+        <div class="chart-card"><div class="chart-title">LLM 调用健康 (近30天)</div><div class="chart-box" id="chartLLM"></div></div>
+      </div>
+      <div class="chart-grid" id="perfGrid2">
+        <div class="chart-card"><div class="chart-title">环节耗时分布 (近30天)</div><div class="chart-box" id="chartTiming"></div></div>
+        <div class="chart-card"><div class="chart-title">评分-置信度散点</div><div class="chart-box" id="chartConfScatter"></div></div>
+      </div>
+      <div class="chart-grid" id="perfGrid3">
+        <div class="chart-card"><div class="chart-title">上下文截断统计 (近30天)</div><div class="chart-box" id="chartTruncation"></div></div>
+        <div class="chart-card"><div class="chart-title">低置信区间趋势 (近30天)</div><div class="chart-box" id="chartLowConf"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+let conversations = [];
+let currentConvId = null;
+let activeConversations = {};
+let lastConvCount = 0;
+let deletedFilter = 'all';
+let collapsedGroups = {};
+
+function showToast(msg, cls) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (cls ? ' ' + cls : '');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function confLabel(c) {
+  if (c >= 0.9) return 'high';
+  if (c >= 0.7) return 'medium';
+  return 'low';
+}
+
+function confText(c) {
+  if (c >= 0.9) return '高';
+  if (c >= 0.7) return '中';
+  return '低';
+}
+
+function formatTime(ts) {
+  return new Date(ts).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+function getDatePeriod(dateStr) {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const weekStart = new Date(today);
+  weekStart.setDate(weekStart.getDate() - today.getDay());
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+
+  if (d >= today) return '今天';
+  if (d >= yesterday) return '昨天';
+  if (d >= weekStart) return '本周';
+  if (d >= monthStart) return '本月';
+  return '更早';
+}
+
+function getPeriodOrder(p) {
+  return {'今天':0,'昨天':1,'本周':2,'本月':3,'更早':4}[p] || 99;
+}
+
+function setDeletedFilter(val) {
+  deletedFilter = val;
+  document.querySelectorAll('#filterToggle .opt').forEach(el => {
+    el.classList.toggle('active', el.dataset.val === val);
+  });
+  renderConversations();
+}
+
+// ===== SSE 实时连接 =====
+function connectSSE() {
+  const dot = document.getElementById('connDot');
+  const status = document.getElementById('connStatus');
+  dot.className = 'status-dot dead';
+  status.textContent = '连接中...';
+
+  const es = new EventSource('/api/admin/stream');
+  let reconnectTimer = null;
+
+  es.addEventListener('init', e => {
+    const data = JSON.parse(e.data);
+    conversations = data.conversations || [];
+    activeConversations = {};
+    (data.active || []).forEach(a => { activeConversations[a.conv_id] = a; });
+    lastConvCount = conversations.length;
+    renderConversations();
+    renderActivePanel();
+    dot.className = 'status-dot live';
+    status.textContent = '已连接';
+    document.getElementById('sidebarStats').textContent = `共 ${conversations.length} 个对话 · ${data.subscribers} 个监控`;
+  });
+
+  es.addEventListener('conversation_updated', e => {
+    const data = JSON.parse(e.data);
+    // Reload conversations list
+    fetchConversations();
+  });
+
+  es.addEventListener('active_updated', e => {
+    const data = JSON.parse(e.data);
+    if (data.conv_id) {
+      if (!activeConversations[data.conv_id]) {
+        activeConversations[data.conv_id] = {};
+      }
+      Object.assign(activeConversations[data.conv_id], data);
+      renderActivePanel();
+    }
+  });
+
+  es.addEventListener('active_removed', e => {
+    const data = JSON.parse(e.data);
+    delete activeConversations[data.conv_id];
+    renderActivePanel();
+  });
+
+  es.addEventListener('heartbeat', () => {});
+
+  es.onerror = () => {
+    dot.className = 'status-dot dead';
+    status.textContent = '连接断开，正在重连...';
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => connectSSE(), 3000);
+    es.close();
+  };
+}
+
+async function fetchConversations() {
+  try {
+    const resp = await fetch('/api/conversations?include_deleted=true');
+    const data = await resp.json();
+    conversations = Array.isArray(data) ? data : (data.conversations || []);
+    renderConversations();
+    document.getElementById('sidebarStats').textContent = `共 ${conversations.length} 个对话`;
+
+    // 新增对话通知
+    if (conversations.length > lastConvCount) {
+      const newCount = conversations.length - lastConvCount;
+      showToast(`新增 ${newCount} 个对话`, 'new-conv');
+    }
+    lastConvCount = conversations.length;
+
+    if (currentConvId) {
+      const stillExists = conversations.find(c => c.id === currentConvId);
+      if (!stillExists) {
+        currentConvId = null;
+        document.getElementById('mainPanel').innerHTML = '<div class="empty-state"><div class="hint"><span class="icon">&#x1F4AC;</span>选择一个对话查看详情</div></div>';
+        document.getElementById('mainPanel').classList.add('empty');
+      }
+    }
+  } catch (e) {
+    console.error('加载对话列表失败:', e);
+  }
+}
+
+function filterConversations() {
+  renderConversations();
+}
+
+function renderConversations() {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  let filtered = conversations;
+  if (deletedFilter === 'active') filtered = filtered.filter(c => !c.deleted);
+  else if (deletedFilter === 'deleted') filtered = filtered.filter(c => c.deleted);
+  if (q) filtered = filtered.filter(c => c.title.toLowerCase().includes(q));
+
+  const list = document.getElementById('convList');
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="empty-state">无匹配对话</div>';
+    return;
+  }
+
+  const groups = {};
+  for (const c of filtered) {
+    const period = getDatePeriod(c.updated_at);
+    if (!groups[period]) groups[period] = [];
+    groups[period].push(c);
+  }
+
+  const sortedPeriods = Object.keys(groups).sort((a,b) => getPeriodOrder(a) - getPeriodOrder(b));
+  const hasSearch = q.length > 0;
+
+  list.innerHTML = sortedPeriods.map(period => {
+    const items = groups[period];
+    const groupKey = period;
+    const isCollapsed = collapsedGroups[groupKey] && !hasSearch;
+    const arrowCls = isCollapsed ? 'arrow collapsed' : 'arrow';
+    const itemsCls = isCollapsed ? 'group-items collapsed' : 'group-items';
+
+    return `
+      <div class="group-header" onclick="toggleGroup('${groupKey}')">
+        <span><span class="${arrowCls}">▾</span> ${period}</span>
+        <span>${items.length}</span>
+      </div>
+      <div class="${itemsCls}">
+        ${items.map(c => {
+          const dt = new Date(c.updated_at).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+          const a = c.id === currentConvId ? 'active' : '';
+          const isActive = activeConversations[c.id] ? ' ⏳' : '';
+          const delCls = c.deleted ? 'deleted' : '';
+          const delBadge = c.deleted ? '<span class="deleted-badge">已删除</span>' : '';
+          return `<div class="conv-item ${a} ${delCls}" onclick="selectConversation('${c.id}')">
+            <div class="title">${escHtml(c.title)}${isActive}${delBadge}</div>
+            <div class="meta"><span>${dt}</span><span class="dot">&#x25CF;</span><span>${c.id.slice(0,8)}</span></div>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }).join('');
+}
+
+function toggleGroup(key) {
+  collapsedGroups[key] = !collapsedGroups[key];
+  renderConversations();
+}
+
+function renderActivePanel() {
+  const keys = Object.keys(activeConversations);
+  document.getElementById('activeCount').textContent = keys.length;
+  const list = document.getElementById('activeList');
+  if (keys.length === 0) {
+    list.innerHTML = '<div style="font-size:12px;color:#bbb;padding:4px 0">无进行中对话</div>';
+    return;
+  }
+  list.innerHTML = keys.map(id => {
+    const a = activeConversations[id];
+    const title = a.title || id.slice(0,8);
+    const stage = a.stage || '...';
+    const stageLabels = {'retrieving':'检索中','reasoning':'推理中','generating':'生成中','done':'完成'};
+    const stageText = stageLabels[stage] || stage;
+    return `<div class="active-item">
+      <span class="ai-title" title="${escHtml(title)}">${escHtml(title)}</span>
+      <span class="ai-stage">${stageText}</span>
+    </div>`;
+  }).join('');
+}
+
+async function selectConversation(convId) {
+  currentConvId = convId;
+  renderConversations();
+  const panel = document.getElementById('mainPanel');
+  panel.classList.remove('empty');
+  panel.innerHTML = '<div style="padding:40px;text-align:center;color:var(--t2)">加载中...</div>';
+
+  try {
+    const [detailResp, statsResp] = await Promise.all([
+      fetch(`/api/conversations/detail?conv_id=${convId}`),
+      fetch(`/api/conversations/stats?conv_id=${convId}`)
+    ]);
+    const detail = await detailResp.json();
+    const stats = await statsResp.json();
+
+    const dt = new Date(detail.updated_at).toLocaleString('zh-CN');
+
+    let confHtml = '';
+    if (stats.confidence_distribution) {
+      const labels = {'高':'green','中':'orange','低':'red'};
+      for (const [k,v] of Object.entries(stats.confidence_distribution)) {
+        const cls = labels[k] || '';
+        confHtml += `<div class="stat-card"><span class="num ${cls}">${v}</span><span class="label">${k}置信度</span></div>`;
+      }
+    }
+
+    const isDeleted = detail.deleted;
+    let html = `<div class="conv-header">
+      <h2>${escHtml(detail.title)}${isDeleted ? ' <span style="font-size:13px;color:var(--r)">(已删除)</span>' : ''}</h2>
+      <div class="meta"><span>ID: ${detail.id}</span><span>${dt}</span><span>${detail.stats.rounds} 轮对话</span><span>${stats.total_sources} 条来源引用</span>
+        ${isDeleted ? `<span style="color:var(--r);cursor:pointer;text-decoration:underline" onclick="if(confirm('确认物理删除？将不可恢复！')){fetch('/api/conversations/${detail.id}/hard',{method:'DELETE'}).then(()=>{showToast('已物理删除');fetchConversations();document.getElementById('mainPanel').classList.add('empty');document.getElementById('mainPanel').innerHTML='<div class=\\'empty-state\\'><div class=\\'hint\\'><span class=\\'icon\\'>&#x1F4AC;</span>选择一个对话查看详情</div></div>';})}">物理删除</span>` : ''}
+      </div>
+    </div>
+    <div class="stats-row">
+      <div class="stat-card"><span class="num blue">${detail.stats.rounds}</span><span class="label">问答轮次</span></div>
+      <div class="stat-card"><span class="num blue">${detail.messages.length}</span><span class="label">总消息数</span></div>
+      <div class="stat-card"><span class="num green">${stats.unique_files}</span><span class="label">引用文件数</span></div>
+      <div class="stat-card"><span class="num blue">${stats.total_sources}</span><span class="label">来源引用次数</span></div>
+      ${confHtml}
+    </div>`;
+
+    if (stats.file_stats && Object.keys(stats.file_stats).length > 0) {
+      const sortedFiles = Object.entries(stats.file_stats).sort((a,b) => b[1].count - a[1].count);
+      html += `<div class="stats-row">`;
+      for (const [fn, fs] of sortedFiles.slice(0, 6)) {
+        const avgConf = fs.confidences.length > 0 ? (fs.confidences.reduce((a,b)=>a+b,0)/fs.confidences.length) : 0;
+        const pct = Math.round(avgConf * 100);
+        const cl = confLabel(avgConf);
+        html += `<div class="stat-card" style="min-width:180px;flex:2">
+          <span class="num" style="font-size:13px;font-weight:500;color:var(--t);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(fn.length > 40 ? fn.slice(0,40)+'...' : fn)}</span>
+          <span class="label">引用 ${fs.count} 次 · 平均置信度 <span class="conf-badge ${cl}">${pct}%</span></span>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+
+    for (let i = 0; i < detail.messages.length; i++) {
+      const msg = detail.messages[i];
+      const isUser = msg.role === 'user';
+      const roleLabel = isUser ? '用户提问' : 'Agent 回答';
+      const roleCls = isUser ? 'user' : 'assistant';
+      const time = msg.created_at ? formatTime(msg.created_at) : '';
+
+      const ur = msg.user_rating;
+      const sr = msg.semantic_rating;
+      let ratingHtml = '';
+      if (ur || sr) {
+        ratingHtml = `<span style="font-size:11px;color:var(--t2)">
+          ${ur ? '⭐'.repeat(ur) : ''}
+          ${sr ? `<span style="font-size:10px;color:#999;margin-left:4px">语义:${'⭐'.repeat(sr)}</span>` : ''}
+        </span>`;
+      }
+
+      html += `<div class="msg-card">
+        <div class="msg-header ${roleCls}"><span>${roleLabel} #${Math.ceil((i+1)/2)}</span><span>${ratingHtml} <span class="time" style="margin-left:8px">${time}</span></span></div>
+        <div class="msg-body">${escHtml(msg.content || '(空)')}</div>`;
+
+      if (!isUser && msg.sources && msg.sources.length > 0) {
+        html += `<div class="msg-sources">
+          <div class="src-title">来源文件 (${msg.sources.length} 条)</div>`;
+        for (const s of msg.sources) {
+          const conf = s.confidence != null ? s.confidence : 0;
+          const pct = Math.round(conf * 100);
+          const cl = confLabel(conf);
+          const ct = confText(conf);
+          const fn = s.file_name || '未知文件';
+          const sec = s.section ? ` / ${s.section}` : '';
+          html += `<div class="src-item">
+            <span class="file-name" title="${escHtml(fn)}">${escHtml(fn.length > 35 ? fn.slice(0,35)+'...' : fn)}</span>
+            <span class="section">${escHtml(sec)}</span>
+            <div class="bar-wrap"><div class="bar-fill ${cl}" style="width:${pct}%"></div></div>
+            <span class="conf-badge ${cl}">${ct} ${pct}%</span>
+          </div>`;
+        }
+        html += `</div>`;
+      } else if (!isUser) {
+        html += `<div class="msg-sources"><div class="src-title" style="color:var(--t2)">无来源引用</div></div>`;
+      }
+      html += `</div>`;
+    }
+
+    panel.innerHTML = html;
+    panel.scrollTop = 0;
+  } catch (e) {
+    console.error('加载对话详情失败:', e);
+    document.getElementById('detailContent').innerHTML = `<div class="empty-state">加载失败: ${e.message}</div>`;
+  }
+}
+
+// ===== Tab =====
+let chartInstances = {};
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-item').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab' + name.charAt(0).toUpperCase() + name.slice(1)));
+  if ((name === 'overview' || name === 'performance') && !chartInstances.initialized) {
+    renderDashboard();
+  }
+  if (name === 'detail' && currentConvId) {
+    selectConversation(currentConvId);
+  }
+  // 强制所有 ECharts 实例重新计算尺寸（解决 display:none 容器初始化导致变形）
+  setTimeout(() => {
+    for (const key in chartInstances) {
+      if (key !== 'initialized' && chartInstances[key] && typeof chartInstances[key].resize === 'function') {
+        chartInstances[key].resize();
+      }
+    }
+  }, 50);
+}
+
+async function renderDashboard() {
+  try {
+    const [dashResp, healthResp] = await Promise.all([
+      fetch('/api/stats/dashboard'),
+      fetch('/api/stats/health'),
+    ]);
+    const dash = await dashResp.json();
+    const health = await healthResp.json();
+    renderHealth(health);
+    renderOverviewCharts(dash);
+    renderPerfCharts(dash);
+    chartInstances.initialized = true;
+  } catch (e) {
+    console.error('看板加载失败:', e);
+  }
+}
+
+function renderHealth(h) {
+  const hh = h || {};
+  const uptime = hh.uptime_seconds ? Math.floor(hh.uptime_seconds / 60) + 'm' : '-';
+  document.getElementById('healthRow').innerHTML = `
+    <div class="health-card"><span class="hnum green">${hh.llm_provider || '-'}</span><span class="hlbl">LLM 提供商</span></div>
+    <div class="health-card"><span class="hnum blue">${hh.llm_model || '-'}</span><span class="hlbl">当前模型</span></div>
+    <div class="health-card"><span class="hnum ${hh.faiss_ready ? 'green' : 'orange'}">${hh.faiss_ready ? '✅' : '⚠️'}</span><span class="hlbl">FAISS 索引</span></div>
+    <div class="health-card"><span class="hnum ${hh.chroma_ready ? 'green' : 'orange'}">${hh.chroma_ready ? '✅' : '⚠️'}</span><span class="hlbl">Chroma 索引</span></div>
+    <div class="health-card"><span class="hnum orange">${uptime}</span><span class="hlbl">运行时长</span></div>
+    <div class="health-card"><span class="hnum blue">${hh.today_queries || 0}</span><span class="hlbl">今日问答</span></div>
+  `;
+}
+
+function makeChart(elemId, option) {
+  const el = document.getElementById(elemId);
+  if (!el) return null;
+  if (chartInstances[elemId]) chartInstances[elemId].dispose();
+  const chart = echarts.init(el);
+  chart.setOption(option);
+  chartInstances[elemId] = chart;
+  window.addEventListener('resize', () => chart.resize());
+  return chart;
+}
+
+function renderOverviewCharts(d) {
+  const dateOpt = {axisLabel:{fontSize:11,rotate:15,margin:8}};
+
+  makeChart('chartDocHeat', {
+    title: {text: '文档热度 Top5', textStyle:{fontSize:14,fontWeight:600}}, grid:{left:10,right:30,top:36,bottom:10,containLabel:true},
+    xAxis: {type:'value', axisLabel:{fontSize:11}},
+    yAxis: {type:'category', data: d.doc_hotness.slice(0,5).map(x => x.file_name.length>16?x.file_name.slice(0,16)+'...':x.file_name).reverse(), axisLabel:{fontSize:11,fontWeight:500}},
+    series: [{type:'bar', data: d.doc_hotness.slice(0,5).map(x=>({value:x.count,itemStyle:{color:x.avg_confidence>0.8?'#34c759':x.avg_confidence>0.6?'#ff9500':'#ff3b30'}})).reverse(),
+      barMaxWidth:26,label:{show:true,position:'right',fontSize:11,formatter:p=>p.value+'次'}}],
+    tooltip:{trigger:'axis',formatter:p=>p[0]?`${p[0].name}<br/>引用: ${p[0].value}次<br/>置信度: ${((d.doc_hotness.slice(0,5).reverse()[p[0].dataIndex]||{}).avg_confidence*100||0).toFixed(0)}%`:''},
+  });
+
+  const rd = d.ratings.distribution || {};
+  const ratingChart = makeChart('chartRatingDist', {
+    title: {text: '评分分布', textStyle:{fontSize:14,fontWeight:600}}, tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)'},
+    series: [{type:'pie',radius:['35%','65%'],center:['50%','55%'],
+      data:[1,2,3,4,5].map(k=>({name:k+'星',value:rd[k]||0})),
+      label:{fontSize:12,formatter:'{b}\n{c}次'},itemStyle:{borderRadius:4},
+      color:['#ff3b30','#ff9500','#ffcc00','#34c759','#0071e3']}],
+  });
+  ratingChart.on('click', function(params) {
+    const star = params.name.charAt(0);
+    openDrillDownModal('rating', star, `${star}星评分问答`);
+  });
+
+  const rt = d.ratings.trend || [];
+  makeChart('chartRatingTrend', {
+    title: {text: '评分趋势 (近30天)', textStyle:{fontSize:14,fontWeight:600}},
+    grid:{left:42,right:20,top:36,bottom:28},
+    xAxis: {type:'category', data:rt.map(x=>x.date.slice(5)), ...dateOpt},
+    yAxis: {type:'value',min:2,max:5,axisLabel:{fontSize:11}},
+    series: [{type:'line',data:rt.map(x=>x.avg_rating),smooth:true,lineStyle:{width:2.5},symbol:'circle',symbolSize:6,areaStyle:{opacity:.15}}],
+    tooltip:{trigger:'axis'},
+  });
+
+  const act = d.activity || [];
+  makeChart('chartActivity', {
+    title: {text: '对话活跃 (近30天)', textStyle:{fontSize:14,fontWeight:600}},
+    grid:{left:42,right:20,top:36,bottom:28},
+    xAxis: {type:'category', data:act.map(x=>x.date.slice(5)), ...dateOpt},
+    yAxis: {type:'value',axisLabel:{fontSize:11}},
+    series: [{type:'bar',data:act.map(x=>x.total_queries),barMaxWidth:18,itemStyle:{color:'#0071e3',borderRadius:[4,4,0,0]},label:{show:true,fontSize:10,position:'top'}}],
+    tooltip:{trigger:'axis'},
+  });
+
+  const hs = d.query_hotspots || [];
+  const hotspotChart = makeChart('chartHotspot', {
+    title: {text: '查询热点', textStyle:{fontSize:14,fontWeight:600}}, tooltip:{trigger:'item',formatter:p=>`${p.name}: ${p.value}次`},
+    series: [{type:'wordCloud',shape:'circle',sizeRange:[14,44],rotationRange:[-20,20],gridSize:6,
+      textStyle:{fontWeight:'bold',color:()=>['#0071e3','#34c759','#ff9500','#ff3b30','#5856d6','#af52de'][Math.floor(Math.random()*6)]},
+      data:hs.slice(0,40).map(x=>({name:x.keyword,value:x.count}))}],
+  });
+  hotspotChart.on('click', function(params) {
+    openDrillDownModal('keyword', params.name, `包含"${params.name}"的问答`);
+  });
+}
+
+function renderPerfCharts(d) {
+  const dateOpt = {axisLabel:{fontSize:11,rotate:15,margin:8}};
+  const rt = d.retrieval_trends || [];
+
+  makeChart('chartRetrieval', {
+    title: {text: '检索质量趋势 (近30天)', textStyle:{fontSize:14,fontWeight:600}},
+    grid:{left:42,right:56,top:36,bottom:28},
+    xAxis: {type:'category',data:rt.map(x=>x.date.slice(5)),...dateOpt},
+    yAxis: [{type:'value',name:'耗时(秒)',axisLabel:{fontSize:11}},{type:'value',name:'召回(条)',axisLabel:{fontSize:11}}],
+    series: [
+      {name:'平均耗时',type:'line',data:rt.map(x=>x.avg_total_time),smooth:true,lineStyle:{width:2.5},symbol:'circle',symbolSize:6,yAxisIndex:0},
+      {name:'平均召回',type:'line',data:rt.map(x=>x.avg_returned_count),smooth:true,lineStyle:{width:2.5,color:'#34c759'},symbol:'diamond',symbolSize:6,yAxisIndex:1,itemStyle:{color:'#34c759'}},
+    ],
+    tooltip:{trigger:'axis'},legend:{bottom:0,textStyle:{fontSize:11}},
+  });
+
+  const lh = d.llm_health || [];
+  const llmChart = makeChart('chartLLM', {
+    title: {text: 'LLM 调用健康 (近30天)', textStyle:{fontSize:14,fontWeight:600}},
+    grid:{left:42,right:20,top:36,bottom:28},
+    xAxis: {type:'category',data:lh.map(x=>x.date.slice(5)),...dateOpt},
+    yAxis: {type:'value',axisLabel:{fontSize:11}},
+    series: [
+      {name:'成功',type:'bar',stack:'total',data:lh.map(x=>x.success_count),barMaxWidth:18,itemStyle:{color:'#34c759'}},
+      {name:'失败',type:'bar',stack:'total',data:lh.map(x=>x.fail_count),barMaxWidth:18,itemStyle:{color:'#ff3b30',borderRadius:[4,4,0,0]}},
+      {name:'熔断',type:'line',data:lh.map(x=>x.circuit_break_count),symbol:'diamond',symbolSize:8,lineStyle:{color:'#ff9500',width:2,type:'dashed'},itemStyle:{color:'#ff9500'}},
+    ],
+    tooltip:{trigger:'axis'},legend:{bottom:0,textStyle:{fontSize:11}},
+  });
+  llmChart.on('click', function(params) {
+    if (params.seriesName === '失败' && params.value > 0) {
+      const dateStr = lh[params.dataIndex].date;
+      openDrillDownModal('error_date', dateStr, `${dateStr} LLM 错误详情`);
+    }
+  });
+
+  const cs = d.confidence_scatter || [];
+  const scatterChart = makeChart('chartConfScatter', {
+    title: {text: '评分-置信度散点 (质量交叉分析)', textStyle:{fontSize:14,fontWeight:600}},
+    grid:{left:50,right:20,top:36,bottom:30},
+    xAxis: {type:'value',name:'平均置信度',min:0,max:1,axisLabel:{fontSize:11,fontWeight:500},nameTextStyle:{fontSize:11}},
+    yAxis: {type:'value',name:'用户评分',min:0,max:5,axisLabel:{fontSize:11,fontWeight:500},nameTextStyle:{fontSize:11}},
+    series: [{type:'scatter',symbolSize:10,data:cs.map(x=>[x.avg_confidence,x.rating]),itemStyle:{color:'#0071e3',opacity:.7}}],
+    tooltip:{trigger:'item',formatter:p=>`置信度: ${p.data[0].toFixed(2)}<br/>评分: ${p.data[1]}<br/>${cs[p.dataIndex]?.query_short||''}`},
+  });
+  scatterChart.on('click', function(params) {
+    const idx = params.dataIndex;
+    const item = cs[idx];
+    if (item) {
+      openDrillDownModal('scatter', String(idx), `问答详情 (置信度:${item.avg_confidence}, 评分:${item.rating})`);
+    }
+  });
+
+  makeChart('chartTiming', {
+    title: {text: '环节耗时分布 (近30天)', textStyle:{fontSize:14,fontWeight:600}},
+    grid:{left:42,right:20,top:36,bottom:28},
+    xAxis: {type:'category',data:rt.map(x=>x.date.slice(5)),...dateOpt},
+    yAxis: {type:'value',name:'秒',axisLabel:{fontSize:11}},
+    series: [
+      {name:'改写',type:'bar',stack:'time',data:rt.map(x=>x.avg_rewrite_time),barMaxWidth:18,itemStyle:{color:'#5856d6'}},
+      {name:'LLM',type:'bar',stack:'time',data:rt.map(x=>x.avg_llm_time),barMaxWidth:18,itemStyle:{color:'#0071e3',borderRadius:[4,4,0,0]}},
+      {name:'总计',type:'line',data:rt.map(x=>x.avg_total_time),symbol:'none',lineStyle:{width:2,color:'#ff3b30',type:'dashed'}},
+    ],
+    tooltip:{trigger:'axis'},legend:{bottom:0,textStyle:{fontSize:11}},
+  });
+
+  const tr = d.truncation || [];
+  makeChart('chartTruncation', {
+    title: {text: '上下文截断统计 (近30天)', textStyle:{fontSize:14,fontWeight:600}},
+    grid:{left:42,right:20,top:36,bottom:28},
+    xAxis: {type:'category',data:tr.map(x=>x.date.slice(5)),...dateOpt},
+    yAxis: {type:'value',axisLabel:{fontSize:11}},
+    series: [{type:'bar',data:tr.map(x=>x.truncation_count),barMaxWidth:18,itemStyle:{color:'#ff9500',borderRadius:[4,4,0,0]},label:{show:true,fontSize:10,position:'top'}}],
+    tooltip:{trigger:'axis'},
+  });
+
+  const dh = d.doc_hotness || [];
+  const lowConf = dh.filter(x=>x.avg_confidence<0.7).slice(0,10);
+  makeChart('chartLowConf', {
+    title: {text: '低置信度文档 (置信度<0.7)', textStyle:{fontSize:14,fontWeight:600}},
+    grid:{left:10,right:30,top:36,bottom:10,containLabel:true},
+    xAxis: {type:'value',axisLabel:{fontSize:11}},
+    yAxis: {type:'category',data:lowConf.map(x=>x.file_name.length>14?x.file_name.slice(0,14)+'...':x.file_name),axisLabel:{fontSize:11}},
+    series: [{type:'bar',data:lowConf.map(x=>x.count),barMaxWidth:22,itemStyle:{color:'#ff3b30',borderRadius:[0,4,4,0]},label:{show:true,position:'right',fontSize:11,formatter:p=>p.value+'次'}}],
+    tooltip:{trigger:'axis'},
+  });
+
+}
+
+// Override selectConversation to fill detailContent
+const _origSelect = selectConversation;
+selectConversation = async function(convId) {
+  currentConvId = convId;
+  renderConversations();
+  if (!document.querySelector('.tab-item[data-tab="detail"]').classList.contains('active')) {
+    switchTab('detail');
+  }
+  document.getElementById('detailEmpty').style.display = 'none';
+  const panel = document.getElementById('detailContent');
+  panel.style.display = 'block';
+  panel.innerHTML = '<div style="padding:40px;text-align:center;color:var(--t2)">加载中...</div>';
+
+  try {
+    const [detailResp, statsResp] = await Promise.all([
+      fetch(`/api/conversations/detail?conv_id=${convId}`),
+      fetch(`/api/conversations/stats?conv_id=${convId}`)
+    ]);
+    const detail = await detailResp.json();
+    const stats = await statsResp.json();
+
+    const dt = new Date(detail.updated_at).toLocaleString('zh-CN');
+
+    let confHtml = '';
+    if (stats.confidence_distribution) {
+      const labels = {'高':'green','中':'orange','低':'red'};
+      for (const [k,v] of Object.entries(stats.confidence_distribution)) {
+        const cls = labels[k] || '';
+        confHtml += `<div class="stat-card"><span class="num ${cls}">${v}</span><span class="label">${k}置信度</span></div>`;
+      }
+    }
+
+    const isDeleted = detail.deleted;
+    let html = `<div class="conv-header">
+      <h2>${escHtml(detail.title)}${isDeleted ? ' <span style="font-size:13px;color:var(--r)">(已删除)</span>' : ''}</h2>
+      <div class="meta"><span>ID: ${detail.id}</span><span>${dt}</span><span>${detail.stats.rounds} 轮对话</span><span>${stats.total_sources} 条来源引用</span>
+        ${isDeleted ? `<span style="color:var(--r);cursor:pointer;text-decoration:underline" onclick="if(confirm('确认物理删除？将不可恢复！')){fetch('/api/conversations/${detail.id}/hard',{method:'DELETE'}).then(()=>{showToast('已物理删除');fetchConversations();document.getElementById('detailContent').style.display='none';document.getElementById('detailEmpty').style.display='block';})}">物理删除</span>` : ''}
+      </div>
+    </div>
+    <div class="stats-row">
+      <div class="stat-card"><span class="num blue">${detail.stats.rounds}</span><span class="label">问答轮次</span></div>
+      <div class="stat-card"><span class="num blue">${detail.messages.length}</span><span class="label">总消息数</span></div>
+      <div class="stat-card"><span class="num green">${stats.unique_files}</span><span class="label">引用文件数</span></div>
+      <div class="stat-card"><span class="num blue">${stats.total_sources}</span><span class="label">来源引用次数</span></div>
+      ${confHtml}
+    </div>`;
+
+    if (stats.file_stats && Object.keys(stats.file_stats).length > 0) {
+      const sortedFiles = Object.entries(stats.file_stats).sort((a,b) => b[1].count - a[1].count);
+      html += `<div class="stats-row">`;
+      for (const [fn, fs] of sortedFiles.slice(0, 6)) {
+        const avgConf = fs.confidences.length > 0 ? (fs.confidences.reduce((a,b)=>a+b,0)/fs.confidences.length) : 0;
+        const pct = Math.round(avgConf * 100);
+        const cl = confLabel(avgConf);
+        html += `<div class="stat-card" style="min-width:180px;flex:2">
+          <span class="num" style="font-size:13px;font-weight:500;color:var(--t);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(fn.length > 40 ? fn.slice(0,40)+'...' : fn)}</span>
+          <span class="label">引用 ${fs.count} 次 · 平均置信度 <span class="conf-badge ${cl}">${pct}%</span></span>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+
+    for (let i = 0; i < detail.messages.length; i++) {
+      const msg = detail.messages[i];
+      const isUser = msg.role === 'user';
+      const roleLabel = isUser ? '用户提问' : 'Agent 回答';
+      const roleCls = isUser ? 'user' : 'assistant';
+      const time = msg.created_at ? formatTime(msg.created_at) : '';
+
+      const ur = msg.user_rating;
+      const sr = msg.semantic_rating;
+      let ratingHtml = '';
+      if (ur || sr) {
+        ratingHtml = `<span style="font-size:11px;color:var(--t2)">
+          ${ur ? '⭐'.repeat(ur) : ''}
+          ${sr ? `<span style="font-size:10px;color:#999;margin-left:4px">语义:${'⭐'.repeat(sr)}</span>` : ''}
+        </span>`;
+      }
+
+      html += `<div class="msg-card">
+        <div class="msg-header ${roleCls}"><span>${roleLabel} #${Math.ceil((i+1)/2)}</span><span>${ratingHtml} <span class="time" style="margin-left:8px">${time}</span></span></div>
+        <div class="msg-body">${escHtml(msg.content || '(空)')}</div>`;
+
+      if (!isUser && msg.sources && msg.sources.length > 0) {
+        html += `<div class="msg-sources">
+          <div class="src-title">来源文件 (${msg.sources.length} 条)</div>`;
+        for (const s of msg.sources) {
+          const conf = s.confidence != null ? s.confidence : 0;
+          const pct = Math.round(conf * 100);
+          const cl = confLabel(conf);
+          const ct = confText(conf);
+          const fn = s.file_name || '未知文件';
+          const sec = s.section ? ` / ${s.section}` : '';
+          html += `<div class="src-item">
+            <span class="file-name" title="${escHtml(fn)}">${escHtml(fn.length > 35 ? fn.slice(0,35)+'...' : fn)}</span>
+            <span class="section">${escHtml(sec)}</span>
+            <div class="bar-wrap"><div class="bar-fill ${cl}" style="width:${pct}%"></div></div>
+            <span class="conf-badge ${cl}">${ct} ${pct}%</span>
+          </div>`;
+        }
+        html += `</div>`;
+      } else if (!isUser) {
+        html += `<div class="msg-sources"><div class="src-title" style="color:var(--t2)">无来源引用</div></div>`;
+      }
+      html += `</div>`;
+    }
+
+    panel.innerHTML = html;
+    panel.scrollTop = 0;
+  } catch (e) {
+    console.error('加载对话详情失败:', e);
+    panel.innerHTML = `<div class="empty-state">加载失败: ${e.message}</div>`;
+  }
+};
+
+// 启动 SSE
+connectSSE();
+
+// ===== 图表钻取模态框 =====
+function openDrillDownModal(type, key, title) {
+  fetch(`/api/stats/drill-down?type=${type}&key=${encodeURIComponent(key)}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { showToast('钻取查询失败: ' + data.error); return; }
+      if (!Array.isArray(data) || data.length === 0) { showToast('无匹配数据'); return; }
+
+      let tableHtml = `<table class="modal-table">
+        <thead><tr><th>对话ID</th><th>问题</th><th>详情</th><th>时间</th></tr></thead><tbody>`;
+
+      for (const row of data) {
+        const detail = row.detail || {};
+        const detailStr = Object.entries(detail)
+          .filter(([k]) => k !== 'created_at')
+          .map(([k, v]) => `${k}=${v}`).join(', ');
+
+        const time = detail.created_at || '';
+        tableHtml += `<tr onclick="selectConversation('${row.conversation_id}')">
+          <td style="font-size:11px;font-family:monospace">${row.conversation_id || ''}</td>
+          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(row.query || '')}">${escHtml(row.query || '')}</td>
+          <td style="font-size:11px;color:var(--t2)">${escHtml(detailStr)}</td>
+          <td style="font-size:11px;color:var(--t2);white-space:nowrap">${time}</td>
+        </tr>`;
+      }
+      tableHtml += '</tbody></table>';
+
+      const modal = document.createElement('div');
+      modal.className = 'modal-overlay';
+      modal.innerHTML = `<div class="modal-content">
+        <div class="modal-header">
+          <h3>${escHtml(title)} (${data.length} 条)</h3>
+          <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+        </div>
+        ${tableHtml}
+      </div>`;
+      modal.addEventListener('click', function(e) {
+        if (e.target === this) this.remove();
+      });
+      document.body.appendChild(modal);
+    })
+    .catch(e => {
+      console.error('钻取查询失败:', e);
+      showToast('查询失败: ' + e.message);
+    });
+}
+
+// 首次加载看板
+setTimeout(() => { if (document.querySelector('.tab-item.active')?.dataset.tab !== 'detail') renderDashboard(); }, 2000);
+// 每60秒刷新会话列表作为保底
+setInterval(fetchConversations, 60000);
+// 每5分钟刷新看板
+setInterval(renderDashboard, 300000);
+</script>
+</body>
+</html>

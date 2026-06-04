@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文档入库管理</title>
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --card: #fff;
+    --t: #1d1d1f;
+    --t2: #6e6e73;
+    --b: #e5e5ea;
+    --b2: #d2d2d7;
+    --a: #0071e3;
+    --g: #34c759;
+    --y: #ff9500;
+    --r: #ff3b30;
+    --f: -apple-system, BlinkMacSystemFont, 'SF Pro SC', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); font-family: var(--f); color: var(--t); padding: 40px; display: flex; justify-content: center; min-height: 100vh; }
+  .preview-wrap { max-width: 1100px; width: 100%; }
+
+  .page-header { margin-bottom: 28px; }
+  .page-header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+  .page-header p { font-size: 13px; color: var(--t2); margin-top: 6px; }
+  .page-header .badge { display: inline-block; background: #0071e312; color: var(--a); font-size: 11px; padding: 2px 10px; border-radius: 100px; font-weight: 600; margin-left: 10px; vertical-align: middle; }
+
+  .stat-bar { display: flex; gap: 14px; margin-bottom: 24px; }
+  .stat-item { flex: 1; background: var(--card); border: 1px solid var(--b); border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; gap: 14px; }
+  .stat-item .icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+  .stat-item .icon.purple { background: #0071e312; color: var(--a); }
+  .stat-item .icon.green { background: #34c75918; color: var(--g); }
+  .stat-item .icon.orange { background: #ff950018; color: var(--y); }
+  .stat-item .icon.red { background: #ff3b3018; color: var(--r); }
+  .stat-item .icon.blue { background: #0071e318; color: var(--a); }
+  .stat-item .icon.gray { background: #6e6e7318; color: var(--t2); }
+  .stat-item .info .num { font-size: 22px; font-weight: 700; line-height: 1.2; }
+  .stat-item .info .num.scanning { color: var(--a); }
+  .stat-item .info .num.pending { color: var(--t2); }
+  .stat-item .info .num.duplicate { color: var(--y); }
+  .stat-item .info .label { font-size: 12px; color: var(--t2); }
+
+  .drop-zone { background: var(--card); border: 2px dashed var(--b2); border-radius: 14px; padding: 48px 20px; text-align: center; cursor: pointer; transition: all .25s; margin-bottom: 24px; position: relative; }
+  .drop-zone:hover, .drop-zone.dragover { border-color: var(--a); background: #0071e304; }
+  .drop-zone .icon-big { font-size: 44px; margin-bottom: 12px; display: block; }
+  .drop-zone .title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  .drop-zone .sub { font-size: 13px; color: var(--t2); }
+  .drop-zone .hint { font-size: 12px; color: var(--t2); margin-top: 14px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .drop-zone .hint span { background: var(--bg); padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 500; }
+
+  .batch-info { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--card); border: 1px solid var(--b); border-radius: 10px; margin-bottom: 20px; }
+  .batch-info .progress-bar { flex: 1; height: 6px; background: var(--bg); border-radius: 100px; overflow: hidden; }
+  .batch-info .progress-bar .fill { height: 100%; background: linear-gradient(90deg, var(--a), #60b0ff); border-radius: 100px; transition: width .5s; width: 35%; }
+  .batch-info .label { font-size: 13px; color: var(--t2); white-space: nowrap; }
+  .batch-info .label strong { color: var(--t); }
+
+  .batch-info.scan-phase { border-color: #0071e344; }
+  .batch-info.scan-phase .label { color: var(--a); }
+  .batch-info.scan-phase .label strong { color: #60b0ff; }
+  .batch-info.scan-phase .progress-bar .fill { background: linear-gradient(90deg, var(--a), #60b0ff); }
+
+  .file-list { border: 1px solid var(--b); border-radius: 10px; overflow: hidden; margin-bottom: 20px; }
+  .file-list-header { display: flex; padding: 12px 16px; background: var(--bg); font-size: 12px; color: var(--t2); font-weight: 600; border-bottom: 1px solid var(--b); align-items: center; }
+  .file-list-header .col-check { flex: 0 0 36px; text-align: center; }
+  .file-list-header .col-file { flex: 2; }
+  .file-list-header .col-size { flex: 1; text-align: center; }
+  .file-list-header .col-status { flex: 1.5; text-align: center; }
+  .file-list-header .col-source { flex: 1; text-align: center; }
+  .file-list-header .col-action { flex: 0 0 60px; text-align: center; }
+
+  .file-row { display: flex; padding: 12px 16px; align-items: center; border-bottom: 1px solid #f0f0f2; font-size: 13px; transition: background .2s; }
+  .file-row:last-child { border-bottom: none; }
+  .file-row:hover { background: #f8f8fa; }
+  .file-row .col-check { flex: 0 0 36px; text-align: center; }
+  .file-row .col-check input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--a); cursor: pointer; }
+  .file-row .col-check input[type=checkbox]:disabled { opacity: .3; cursor: not-allowed; }
+  .file-row .col-file { flex: 2; display: flex; align-items: center; gap: 10px; }
+  .file-row .col-file .ext-badge { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+  .file-row .col-file .ext-badge.pdf { background: #ff3b3012; color: var(--r); }
+  .file-row .col-file .ext-badge.docx { background: #0071e312; color: var(--a); }
+  .file-row .col-file .ext-badge.xlsx { background: #34c75912; color: var(--g); }
+  .file-row .col-file .ext-badge.png,.file-row .col-file .ext-badge.jpg { background: #ff950012; color: var(--y); }
+  .file-row .col-file .fname { font-weight: 500; }
+  .file-row .col-file .fpath { font-size: 11px; color: var(--t2); margin-top: 1px; }
+  .file-row .col-size { flex: 1; text-align: center; color: var(--t2); font-size: 12px; }
+  .file-row .col-source { flex: 1; text-align: center; font-size: 11px; color: var(--t2); }
+  .file-row .col-status { flex: 1.5; text-align: center; }
+  .file-row .col-action { flex: 0 0 60px; text-align: center; }
+
+  .status-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 3px 10px; border-radius: 100px; font-weight: 500; }
+  .status-badge.scanning { background: #0071e312; color: var(--a); }
+  .status-badge.duplicate { background: #ff950012; color: var(--y); }
+  .status-badge.pending { background: #6e6e7312; color: var(--t2); }
+  .status-badge.queued { background: var(--bg); color: var(--t2); }
+  .status-badge.extracting { background: #0071e312; color: var(--a); }
+  .status-badge.cleaning { background: #ff950012; color: var(--y); }
+  .status-badge.chunking { background: #5856d612; color: #5856d6; }
+  .status-badge.embedding { background: #5856d612; color: #5856d6; }
+  .status-badge.done { background: #34c75912; color: var(--g); }
+  .status-badge.error { background: #ff3b3012; color: var(--r); }
+
+  .status-badge .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+  .status-badge .dot.green { background: var(--g); }
+  .status-badge .dot.blue { background: var(--a); }
+  .status-badge .dot.orange { background: var(--y); }
+  .status-badge .dot.purple { background: #5856d6; }
+  .status-badge .dot.gray { background: var(--t2); }
+  .status-badge .dot.red { background: var(--r); }
+
+  .status-badge .dot.pulse { animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .file-row .col-action .del-btn { background: none; border: none; color: var(--b2); cursor: pointer; font-size: 16px; padding: 4px; border-radius: 4px; transition: all .2s; }
+  .file-row .col-action .del-btn:hover { color: var(--r); background: #ff3b3008; }
+
+  .conflict-select { background: var(--card); color: var(--t); border: 1px solid #ff950044; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-family: inherit; cursor: pointer; outline: none; }
+  .conflict-select:hover { border-color: var(--y); }
+  .conflict-select option { background: var(--card); color: var(--t); }
+
+  .summary-bar { display: flex; gap: 14px; padding: 16px; background: var(--card); border: 1px solid var(--b); border-radius: 10px; margin-bottom: 20px; }
+  .summary-item { flex: 1; text-align: center; }
+  .summary-item .num { font-size: 24px; font-weight: 700; }
+  .summary-item .label { font-size: 12px; color: var(--t2); margin-top: 2px; }
+  .summary-item .num.green { color: var(--g); }
+  .summary-item .num.red { color: var(--r); }
+  .summary-item .num.purple { color: var(--a); }
+  .summary-item .num.gray { color: var(--t2); }
+  .summary-item .num.orange { color: var(--y); }
+  .summary-item .num.blue { color: var(--a); }
+
+  .action-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .action-bar .btn { padding: 7px 16px; border-radius: 8px; border: none; font-size: 13px; cursor: pointer; font-family: inherit; transition: all .2s; }
+  .action-bar .btn.primary { background: var(--a); color: #fff; font-weight: 600; }
+  .action-bar .btn.primary:hover { background: #0062c4; }
+  .action-bar .btn.primary:disabled { opacity: .35; cursor: not-allowed; background: var(--a); }
+  .action-bar .btn.primary .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 5px; }
+  .action-bar .btn.success { background: var(--g); color: #fff; font-weight: 600; }
+  .action-bar .btn.success:hover { background: #2db84e; }
+  .action-bar .btn.secondary { background: var(--bg); color: var(--t); }
+  .action-bar .btn.secondary:hover { background: var(--b); }
+  .action-bar .btn.outline { background: transparent; border: 1px solid var(--b); color: var(--t2); }
+  .action-bar .btn.outline:hover { border-color: var(--a); color: var(--a); }
+  .action-bar .btn.outline:disabled { opacity: .35; cursor: not-allowed; }
+  .action-bar .btn.danger-outline { background: transparent; border: 1px solid #ff3b3055; color: #ff3b30aa; }
+  .action-bar .btn.danger-outline:hover { border-color: var(--r); color: var(--r); }
+  .action-bar .sep { width: 1px; height: 24px; background: var(--b); margin: 0 6px; }
+  .action-bar .hint-text { font-size: 12px; color: var(--t2); margin-left: auto; }
+  .action-bar .selected-count { font-size: 12px; color: var(--t2); }
+  .action-bar .selected-count strong { color: var(--t); }
+
+  .batch-select { background: var(--bg); color: var(--t); border: 1px solid var(--b); border-radius: 6px; padding: 5px 10px; font-size: 12px; font-family: inherit; cursor: pointer; outline: none; }
+  .batch-select:hover { border-color: var(--a); color: var(--a); }
+  .batch-select option { background: var(--card); color: var(--t); }
+
+  .filter-bar { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .filter-bar .chip { padding: 4px 12px; border-radius: 100px; font-size: 12px; cursor: pointer; border: 1px solid var(--b); background: transparent; color: var(--t2); transition: all .2s; font-family: inherit; }
+  .filter-bar .chip:hover { border-color: var(--b2); color: var(--t); }
+  .filter-bar .chip.active { background: #0071e312; border-color: var(--a); color: var(--a); font-weight: 600; }
+
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--t2); }
+  .empty-state .icon { font-size: 48px; margin-bottom: 12px; display: block; opacity: .3; }
+  .empty-state .title { font-size: 15px; font-weight: 600; color: var(--t2); margin-bottom: 6px; }
+  .empty-state .sub { font-size: 13px; }
+
+  .annotation { margin-top: 40px; padding: 16px 20px; background: var(--card); border: 1px solid var(--b); border-radius: 10px; font-size: 13px; color: var(--t2); line-height: 1.7; }
+  .annotation strong { color: var(--t); }
+
+  .flow-section { margin-top: 32px; background: var(--card); border: 1px solid var(--b); border-radius: 12px; padding: 24px; }
+  .flow-title { font-size: 15px; font-weight: 600; color: var(--t); margin-bottom: 20px; }
+  .flow-steps { display: flex; align-items: stretch; gap: 0; }
+  .flow-step { flex: 1; text-align: center; padding: 16px 8px; background: var(--bg); border-radius: 10px; position: relative; }
+  .flow-step .step-num { position: absolute; top: -8px; left: -8px; width: 24px; height: 24px; border-radius: 50%; font-size: 12px; font-weight: 700; line-height: 24px; text-align: center; }
+  .flow-step .step-num.blue { background: var(--a); color: #fff; }
+  .flow-step .step-num.green { background: var(--g); color: #fff; }
+  .flow-step .step-num.purple { background: #5856d6; color: #fff; }
+  .flow-step .step-icon { font-size: 28px; margin-bottom: 8px; display: block; }
+  .flow-step .step-name { font-size: 14px; font-weight: 600; color: var(--t); margin-bottom: 6px; }
+  .flow-step .step-desc { font-size: 11px; color: var(--t2); line-height: 1.5; }
+  .flow-step.warn { border: 1px solid #ff950044; background: #ff950004; }
+  .flow-step.highlight { border: 1px solid var(--a); background: #0071e304; }
+  .flow-arrow { display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--b2); padding: 0 8px; flex-shrink: 0; }
+  .flow-meta { margin-top: 18px; display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; font-size: 12px; color: var(--t2); }
+  .flow-meta span { background: var(--bg); padding: 5px 14px; border-radius: 100px; }
+
+  .status-bar-container { margin-bottom: 20px; display: none; align-items: center; gap: 10px; padding: 8px 14px; background: var(--card); border-radius: 8px; border: 1px solid var(--b); }
+  .status-bar-container.visible { display: flex; }
+  .status-bar-container .status-text { font-size: 12px; color: var(--t2); flex: 1; }
+  .status-bar-container .status-count { font-size: 12px; color: var(--t2); white-space: nowrap; }
+
+  .phase-badge { display: inline-block; font-size: 11px; padding: 2px 10px; border-radius: 100px; font-weight: 600; margin-left: 8px; }
+  .phase-badge.confirm { background: #0071e312; color: var(--a); }
+  .phase-badge.exec { background: #5856d612; color: #5856d6; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width:1024px) {
+    .flow-steps { flex-wrap: wrap; justify-content: center; gap: 12px; }
+    .flow-step { flex: 1 1 28%; min-width: 140px; }
+    .flow-arrow { display: none; }
+    .flow-meta { flex-direction: column; align-items: center; }
+  }
+  @media (max-width:768px) {
+    body { padding: 16px; }
+    .stat-bar { flex-direction: column; }
+    .file-list-header, .file-row { flex-wrap: wrap; gap: 6px; }
+    .file-list-header .col-action, .file-row .col-action { flex: 0 0 100%; text-align: right; }
+    .file-list-header .col-source, .file-row .col-source { display: none; }
+    .summary-bar { flex-wrap: wrap; }
+    .flow-step { flex: 1 1 40%; min-width: 120px; }
+    .flow-step .step-desc { display: none; }
+  }
+  @media (max-width:480px) {
+    .flow-steps { flex-direction: column; align-items: stretch; gap: 8px; }
+    .flow-step { flex: none; }
+    .flow-meta span { width: 100%; text-align: center; }
+  }
+</style>
+</head>
+<body>
+<div class="preview-wrap">
+
+  <div class="page-header">
+    <div style="display:flex;align-items:baseline;gap:16px;flex-wrap:wrap">
+      <h1 style="margin:0">📂 文档入库管理</h1>
+      <span id="docTotalBadge" style="font-size:14px;color:var(--t2);font-weight:500;white-space:nowrap">已入库: 0</span>
+    </div>
+    <p>拖拽上传文档 → 扫描校验 → 确认范围 → 自动清洗切片 → 入库知识库</p>
+  </div>
+
+  <!-- 统计栏 -->
+  <div class="stat-bar">
+    <div class="stat-item">
+      <div class="icon purple">📄</div>
+      <div class="info"><div class="num" id="totalCount">0</div><div class="label">文档总数</div></div>
+    </div>
+    <div class="stat-item">
+      <div class="icon green">✅</div>
+      <div class="info"><div class="num" id="successCount">0</div><div class="label">处理成功</div></div>
+    </div>
+    <div class="stat-item">
+      <div class="icon red">❌</div>
+      <div class="info"><div class="num" id="failCount">0</div><div class="label">处理失败</div></div>
+    </div>
+    <div class="stat-item">
+      <div class="icon gray">⏸</div>
+      <div class="info"><div class="num pending" id="pendingCount">0</div><div class="label">待确认</div></div>
+    </div>
+    <div class="stat-item">
+      <div class="icon orange">⚠️</div>
+      <div class="info"><div class="num duplicate" id="conflictCount">0</div><div class="label">重名冲突</div></div>
+    </div>
+    <div class="stat-item">
+      <div class="icon blue">🔮</div>
+      <div class="info"><div class="num" id="faissCount">0</div><div class="label">FAISS 向量</div></div>
+    </div>
+    <div class="stat-item">
+      <div class="icon blue">📊</div>
+      <div class="info"><div class="num" id="chromaCount">0</div><div class="label">Chroma 向量</div></div>
+    </div>
+  </div>
+
+  <!-- 操作栏 -->
+  <div class="action-bar" id="actionBarConfirm">
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#888;cursor:pointer;">
+      <input type="checkbox" id="selectAll" style="accent-color:#7c3aed;width:15px;height:15px;"> 全选
+    </label>
+    <div class="sep"></div>
+    <select class="batch-select" id="batchAction">
+      <option value="">批量操作</option>
+      <option value="overwrite">覆盖旧版</option>
+      <option value="skip">跳过</option>
+      <option value="rename">自动重命名</option>
+    </select>
+    <button class="btn primary" id="btnStart" disabled>▶ 开始处理 (0 个文件)</button>
+    <div class="sep"></div>
+    <button class="btn danger-outline" id="btnClearAll">🗑 清空全部</button>
+    <span class="selected-count" id="selectedCount">已选 <strong>0</strong> 个</span>
+  </div>
+
+  <div class="action-bar" id="actionBarExec" style="display:none;">
+    <button class="btn primary" disabled><span class="spinner"></span><span id="execLabel">处理中 (0/0)</span></button>
+    <button class="btn secondary" id="btnStop">⏹ 停止</button>
+    <div class="sep"></div>
+    <button class="btn danger-outline" id="btnClearAll2">🗑 清空全部</button>
+    <span class="hint-text" id="batchHint">最大 100 个文件，20 个一批次</span>
+  </div>
+
+  <!-- 拖拽区 -->
+  <div class="drop-zone" id="dropZone">
+    <span class="icon-big">📁</span>
+    <div class="title">拖拽文件到此处上传</div>
+    <div class="sub">或点击此区域选择文件（支持文件夹）</div>
+    <div class="hint">
+      <span>PDF</span>
+      <span>WORD</span>
+      <span>EXCEL</span>
+      <span>PNG</span>
+      <span>JPG</span>
+    </div>
+  </div>
+
+  <!-- 批次进度 -->
+  <div class="batch-info" id="batchInfo" style="display:none;">
+    <span class="label">批次 <strong id="batchLabel">1/1</strong></span>
+    <div class="progress-bar"><div class="fill" id="batchFill" style="width:0%"></div></div>
+    <span class="label"><strong id="batchDone">0</strong>/<span id="batchTotal">0</span> 已完成</span>
+  </div>
+
+  <div class="batch-info scan-phase" id="scanHint" style="display:none;">
+    <span class="label">🔍 扫描中 — 正在检测文件元数据和重名冲突…</span>
+    <div class="progress-bar"><div class="fill" style="width:100%;animation:pulse 1.2s infinite;"></div></div>
+  </div>
+
+  <!-- 状态栏 -->
+  <div class="status-bar-container" id="statusBar">
+    <span class="status-text" id="statusText">📋 已就绪，拖入文件开始</span>
+    <span class="status-count" id="statusCount"></span>
+  </div>
+
+  <!-- 过滤 -->
+  <div class="filter-bar" id="filterBar">
+    <button class="chip active" data-filter="all">全部 (0)</button>
+    <button class="chip" data-filter="pending">⏸ 待确认 (0)</button>
+    <button class="chip" data-filter="duplicate">⚠️ 重名 (0)</button>
+    <button class="chip" data-filter="processing">⏳ 处理中 (0)</button>
+    <button class="chip" data-filter="done">✅ 成功 (0)</button>
+    <button class="chip" data-filter="error">❌ 失败 (0)</button>
+  </div>
+
+  <!-- 文件列表 -->
+  <div class="file-list" id="fileList">
+    <div class="file-list-header" id="fileListHeader">
+      <div class="col-check">
+        <input type="checkbox" id="selectAllHeader" style="accent-color:#7c3aed;width:14px;height:14px;cursor:pointer;">
+      </div>
+      <div class="col-file">文件名</div>
+      <div class="col-size">大小</div>
+      <div class="col-source">来源分类</div>
+      <div class="col-status">状态</div>
+      <div class="col-action"></div>
+    </div>
+    <div class="empty-state" id="emptyState">
+      <span class="icon">📂</span>
+      <div class="title">暂无文件</div>
+      <div class="sub">拖拽文档到上方区域开始入库流程</div>
+    </div>
+    <div id="fileRows"></div>
+  </div>
+
+  <!-- 汇总 -->
+  <div class="summary-bar">
+    <div class="summary-item"><div class="num purple" id="sumTotal">0</div><div class="label">文件总数</div></div>
+    <div class="summary-item"><div class="num green" id="sumSuccess">0</div><div class="label">✅ 成功</div></div>
+    <div class="summary-item"><div class="num red" id="sumFail">0</div><div class="label">❌ 失败</div></div>
+    <div class="summary-item"><div class="num orange" id="sumConflict">0</div><div class="label">⚠️ 重名</div></div>
+    <div class="summary-item"><div class="num gray" id="sumPending">0</div><div class="label">⏸ 待确认</div></div>
+    <div class="summary-item"><div class="num blue" id="sumBatch">0 / 0</div><div class="label">批次进度</div></div>
+  </div>
+
+  <!-- 处理流程图 -->
+  <div class="flow-section">
+    <div class="flow-title">⚙️ 处理流程</div>
+    <div class="flow-steps">
+      <div class="flow-step">
+        <div class="step-num blue">①</div>
+        <div class="step-icon">🔍</div>
+        <div class="step-name">文件扫描+重名校验</div>
+        <div class="step-desc">扫描文件元数据<br>三层去重校验<br>L1:文件名+标准号+年份<br>L2:SimHash文本指纹<br>L3:向量语义去重</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step highlight">
+        <div class="step-num green">②</div>
+        <div class="step-icon">👤</div>
+        <div class="step-name">用户确认范围</div>
+        <div class="step-desc">勾选需处理的文件<br>解决重名冲突<br>覆盖/跳过/重命名</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="step-num purple">③</div>
+        <div class="step-icon">📥</div>
+        <div class="step-name">文件提取</div>
+        <div class="step-desc">PDF/DOCX 读文字<br>PNG/JPG 走 OCR<br>XLSX 读表格</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="step-num purple">④</div>
+        <div class="step-icon">🧹</div>
+        <div class="step-name">数据清洗</div>
+        <div class="step-desc">去除页眉页脚<br>目录/水印/批注</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="step-num purple">⑤</div>
+        <div class="step-icon">✂️</div>
+        <div class="step-name">LLM 切片</div>
+        <div class="step-desc">语义切片<br>保留上下文结构</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="step-num purple">⑥</div>
+        <div class="step-icon">💾</div>
+        <div class="step-name">向量化入库</div>
+        <div class="step-desc">Embedding → 向量库<br>写入元数据</div>
+      </div>
+    </div>
+    <div class="flow-meta">
+      <span>🔍 ① 扫描检测：文件名模糊归一，自动识别 A vs A(1)/A副本/A副本(2) 等变体</span>
+      <span>👤 ② 用户确认：勾选文件 + 解决冲突 → 点击"开始处理"</span>
+      <span>📋 格式：PDF · DOCX · XLSX · PNG · JPG</span>
+      <span>📦 批次：20个一批，>20MB 单独一批</span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  (function() {
+    'use strict';
+
+    // ─── State ──────────────────────────────────────────────
+    let files = [];
+    let isProcessing = false;
+    let stopFlag = false;
+    let currentFilter = 'all';
+    let pollingTimer = null;
+    let currentTaskId = null;
+    let currentBatches = [];       // 所有批次的数组
+    let currentBatchIndex = 0;     // 当前处理到第几批
+    let totalBatches = 0;          // 总批次数
+    let totalSelectedQ = 0;        // 总文件数（用于进度条）
+
+    // ─── DOM refs ───────────────────────────────────────────
+    const $ = id => document.getElementById(id);
+    const dropZone = $('dropZone');
+    const fileRows = $('fileRows');
+    const emptyState = $('emptyState');
+    const selectAll = $('selectAll');
+    const selectAllHeader = $('selectAllHeader');
+    const btnStart = $('btnStart');
+    const btnClearAll = $('btnClearAll');
+    const btnClearAll2 = $('btnClearAll2');
+    const btnStop = $('btnStop');
+    const batchAction = $('batchAction');
+    const actionBarConfirm = $('actionBarConfirm');
+    const actionBarExec = $('actionBarExec');
+    const batchInfo = $('batchInfo');
+    const scanHint = $('scanHint');
+    const statusBar = $('statusBar');
+    const statusText = $('statusText');
+    const statusCount = $('statusCount');
+    const filterBar = $('filterBar');
+    const execLabel = $('execLabel');
+    const batchLabel = $('batchLabel');
+    const batchFill = $('batchFill');
+    const batchDone = $('batchDone');
+    const batchTotal = $('batchTotal');
+
+    const totalCount = $('totalCount');
+    const successCount = $('successCount');
+    const failCount = $('failCount');
+    const pendingCount = $('pendingCount');
+    const conflictCount = $('conflictCount');
+    const sumTotal = $('sumTotal');
+    const sumSuccess = $('sumSuccess');
+    const sumFail = $('sumFail');
+    const sumConflict = $('sumConflict');
+    const sumPending = $('sumPending');
+    const sumBatch = $('sumBatch');
+    const selectedCount = $('selectedCount');
+
+    // ─── Helpers ────────────────────────────────────────────
+    function fmtSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / 1048576).toFixed(1) + ' MB';
+    }
+
+    function getExtClass(ext) {
+      const m = { pdf: 'pdf', docx: 'docx', doc: 'docx', xlsx: 'xlsx', xls: 'xlsx', png: 'png', jpg: 'jpg', jpeg: 'jpg' };
+      return m[ext] || 'pdf';
+    }
+
+    function getExt(name) {
+      return (name.split('.').pop() || '').toLowerCase();
+    }
+
+    function makeId() { return 'f_' + Math.random().toString(36).slice(2, 9); }
+
+    const STAGE_LABELS = {
+      starting: '启动中', parsing: '解析中', cleaning: '清洗中',
+      building_parent_index: '父文档索引', rebuilding_faiss: 'FAISS重建',
+      rebuilding_chroma: 'Chroma重建', done: '已完成',
+    };
+
+    function statusLabel(state, isDup) {
+      if (isDup && state === 'pending') return '重名冲突';
+      const m = {
+        pending: '待确认', duplicate: '重名冲突',
+        queued: '队列等待', processing: '处理中',
+        done: '已入库', error: '处理失败',
+      };
+      return m[state] || STAGE_LABELS[state] || state;
+    }
+
+    function statusDot(state, isDup) {
+      if (isDup && state === 'pending') return 'orange';
+      const m = { pending: 'gray', processing: 'blue', done: 'green', error: 'red' };
+      return m[state] || 'blue';
+    }
+
+    function statusClass(state, isDup) {
+      if (isDup && state === 'pending') return 'duplicate';
+      if (state === 'done') return 'done';
+      if (state === 'error') return 'error';
+      if (['pending', 'queued'].includes(state)) return 'pending';
+      return 'scanning';
+    }
+
+    function shouldPulse(state) {
+      return ['processing', 'parsing', 'cleaning', 'building_parent_index', 'rebuilding_faiss', 'rebuilding_chroma'].includes(state);
+    }
+
+    // ─── Render ─────────────────────────────────────────────
+    function render() {
+      const filtered = filterFiles();
+      emptyState.style.display = files.length > 0 ? 'none' : 'block';
+
+      let html = '';
+      for (const f of filtered) {
+        const isPhase2 = isProcessing || f.state === 'done' || f.state === 'error';
+        const checked = f.checked ? 'checked' : '';
+        const disabled = isPhase2 ? 'disabled' : '';
+        const cls = statusClass(f.state, f.isDup);
+        const dotPulse = shouldPulse(f.state) ? 'pulse' : '';
+        const showConflict = f.isDup && !isProcessing;
+
+        html += `<div class="file-row" data-id="${f.id}">
+          <div class="col-check">
+            <input type="checkbox" class="file-check" data-id="${f.id}" ${checked} ${disabled}>
+          </div>
+          <div class="col-file">
+            <div class="ext-badge ${getExtClass(f.ext)}">${f.ext.toUpperCase()}</div>
+            <div>
+              <div class="fname">${f.name}</div>
+              <div class="fpath" style="font-size:11px;color:#6e6e73;">${f.path || ''}</div>
+            </div>
+          </div>
+          <div class="col-size">${f.size ? fmtSize(f.size) : '-'}</div>
+          <div class="col-source">${f.cat || '-'}</div>
+          <div class="col-status">
+            <span class="status-badge ${cls}" ${showConflict ? `title="${f.dedupReason || ''}"` : ''}>
+              <span class="dot ${statusDot(f.state, f.isDup)} ${dotPulse}"></span>
+              ${statusLabel(f.state, f.isDup)}
+              ${showConflict && f.dedupLayer ? `<span style="font-size:9px;opacity:0.6;margin-left:2px;">L${f.dedupLayer}</span>` : ''}
+            </span>
+            ${showConflict ? `
+              <select class="conflict-select" data-id="${f.id}" style="margin-left:6px;">
+                <option value="overwrite" ${f.conflictAction === 'overwrite' ? 'selected' : ''}>覆盖旧版</option>
+                <option value="skip" ${f.conflictAction === 'skip' ? 'selected' : ''}>跳过此文件</option>
+                <option value="rename" ${f.conflictAction === 'rename' ? 'selected' : ''}>自动重命名</option>
+              </select>
+            ` : ''}
+          </div>
+          <div class="col-action">
+            ${!isProcessing ? `<button class="del-btn" data-id="${f.id}" title="移出列表">✕</button>` : ''}
+          </div>
+        </div>`;
+      }
+      fileRows.innerHTML = html;
+      updateStats();
+      updateButtons();
+      updateFilterChips();
+    }
+
+    function filterFiles() {
+      if (currentFilter === 'all') return files;
+      if (currentFilter === 'pending') return files.filter(f => f.state === 'pending' && !f.isDup);
+      if (currentFilter === 'duplicate') return files.filter(f => f.isDup && f.state === 'pending');
+      if (currentFilter === 'processing') return files.filter(f => !['done', 'error', 'pending'].includes(f.state) || (f.state === 'pending' && f.isDup === false));
+      if (currentFilter === 'done') return files.filter(f => f.state === 'done');
+      if (currentFilter === 'error') return files.filter(f => f.state === 'error');
+      return files;
+    }
+
+    function updateStats() {
+      const total = files.length;
+      const success = files.filter(f => f.state === 'done').length;
+      const fail = files.filter(f => f.state === 'error').length;
+      const pending = files.filter(f => f.state === 'pending' && !f.isDup).length;
+      const dup = files.filter(f => f.isDup && f.state === 'pending').length;
+      const processing = files.filter(f => !['done', 'error', 'pending'].includes(f.state)).length;
+      const selected = files.filter(f => f.checked && !isProcessing).length;
+      const unresolvedConflicts = files.filter(f => f.checked && f.isDup && f.state === 'pending').length;
+      const canStart = selected > 0 && unresolvedConflicts === 0;
+
+      totalCount.textContent = total;
+      successCount.textContent = success;
+      failCount.textContent = fail;
+      pendingCount.textContent = pending;
+      conflictCount.textContent = dup;
+      document.getElementById('docTotalBadge').textContent = `已入库: ${success}`;
+
+      sumTotal.textContent = total;
+      sumSuccess.textContent = success;
+      sumFail.textContent = fail;
+      sumConflict.textContent = dup;
+      sumPending.textContent = pending;
+      sumBatch.textContent = isProcessing ? `批次 ${currentBatchIndex + 1}/${totalBatches}` : `${Math.ceil(success / 20) || 0} / ${Math.ceil(total / 20) || 1}`;
+
+      // 实时更新 FAISS/Chroma 向量数
+      fetch('/api/stats').then(r=>r.json()).then(s=>{
+        document.getElementById('faissCount').textContent = s.faiss_vectors ?? '?';
+        document.getElementById('chromaCount').textContent = s.chroma_chunks ?? '?';
+      }).catch(()=>{});
+
+      selectedCount.innerHTML = `已选 <strong>${selected}</strong> 个`;
+
+      const chipAll = filterBar.querySelector('[data-filter="all"]');
+      const chipPending = filterBar.querySelector('[data-filter="pending"]');
+      const chipDup = filterBar.querySelector('[data-filter="duplicate"]');
+      const chipProc = filterBar.querySelector('[data-filter="processing"]');
+      const chipDone = filterBar.querySelector('[data-filter="done"]');
+      const chipErr = filterBar.querySelector('[data-filter="error"]');
+      chipAll.textContent = `全部 (${total})`;
+      chipPending.textContent = `⏸ 待确认 (${pending})`;
+      chipDup.textContent = `⚠️ 重名 (${dup})`;
+      chipProc.textContent = `⏳ 处理中 (${processing})`;
+      chipDone.textContent = `✅ 成功 (${success})`;
+      chipErr.textContent = `❌ 失败 (${fail})`;
+
+      btnStart.textContent = `▶ 开始处理 (${selected} 个文件)`;
+      btnStart.disabled = !canStart;
+    }
+
+    function updateButtons() {
+      btnClearAll.style.display = files.length > 0 && !isProcessing ? 'inline-block' : 'none';
+      btnClearAll2.style.display = files.length > 0 && isProcessing ? 'inline-block' : 'none';
+      selectAll.disabled = isProcessing;
+      selectAllHeader.disabled = isProcessing;
+    }
+
+    function updateFilterChips() {
+      filterBar.querySelectorAll('.chip').forEach(chip => {
+        chip.classList.toggle('active', chip.dataset.filter === currentFilter);
+      });
+    }
+
+    // ─── File Reading ───────────────────────────────────────
+    function readFileAsBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = reader.result.split(',')[1];
+          resolve(base64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // ─── Upload & Scan ──────────────────────────────────────
+    async function handleDroppedFiles(fileList) {
+      if (isProcessing) return;
+      const dropped = Array.from(fileList);
+
+      scanHint.style.display = 'flex';
+      statusText.textContent = `🔍 正在扫描 ${dropped.length} 个文件…`;
+
+      // 1. Upload to scan API
+      const formData = new FormData();
+      for (const file of dropped) {
+        formData.append('files', file, file.name);
+      }
+
+      try {
+        const resp = await fetch('/api/documents/scan', { method: 'POST', body: formData });
+        const result = await resp.json();
+
+        scanHint.style.display = 'none';
+
+        if (result.status !== 'ok') {
+          statusText.textContent = '❌ 扫描失败';
+          return;
+        }
+
+        // 2. Build file entries
+         const newFiles = [];
+         const fileMap = {};
+         for (const droppedFile of dropped) {
+           fileMap[droppedFile.name] = droppedFile;
+         }
+         for (const sf of result.files) {
+           const ext = getExt(sf.name);
+           newFiles.push({
+             id: makeId(),
+             name: sf.name,
+             ext: ext,
+             size: sf.size,
+             path: sf.in_source ? '源目录中已存在' : '新文件',
+             cat: sf.duplicate ? '重名' : '待入库',
+             state: 'pending',
+             isDup: sf.duplicate,
+             checked: !sf.duplicate,
+             conflictAction: 'overwrite',
+             _file: fileMap[sf.name] || null,
+             // 详细去重信息
+             dedupReason: sf.reason || '',
+             dedupLayer: sf.dedup_layer || 0,
+             standardId: sf.standard_id || '',
+             incomingYear: sf.incoming_year || null,
+             existingYear: sf.existing_year || null,
+             matchedFiles: sf.matched_files || [],
+           });
+         }
+
+        // Merge with existing: 保留已有文件的 _file 引用（跨拖入批次）
+        const existingFileMap = {};
+        for (const f of files) {
+          if (f._file) existingFileMap[f.name] = f._file;
+        }
+
+        const existingNames = files.filter(f => !f.isDup).map(f => f.name);
+        for (const f of newFiles) {
+          if (!f.isDup && existingNames.includes(f.name)) {
+            f.isDup = true;
+            f.cat = '重名';
+            f.checked = false;
+          }
+          existingNames.push(f.name);
+          // 如果之前拖入过且有 _file 引用，保留它
+          if (!f._file && existingFileMap[f.name]) {
+            f._file = existingFileMap[f.name];
+          }
+        }
+
+        files = [...files, ...newFiles];
+        render();
+
+        const dupCount = files.filter(f => f.isDup && f.state === 'pending').length;
+        if (dupCount > 0) {
+          statusText.textContent = `⚠️ 发现 ${dupCount} 个重名冲突，请确认处理方式后开始`;
+        } else {
+          statusText.textContent = `📋 扫描完成，${files.length} 个文件待处理`;
+        }
+      } catch (e) {
+        scanHint.style.display = 'none';
+        statusText.textContent = '❌ 扫描请求失败: ' + e.message;
+      }
+    }
+
+    // ─── Start Processing (分批串行) ──────────────────────
+    const BIG_FILE_THRESHOLD = 20 * 1024 * 1024; // 20MB
+    const BATCH_SIZE = 20;
+
+    async function startProcessing() {
+      const selected = files.filter(f => f.checked && f.state === 'pending');
+      if (selected.length === 0) return;
+
+      isProcessing = true;
+      stopFlag = false;
+
+      // Phase switch UI
+      actionBarConfirm.style.display = 'none';
+      actionBarExec.style.display = 'flex';
+      batchInfo.style.display = 'flex';
+      statusBar.classList.add('visible');
+
+      // 分批: >20MB 单文件一批，其余 20 个一批
+      const bigFiles = selected.filter(f => f.size > BIG_FILE_THRESHOLD);
+      const smallFiles = selected.filter(f => f.size <= BIG_FILE_THRESHOLD);
+      currentBatches = [];
+      for (const f of bigFiles) currentBatches.push([f]);
+      for (let i = 0; i < smallFiles.length; i += BATCH_SIZE) {
+        currentBatches.push(smallFiles.slice(i, i + BATCH_SIZE));
+      }
+
+      currentBatchIndex = 0;
+      totalBatches = currentBatches.length;
+      totalSelectedQ = selected.length;
+
+      // 全部标记为 queued
+      for (const f of selected) { f.state = 'queued'; f.checked = false; }
+      render();
+
+      batchTotal.textContent = totalSelectedQ;
+      batchDone.textContent = 0;
+      batchFill.style.width = '0%';
+      batchLabel.textContent = `1/${totalBatches}`;
+      execLabel.textContent = `批次 1/${totalBatches} — 处理中 (0/${totalSelectedQ})`;
+
+      await runBatch(0);
+    }
+
+    async function runBatch(batchIdx) {
+      if (stopFlag || batchIdx >= currentBatches.length) {
+        finishProcessing();
+        return;
+      }
+
+      currentBatchIndex = batchIdx;
+      const batch = currentBatches[batchIdx];
+      execLabel.textContent = `批次 ${batchIdx + 1}/${totalBatches} — 准备中 (${batch.length} 个文件)`;
+
+      // 将这一批的文件读取为 base64
+      const filesPayload = [];
+      const conflictActions = {};
+      for (const f of batch) {
+        if (f.isDup) conflictActions[f.name] = f.conflictAction || 'overwrite';
+        if (f._file) {
+          try {
+            const b64 = await readFileAsBase64(f._file);
+            filesPayload.push({ name: f.name, content: b64 });
+          } catch (e) {
+            console.warn(`读取文件失败 ${f.name}: ${e.message}`);
+            f.state = 'error';
+          }
+        } else {
+          console.warn(`文件 _file 为空: ${f.name}`);
+          f.state = 'error';
+        }
+      }
+
+      if (filesPayload.length === 0) {
+        statusText.textContent = '⚠️ 批次内无有效文件，跳过';
+        await runBatch(batchIdx + 1);
+        return;
+      }
+
+      statusText.textContent = `📤 正在提交批次 ${batchIdx + 1}/${totalBatches}…`;
+
+      try {
+        const resp = await fetch('/api/documents/start-processing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: filesPayload, category: '上传文档', conflict_actions: conflictActions }),
+        });
+        const result = await resp.json();
+
+        if (result.status !== 'ok') {
+          statusText.textContent = `❌ 批次 ${batchIdx + 1} 启动失败: ${result.message || ''}`;
+          for (const f of batch) f.state = 'error';
+          render();
+          await runBatch(batchIdx + 1);
+          return;
+        }
+
+        currentTaskId = result.task_id;
+        statusText.textContent = `🔄 批次 ${batchIdx + 1}/${totalBatches} 已启动 (${batch.length} 个文件)`;
+        await pollBatch(batchIdx);
+      } catch (e) {
+        statusText.textContent = `❌ 批次 ${batchIdx + 1} 请求失败: ${e.message}`;
+        for (const f of batch) f.state = 'error';
+        render();
+        await runBatch(batchIdx + 1);
+      }
+    }
+
+    // ─── Status Polling (单批次) ─────────────────────────
+    function pollBatch(batchIdx) {
+      return new Promise((resolve) => {
+        function poll() {
+          if (stopFlag || !currentTaskId) {
+            resolve();
+            return;
+          }
+
+          fetch(`/api/documents/status/${currentTaskId}`)
+            .then(r => r.json())
+            .then(data => {
+              if (stopFlag) { resolve(); return; }
+
+              if (data.status === 'processing' || data.status === 'completed') {
+                const batch = currentBatches[batchIdx] || [];
+                const doneCount = batch.filter(f => f.state === 'done' || f.state === 'error').length;
+
+                // 更新当前文件状态
+                if (data.current_file) {
+                  const f = batch.find(x => x.name === data.current_file);
+                  if (f) f.state = 'processing';
+                }
+
+                // 全局进度: 已完成的批次 + 当前批次进度
+                const priorDone = currentBatches.slice(0, batchIdx).reduce((sum, b) => sum + b.length, 0);
+                const overallDone = priorDone + doneCount;
+                const pct = Math.round((overallDone / totalSelectedQ) * 100);
+                batchFill.style.width = `${pct}%`;
+                batchDone.textContent = overallDone;
+                batchLabel.textContent = `${batchIdx + 1}/${totalBatches}`;
+                execLabel.textContent = `批次 ${batchIdx + 1}/${totalBatches} — (${overallDone}/${totalSelectedQ})`;
+
+                if (data.current_file) {
+                  statusText.textContent = `🔄 批次 ${batchIdx + 1}/${totalBatches} — ${STAGE_LABELS[data.stage] || data.stage}: ${data.current_file}`;
+                } else {
+                  statusText.textContent = `🔄 批次 ${batchIdx + 1}/${totalBatches} — ${STAGE_LABELS[data.stage] || data.stage}...`;
+                }
+
+                if (data.stage === 'done' || data.status === 'completed') {
+                  for (const f of batch) {
+                    if (f.state === 'queued' || f.state === 'processing') f.state = 'done';
+                  }
+                  if (data.summary && data.summary.fail > 0) {
+                    // 有失败文件时标记
+                    const batchDoneCount = data.summary.success || 0;
+                    let marked = 0;
+                    for (const f of batch) {
+                      if (f.state === 'done' && marked >= batchDoneCount) { f.state = 'error'; }
+                      else if (f.state === 'done') marked++;
+                    }
+                  }
+                  render();
+                  resolve();
+                  return;
+                }
+
+                render();
+                setTimeout(poll, 2000);
+              } else if (data.status === 'error') {
+                for (const f of (currentBatches[batchIdx] || [])) {
+                  if (f.state === 'queued' || f.state === 'processing') f.state = 'error';
+                }
+                statusText.textContent = `❌ 批次 ${batchIdx + 1} 出错: ${data.error || ''}`;
+                render();
+                resolve();
+              } else {
+                setTimeout(poll, 2000);
+              }
+            })
+            .catch(() => {
+              setTimeout(poll, 3000);
+            });
+        }
+        poll();
+      }).then(() => {
+        // 当前批次完成，进入下一批
+        currentTaskId = null;
+        return runBatch(batchIdx + 1);
+      });
+    }
+
+    function finishProcessing() {
+      if (pollingTimer) { clearTimeout(pollingTimer); pollingTimer = null; }
+
+      const success = files.filter(f => f.state === 'done').length;
+      const fail = files.filter(f => f.state === 'error').length;
+      statusText.textContent = `✅ 全部完成 — ${success} 个成功，${fail} 个失败`;
+
+      isProcessing = false;
+      currentTaskId = null;
+      currentBatches = [];
+      currentBatchIndex = 0;
+      totalBatches = 0;
+      actionBarConfirm.style.display = 'flex';
+      actionBarExec.style.display = 'none';
+      batchInfo.style.display = 'none';
+      statusBar.classList.remove('visible');
+
+      for (const f of files) f.checked = false;
+      render();
+    }
+
+    // ─── Event Bindings ─────────────────────────────────────
+    // Drag & Drop
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt => {
+      dropZone.addEventListener(evt, e => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (evt === 'dragenter' || evt === 'dragover') dropZone.classList.add('dragover');
+        else dropZone.classList.remove('dragover');
+      });
+    });
+
+    dropZone.addEventListener('drop', e => {
+      if (isProcessing) return;
+      const dt = e.dataTransfer;
+      if (dt.files && dt.files.length > 0) {
+        handleDroppedFiles(dt.files);
+      }
+    });
+
+    // Click to select files
+    dropZone.addEventListener('click', () => {
+      if (isProcessing) return;
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = '.pdf,.docx,.doc,.xlsx,.xls,.png,.jpg,.jpeg';
+      input.onchange = () => {
+        if (input.files && input.files.length > 0) {
+          handleDroppedFiles(input.files);
+        }
+      };
+      input.click();
+    });
+
+    // Select All
+    selectAll.addEventListener('change', () => {
+      const checked = selectAll.checked;
+      selectAllHeader.checked = checked;
+      for (const f of files) {
+        if (f.state === 'pending' || (f.isDup && f.state === 'pending')) {
+          f.checked = checked;
+        }
+      }
+      render();
+    });
+    selectAllHeader.addEventListener('change', () => {
+      selectAll.checked = selectAllHeader.checked;
+      selectAll.dispatchEvent(new Event('change'));
+    });
+
+    // Delegate events on fileRows
+    fileRows.addEventListener('change', e => {
+      const cb = e.target.closest('.file-check');
+      if (cb) {
+        const f = files.find(x => x.id === cb.dataset.id);
+        if (f) f.checked = cb.checked;
+        updateStats();
+      }
+      const sel = e.target.closest('.conflict-select');
+      if (sel) {
+        const f = files.find(x => x.id === sel.dataset.id);
+        if (f) f.conflictAction = sel.value;
+      }
+    });
+
+    fileRows.addEventListener('click', e => {
+      const del = e.target.closest('.del-btn');
+      if (del && !isProcessing) {
+        const id = del.dataset.id;
+        files = files.filter(f => f.id !== id);
+        if (files.length === 0) {
+          actionBarConfirm.style.display = 'flex';
+          actionBarExec.style.display = 'none';
+          batchInfo.style.display = 'none';
+          statusBar.classList.remove('visible');
+          isProcessing = false;
+        }
+        render();
+        statusText.textContent = files.length > 0 ? '📋 已移出文件' : '📋 已就绪，拖入文件开始';
+      }
+    });
+
+    // Batch action
+    batchAction.addEventListener('change', () => {
+      const action = batchAction.value;
+      if (!action) return;
+      const selected = files.filter(f => f.checked && f.isDup && f.state === 'pending');
+      for (const f of selected) f.conflictAction = action;
+      batchAction.value = '';
+      render();
+    });
+
+    // Start
+    btnStart.addEventListener('click', startProcessing);
+
+    // Stop
+    btnStop.addEventListener('click', () => {
+      stopFlag = true;
+      if (pollingTimer) { clearTimeout(pollingTimer); pollingTimer = null; }
+      // 当前批次状态改为 error
+      const currentBatch = currentBatches[currentBatchIndex] || [];
+      for (const f of currentBatch) {
+        if (f.state === 'queued' || f.state === 'processing') f.state = 'error';
+      }
+      render();
+      finishProcessing();
+    });
+
+    // Clear
+    btnClearAll.addEventListener('click', () => {
+      if (files.length === 0) return;
+      if (!confirm('确定清空所有文件？')) return;
+      files = [];
+      isProcessing = false;
+      stopFlag = false;
+      currentTaskId = null;
+      currentBatches = [];
+      currentBatchIndex = 0;
+      totalBatches = 0;
+      if (pollingTimer) { clearTimeout(pollingTimer); pollingTimer = null; }
+      actionBarConfirm.style.display = 'flex';
+      actionBarExec.style.display = 'none';
+      batchInfo.style.display = 'none';
+      scanHint.style.display = 'none';
+      statusBar.classList.remove('visible');
+      statusText.textContent = '📋 已就绪，拖入文件开始';
+      render();
+    });
+    btnClearAll2.addEventListener('click', () => { btnClearAll.click(); });
+
+    // Filter chips
+    filterBar.addEventListener('click', e => {
+      const chip = e.target.closest('.chip');
+      if (!chip) return;
+      currentFilter = chip.dataset.filter;
+      render();
+    });
+
+    // ─── Init ───────────────────────────────────────────────
+    render();
+    statusText.textContent = '📋 已就绪，拖入文件开始';
+
+    // 页面加载时，从后端拉取真实已入库数 + FAISS/Chroma 向量数
+    (async function loadServerStats() {
+      try {
+        const [statsRes, pipelineRes] = await Promise.all([
+          fetch('/api/stats'),
+          fetch('/api/stats/pipeline?limit=100')
+        ]);
+        const stats = await statsRes.json();
+        const pipeline = await pipelineRes.json();
+        const items = pipeline.items || [];
+
+        // 累加所有管道记录的成功入库数
+        const totalSuccess = items.reduce((sum, r) => sum + (r.success_count || 0), 0);
+        if (totalSuccess > 0) {
+          document.getElementById('docTotalBadge').textContent = `已入库: ${totalSuccess}`;
+        } else if (stats.cleaned_docs && stats.cleaned_docs > 0) {
+          document.getElementById('docTotalBadge').textContent = `已入库: ${stats.cleaned_docs}`;
+        }
+
+        if (stats.faiss_vectors !== undefined) {
+          document.getElementById('faissCount').textContent = stats.faiss_vectors;
+        }
+        if (stats.chroma_chunks !== undefined) {
+          document.getElementById('chromaCount').textContent = stats.chroma_chunks;
+        }
+      } catch (e) {
+        // 静默失败，不阻塞页面
+      }
+    })();
+
+    // 定时刷新 FAISS/Chroma 向量数（每 15s）
+    setInterval(() => {
+      fetch('/api/stats').then(r=>r.json()).then(s=>{
+        document.getElementById('faissCount').textContent = s.faiss_vectors ?? '?';
+        document.getElementById('chromaCount').textContent = s.chroma_chunks ?? '?';
+      }).catch(()=>{});
+    }, 15000);
+  })();
+</script>
+</body>
+</html>

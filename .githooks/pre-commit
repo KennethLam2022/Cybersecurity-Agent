@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# ===================================================
+# pre-commit hook — 保护核心源文件不被误删
+# 在 commit 前检查是否有人删除了关键文件
+# ================================================
+
+CORE_FILES=(
+  "packages/agent/src/llm_provider.py"
+  "packages/agent/src/agent.py"
+  "packages/agent/src/main.py"
+  "packages/agent/src/api.py"
+  "packages/agent/src/rag_engine.py"
+)
+
+DELETED=$(git diff --cached --name-status --diff-filter=D | awk '{print $2}')
+
+for file in "${CORE_FILES[@]}"; do
+  if echo "$DELETED" | grep -Fxq "$file"; then
+    echo ""
+    echo "⚠️  危险操作检测！"
+    echo "   你正在删除核心文件: $file"
+    echo "   如果确定要删除，请使用:"
+    echo "     git commit --no-verify -m \"msg\""
+    echo ""
+    exit 1
+  fi
+done
+
+# 检查是否在删除大量文件（>10个）
+DEL_COUNT=$(echo "$DELETED" | grep -c .)
+if [ "$DEL_COUNT" -gt 10 ]; then
+  echo ""
+  echo "⚠️  批量删除检测: 本次删除 $DEL_COUNT 个文件"
+  echo "   如果确定，请使用:"
+  echo "     git commit --no-verify -m \"msg\""
+  echo ""
+  exit 1
+fi
+
+exit 0

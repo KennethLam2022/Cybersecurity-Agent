@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>后端模型配置 · 预览</title>
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --card: #fff;
+    --t: #1d1d1f;
+    --t2: #6e6e73;
+    --b: #e5e5ea;
+    --b2: #d2d2d7;
+    --a: #0071e3;
+    --g: #34c759;
+    --y: #ff9500;
+    --r: #ff3b30;
+    --f: -apple-system, BlinkMacSystemFont, 'SF Pro SC', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); font-family: var(--f); color: var(--t); padding: 40px; display: flex; justify-content: center; min-height: 100vh; }
+  .preview-wrap { max-width: 1100px; width: 100%; }
+
+  .page-header { margin-bottom: 28px; }
+  .page-header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+  .page-header p { font-size: 13px; color: var(--t2); margin-top: 6px; }
+
+  .intro-banner { background: #f0f7ff; border-left: 3px solid var(--a); padding: 14px 18px; border-radius: 8px; margin-bottom: 24px; }
+  .intro-banner .title { font-size: 13px; font-weight: 600; color: var(--a); }
+  .intro-banner .desc { font-size: 12px; color: var(--t2); line-height: 1.6; margin-top: 4px; }
+
+  .config-card { background: var(--card); border: 1px solid var(--b); border-radius: 12px; overflow: hidden; margin-bottom: 20px; }
+  .config-header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--b); }
+  .config-header .icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 17px; flex-shrink: 0; }
+  .config-header .info { flex: 1; }
+  .config-header .info h3 { font-size: 15px; font-weight: 600; }
+  .config-header .info p { font-size: 11px; color: var(--t2); margin-top: 2px; }
+  .config-header .status-badge { display: inline-block; font-size: 11px; padding: 3px 10px; border-radius: 100px; font-weight: 600; }
+  .config-header .status-badge.online { background: #34c75912; color: var(--g); }
+  .config-header .status-badge.offline { background: #ff950012; color: var(--y); }
+  .config-body { padding: 16px 20px; }
+
+  .saved-config-row { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px dashed var(--b); }
+  .saved-config-row label { font-size: 11px; font-weight: 600; color: var(--t2); white-space: nowrap; }
+  .saved-config-row select { flex: 1; padding: 6px 10px; border: 1px solid var(--b); border-radius: 6px; font-size: 12px; font-family: var(--f); background: var(--card); color: var(--t); outline: none; }
+  .saved-config-row select:focus { border-color: var(--a); }
+  .saved-config-row .btn-small { padding: 5px 12px; border-radius: 6px; border: none; font-size: 11px; cursor: pointer; font-family: var(--f); font-weight: 500; transition: all .2s; background: transparent; border: 1px solid var(--b); color: var(--t2); }
+  .saved-config-row .btn-small:hover { border-color: var(--a); color: var(--a); }
+
+  .model-selector { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .model-selector .field { flex: 1; min-width: 180px; }
+  .model-selector .field label { display: block; font-size: 11px; font-weight: 600; color: var(--t2); margin-bottom: 4px; }
+  .model-selector .field select, .model-selector .field input { width: 100%; padding: 7px 10px; border: 1px solid var(--b); border-radius: 6px; font-size: 13px; font-family: var(--f); background: var(--card); color: var(--t); outline: none; }
+  .model-selector .field select:focus, .model-selector .field input:focus { border-color: var(--a); }
+  .model-selector .field input[type=password] { letter-spacing: 1px; }
+  .model-selector .field .hint { font-size: 10px; color: var(--t2); margin-top: 3px; }
+  .model-selector .field.api-key-wrap { position: relative; }
+  .model-selector .field .toggle-vis { position: absolute; right: 8px; top: 26px; background: none; border: none; color: var(--b2); cursor: pointer; font-size: 15px; padding: 0 4px; }
+
+  .test-bar { display: flex; gap: 8px; align-items: center; padding: 10px 0; border-top: 1px solid #f0f0f2; margin-top: 4px; flex-wrap: wrap; }
+  .test-bar .btn { padding: 6px 16px; border-radius: 6px; border: none; font-size: 12px; cursor: pointer; font-family: var(--f); font-weight: 500; transition: all .2s; white-space: nowrap; }
+  .test-bar .btn.primary { background: var(--a); color: #fff; }
+  .test-bar .btn.primary:hover { background: #0062c4; }
+  .test-bar .btn.primary:disabled { opacity: .35; cursor: not-allowed; }
+  .test-bar .btn.outline { background: transparent; border: 1px solid var(--b); color: var(--t2); }
+  .test-bar .btn.outline:hover { border-color: var(--a); color: var(--a); }
+  .test-bar .btn.success { background: var(--g); color: #fff; }
+  .test-bar .btn.success:hover { background: #2db84e; }
+  .test-bar .btn.save { background: transparent; border: 1px solid var(--a); color: var(--a); font-weight: 600; }
+  .test-bar .btn.save:hover { background: #0071e308; }
+  .test-bar .btn.save:disabled { opacity: .35; cursor: not-allowed; }
+  .test-bar .result { font-size: 12px; margin-left: 4px; }
+  .test-bar .result.success { color: var(--g); }
+  .test-bar .result.fail { color: var(--r); }
+  .test-bar .result.pending { color: var(--y); }
+  .test-bar .saved-tag { font-size: 10px; color: var(--t2); background: var(--bg); padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+  .test-bar .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--b); border-top-color: var(--a); border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 6px; }
+  .test-bar .sep-sm { width: 1px; height: 20px; background: var(--b); flex-shrink: 0; }
+
+  .global-actions { display: flex; gap: 10px; align-items: center; padding: 18px 0; border-top: 1px solid var(--b); margin-top: 8px; }
+  .global-actions .btn { padding: 8px 20px; border-radius: 8px; border: none; font-size: 13px; cursor: pointer; font-family: var(--f); font-weight: 600; transition: all .2s; }
+  .global-actions .btn.primary { background: var(--a); color: #fff; }
+  .global-actions .btn.primary:hover { background: #0062c4; }
+  .global-actions .btn.primary:disabled { opacity: .35; cursor: not-allowed; }
+  .global-actions .btn.success { background: var(--g); color: #fff; }
+  .global-actions .btn.success:hover { background: #2db84e; }
+  .global-actions .btn.outline { background: transparent; border: 1px solid var(--b); color: var(--t2); }
+  .global-actions .btn.outline:hover { border-color: var(--a); color: var(--a); }
+  .global-actions .btn.restart { background: transparent; border: 1px solid var(--r); color: var(--r); }
+  .global-actions .btn.restart:hover { background: #ff3b3008; }
+  .global-actions .sep { width: 1px; height: 24px; background: var(--b); margin: 0 8px; }
+  .global-actions .hint { font-size: 12px; color: var(--t2); }
+
+  .flow-section { margin-top: 32px; background: var(--card); border: 1px solid var(--b); border-radius: 12px; padding: 24px; }
+  .flow-title { font-size: 15px; font-weight: 600; margin-bottom: 20px; }
+  .flow-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; align-items: stretch; }
+  .flow-step { background: var(--bg); border: 1px solid var(--b); border-radius: 10px; padding: 28px 16px 20px; position: relative; text-align: center; display: flex; flex-direction: column; justify-content: flex-start; }
+  .flow-step:hover { border-color: var(--a); }
+  .flow-step .step-num { position: absolute; top: -10px; left: -10px; width: 28px; height: 28px; border-radius: 50%; font-size: 13px; font-weight: 700; line-height: 28px; text-align: center; color: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
+  .flow-step .step-num.blue { background: var(--a); }
+  .flow-step .step-num.purple { background: #5856d6; }
+  .flow-step .step-name { font-size: 14px; font-weight: 600; color: var(--t); margin-bottom: 8px; }
+  .flow-step .step-desc { font-size: 12px; color: var(--t2); line-height: 1.5; word-wrap: break-word; overflow-wrap: break-word; margin-top: 8px; flex: 1; }
+
+  .toast-msg { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: var(--t); color: var(--card); padding: 10px 24px; border-radius: 10px; font-size: 13px; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,.15); opacity: 0; transition: opacity .3s; z-index: 100; pointer-events: none; }
+  .toast-msg.show { opacity: 1; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width:1024px) {
+    .flow-grid { grid-template-columns: repeat(2, 1fr); }
+    .flow-step { min-height: 150px; }
+  }
+  @media (max-width:640px) {
+    .flow-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width:768px) {
+    body { padding: 16px; }
+    .model-selector .field { min-width: 100%; }
+    .global-actions { flex-wrap: wrap; }
+    .saved-config-row { flex-wrap: wrap; }
+    .test-bar { gap: 6px; }
+  }
+  @media (max-width:480px) {
+    .flow-step { min-width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="preview-wrap">
+
+  <div class="page-header">
+    <h1>⚙️ 后端模型配置</h1>
+    <p>隔离配置各后端模块使用的 LLM 模型，每个模型独立选择平台和 API Key</p>
+  </div>
+
+  <div class="intro-banner">
+    <div class="title">🔧 8 个独立后端模型</div>
+    <div class="desc">
+      每个后端模块可独立选择不同平台提供商。选中「已保存方案」自动填充，也可手动修改后单独保存。
+      API Key 加密存储，支持逐个测试连接。
+    </div>
+  </div>
+
+  <div id="cardContainer"></div>
+
+  <!-- 底部操作栏 -->
+  <div class="global-actions">
+    <button class="btn primary" onclick="toast('所有配置已保存')">💾 保存全部配置</button>
+    <button class="btn success" onclick="toast('正在测试全部连接…')">🔗 全部测试连接</button>
+    <button class="btn outline" onclick="resetAll()">↩ 恢复默认</button>
+    <div class="sep"></div>
+    <button class="btn restart" onclick="restartServer()">🔄 重启服务</button>
+    <div class="sep"></div>
+    <span class="hint">API Key 将加密存储，不会明文展示</span>
+  </div>
+
+  <!-- 流程图 -->
+  <div class="flow-section">
+    <div class="flow-title">⚙️ 配置生效链路</div>
+    <div class="flow-grid">
+      <div class="flow-step">
+        <div class="step-num blue">①</div>
+        <div class="step-name">生成对话 LLM</div>
+        <div class="step-desc">前台自主选择LLM大模型<br>后端协助更改</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num blue">②</div>
+        <div class="step-name">越狱检测 LLM</div>
+        <div class="step-desc">回答生成后<br>检测模型输出违规</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num blue">③</div>
+        <div class="step-name">语义评分 LLM</div>
+        <div class="step-desc">分析用户态度<br>评估回答质量 1-5分</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num blue">④</div>
+        <div class="step-name">熔断兜底 LLM</div>
+        <div class="step-desc">主 LLM 连续失败<br>自动切换保障服务</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num blue">⑤</div>
+        <div class="step-name">文档清洗/切片 LLM</div>
+        <div class="step-desc">文档入库时<br>LLM 清洗（切片规则切割）</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num blue">⑥</div>
+        <div class="step-name">后端评测 LLM</div>
+        <div class="step-desc">自动化评测时<br>生成回复并评估</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num purple">⑦</div>
+        <div class="step-name">Embedding 模型</div>
+        <div class="step-desc">查询/文档向量化<br>OpenAI 兼容 Embedding API</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num purple">⑧</div>
+        <div class="step-name">Reranker</div>
+        <div class="step-desc">检索后重排序<br>专用 rerank API 精排</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast-msg" id="toastMsg"></div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ─── 8个卡片定义（启动时从 API 加载已保存配置）────────────────
+  const PROVIDER_MODELS = {
+    'DeepSeek': ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'],
+    '硅基流动 (SiliconFlow)': ['Qwen/Qwen3-8B', 'deepseek-v4-flash', 'deepseek-chat'],
+    'OpenRouter': ['gpt-4o-mini', 'gpt-4o', 'claude-3-haiku'],
+    '阿里云百炼': ['qwen-max', 'qwen-plus', 'qwen-turbo'],
+    '百度千帆': ['ERNIE-4.0-8K', 'ERNIE-3.5-8K', 'ERNIE-Speed'],
+    '智谱 AI (GLM)': ['GLM-4-Flash', 'GLM-4-Plus', 'GLM-4-Air'],
+    '火山引擎 (豆包)': ['doubao-pro-32k', 'doubao-lite-32k'],
+    '讯飞星火': ['Spark-4.0', 'Spark-3.5', 'Spark-Lite'],
+    '腾讯混元': ['hunyuan-pro', 'hunyuan-standard'],
+    '本地 Ollama': ['qwen2.5:7b', 'llama3.1:8b', 'mistral:7b'],
+    '自定义': ['custom'],
+  };
+
+  const PROVIDER_BASE_URLS = {
+    'DeepSeek': 'https://api.deepseek.com',
+    '硅基流动 (SiliconFlow)': 'https://api.siliconflow.cn/v1',
+    'OpenRouter': 'https://openrouter.ai/api/v1',
+    '阿里云百炼': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    '百度千帆': 'https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat',
+    '智谱 AI (GLM)': 'https://open.bigmodel.cn/api/paas/v4',
+    '火山引擎 (豆包)': 'https://ark.cn-beijing.volces.com/api/v3',
+    '讯飞星火': 'https://spark-api.xf-yun.com/v3.5/chat',
+    '腾讯混元': 'https://api.hunyuan.cloud.tencent.com/v1',
+    '本地 Ollama': 'http://localhost:11434/v1',
+    '自定义': '',
+  };
+
+  const CARDS = [
+    // ── chat 类型 LLM（按 RAG→Agent 流程排序）──
+    { id: 'chat', num: '①', icon: '💬', color: '#0071e3', bg: '#0071e312', name: '生成对话 LLM', desc: '前台自主选择LLM大模型，后端协助更改', hint: '推荐: DeepSeek deepseek-v4-flash（当前后端默认）' },
+    { id: 'jailbreak', num: '②', icon: '🛡️', color: '#ff3b30', bg: '#ff3b3012', name: '越狱检测 LLM', desc: '检测模型回答是否违规 — 回答生成后独立校验', hint: '推荐: openai/gpt-oss-120b:free（OpenRouter，成本极低）' },
+    { id: 'scoring', num: '③', icon: '⭐', color: '#ff6b35', bg: '#ff6b3512', name: '语义评分 LLM', desc: 'Agent 回复后评分 — 分析用户态度，评估回答质量（1-5分）', hint: '推荐: openai/gpt-oss-120b:free（OpenRouter）' },
+    { id: 'fallback', num: '④', icon: '🔋', color: '#34c759', bg: '#34c75912', name: '熔断兜底 LLM', desc: '主 LLM 连续失败时自动切换 — 保障服务不中断', hint: '推荐: qwen2.5:7b（Ollama 本地，稳定可靠）' },
+    { id: 'chunk', num: '⑤', icon: '✂️', color: '#5856d6', bg: '#5856d612', name: '文档清洗/切片 LLM', desc: '文档入库时 LLM 清洗（切片为规则切割无需 LLM）', hint: '推荐: Pro/MiniMaxAI/MiniMax-M2.5（硅基流动，清洗效果好）' },
+    { id: 'promptEval', num: '⑥', icon: '🧪', color: '#af52de', bg: '#af52de12', name: '后端评测 LLM', desc: 'Prompt 测试 + 综合质量评测时调用 — 生成测试回复并执行评估', hint: '推荐: deepseek-chat（评测场景需要较高推理能力）' },
+    // ── 非 chat 类型（专用 API）──
+    { id: 'embedding', num: '⑦', icon: '📐', color: '#5e5ce6', bg: '#5e5ce612', name: 'Embedding 模型', desc: '检索第一步 — 将查询和文档向量化，支持 OpenAI 兼容 Embedding API', hint: '推荐: quentinz/bge-small-zh-v1.5（Ollama 本地部署）' },
+    { id: 'reranker', num: '⑧', icon: '🔍', color: '#ff9500', bg: '#ff950012', name: 'Reranker', desc: '检索后重排序 — 使用专用 rerank API 对候选结果精排', hint: '推荐: BAAI/bge-reranker-v2-m3（硅基流动）' },
+  ];
+
+  // 运行时状态：从 API 加载的已保存配置
+  let savedConfigs = {};  // { module_id: { provider, model, base_url, api_key_mask } }
+  let cardStates = {};    // { module_id: { provider, model, baseUrl, key, savedId, status, statusText, testResult, testText } }
+
+  // 生产模型默认值（测试期间预填，已有保存配置时以数据库为准）
+  const DEFAULT_PRESETS = {
+    chat:      { provider: 'DeepSeek',               model: 'deepseek-v4-flash',                             baseUrl: 'https://api.deepseek.com' },
+    jailbreak: { provider: 'OpenRouter',             model: 'openai/gpt-oss-120b:free',                      baseUrl: 'https://openrouter.ai/api/v1' },
+    scoring:   { provider: 'OpenRouter',             model: 'openai/gpt-oss-120b:free',                      baseUrl: 'https://openrouter.ai/api/v1' },
+    fallback:  { provider: '本地 Ollama',             model: 'qwen2.5:7b',                                   baseUrl: 'http://localhost:11434/v1' },
+    chunk:     { provider: '硅基流动 (SiliconFlow)',  model: 'Pro/MiniMaxAI/MiniMax-M2.5',                    baseUrl: 'https://api.siliconflow.cn/v1' },
+    promptEval:{ provider: 'DeepSeek',               model: 'deepseek-chat',                                baseUrl: 'https://api.deepseek.com' },
+    embedding: { provider: '本地 Ollama',             model: 'quentinz/bge-small-zh-v1.5',                   baseUrl: 'http://localhost:11434' },
+    reranker:  { provider: '硅基流动 (SiliconFlow)',  model: 'BAAI/bge-reranker-v2-m3',                      baseUrl: 'https://api.siliconflow.cn/v1' },
+  };
+
+  function initCardState(card) {
+    const saved = savedConfigs[card.id] || {};
+    return {
+      provider: saved.provider || 'DeepSeek',
+      model: saved.model || 'deepseek-v4-flash',
+      baseUrl: saved.base_url || PROVIDER_BASE_URLS['DeepSeek'],
+      key: '',
+      savedId: saved.provider ? card.id : '',
+      status: saved.provider ? 'online' : 'offline',
+      statusText: saved.provider ? '🟢 已配置' : '🟡 未配置',
+      testResult: 'pending',
+      testText: saved.provider ? '✅ 已保存 (点击测试验证)' : '⏳ 尚未测试',
+    };
+  }
+
+  // ─── API 调用 ──────────────────────────────────────────
+  async function loadConfigs() {
+    try {
+      const r = await fetch('/api/llm/configs');
+      const data = await r.json();
+      savedConfigs = data.configs || {};
+    } catch (e) {
+      savedConfigs = {};
+    }
+    CARDS.forEach(c => { cardStates[c.id] = initCardState(c); });
+    // 未保存的卡片以对应生产模型默认值填充（测试期间）
+    CARDS.forEach(c => {
+      const st = cardStates[c.id];
+      if (st && !st.savedId) {
+        const preset = DEFAULT_PRESETS[c.id];
+        if (preset) {
+          st.provider = preset.provider;
+          st.model = preset.model;
+          st.baseUrl = preset.baseUrl;
+          st.status = 'online';
+          st.statusText = '🟡 未保存（生产模型默认值）';
+        }
+      }
+    });
+    renderCards();
+    bindEvents();
+  }
+
+  async function apiSaveCard(moduleId, provider, model, baseUrl, apiKey) {
+    const r = await fetch('/api/llm/configs/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ module_id: moduleId, provider, model, base_url: baseUrl, api_key: apiKey }),
+    });
+    return r.json();
+  }
+
+  async function apiTestConn(moduleId, baseUrl, apiKey, model) {
+    const r = await fetch('/api/llm/configs/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ module_id: moduleId, base_url: baseUrl, api_key: apiKey, model }),
+    });
+    return r.json();
+  }
+
+  // ─── 获取已保存方案列表（用于下拉）────────────────────
+  function getSavedOptions() {
+    return CARDS
+      .filter(c => cardStates[c.id] && cardStates[c.id].savedId)
+      .map(c => {
+        const st = cardStates[c.id];
+        return {
+          id: c.id,
+          label: `${c.num} ${c.name}（${st.provider} · ${st.model}）`,
+          provider: st.provider,
+          model: st.model,
+          key: st.key || '',
+          baseUrl: st.baseUrl || '',
+        };
+      });
+  }
+
+  // ─── Template ──────────────────────────────────────────
+  function renderCards() {
+    const container = document.getElementById('cardContainer');
+    container.innerHTML = CARDS.map(c => buildCard(c)).join('');
+  }
+
+  function buildCard(c) {
+    const st = cardStates[c.id] || initCardState(c);
+    const opts = getSavedOptions();
+    return `<div class="config-card" data-card="${c.id}">
+      <div class="config-header">
+        <div class="icon" style="background:${c.bg};color:${c.color}">${c.icon}</div>
+        <div class="info">
+          <h3>${c.num} ${c.name}</h3>
+          <p>${c.desc}</p>
+        </div>
+        <span class="status-badge ${st.status}">${st.statusText}</span>
+      </div>
+      <div class="config-body">
+        <div class="saved-config-row">
+          <label>📋 已保存方案</label>
+          <select class="saved-select" data-card="${c.id}">
+            <option value="" data-type="" data-provider="" data-model="" data-key="" data-base-url="">— 新建方案 —</option>
+            ${opts.map(o => {
+              const sel = (o.id === st.savedId && st.savedId) ? 'selected' : '';
+              return `<option value="${o.id}" ${sel} data-type="card" data-provider="${o.provider}" data-model="${o.model}" data-key="${o.key}" data-base-url="${o.baseUrl || ''}">${o.label}</option>`;
+            }).join('')}
+          </select>
+          <button class="btn-small" onclick="document.querySelector('[data-card=\\'${c.id}\\'] .saved-select').value='';fillFromSaved('${c.id}','');toast('已切换为新建方案')">➕ 新建方案</button>
+        </div>
+        <div class="model-selector">
+          <div class="field">
+            <label>平台提供商</label>
+            <select class="provider-select" data-card="${c.id}" onchange="onProviderChange('${c.id}')">
+              ${Object.keys(PROVIDER_MODELS).map(p => `<option value="${p}" ${p === st.provider ? 'selected' : ''}>${p}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>模型名称</label>
+            <input type="text" class="model-input" data-card="${c.id}" value="${st.model}" placeholder="输入模型名称，如 deepseek-v4-flash" style="width:100%;padding:7px 10px;border:1px solid var(--b);border-radius:6px;font-size:13px;font-family:var(--f);background:var(--card);color:var(--t);outline:none;">
+            <div class="hint">${c.hint}</div>
+          </div>
+          <div class="field">
+            <label>Base URL</label>
+            <input type="text" class="baseurl-input" data-card="${c.id}" value="${st.baseUrl || ''}" placeholder="https://api.example.com/v1" ${st.provider === '自定义' ? '' : 'readonly'}>
+          </div>
+          <div class="field api-key-wrap">
+            <label>API Key</label>
+            <input type="password" class="key-input" data-card="${c.id}" value="${st.key}" placeholder="请输入 API Key">
+            <button class="toggle-vis" onclick="toggleKeyVis('${c.id}')">👁</button>
+          </div>
+        </div>
+        <div class="test-bar">
+          <span class="saved-tag" id="savedTag_${c.id}">${st.savedId ? '💾 已保存' : '📝 未保存'}</span>
+          <div class="sep-sm"></div>
+          <button class="btn outline" onclick="testConn('${c.id}')">🔗 测试连接</button>
+          <span class="result ${st.testResult}" id="testResult_${c.id}">${st.testText}</span>
+          <div class="sep-sm"></div>
+          <button class="btn save" id="saveBtn_${c.id}" onclick="saveCard('${c.id}')" ${st.provider === '自定义' || st.provider.includes('Ollama') ? '' : 'disabled'}>💾 保存</button>
+          <span class="saved-hint" id="saveHint_${c.id}" style="font-size:10px;color:var(--t2);${st.provider === '自定义' || st.provider.includes('Ollama') ? 'display:inline' : 'display:none'};">${st.provider.includes('Ollama') ? '选择 Ollama 可直接保存' : '选择自定义可直接保存'}</span>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // ─── Events ────────────────────────────────────────────
+  function bindEvents() {
+    document.querySelectorAll('.saved-select').forEach(sel => {
+      sel.addEventListener('change', function() {
+        fillFromSaved(this.dataset.card, this.value);
+      });
+    });
+    document.querySelectorAll('.provider-select').forEach(sel => {
+      sel.addEventListener('change', function() {
+        onProviderChange(this.dataset.card);
+      });
+    });
+    document.querySelectorAll('.model-input, .baseurl-input').forEach(inp => {
+      inp.addEventListener('input', function() {
+        markUnsaved(this.dataset.card);
+      });
+    });
+    document.querySelectorAll('.key-input').forEach(inp => {
+      inp.addEventListener('input', function() {
+        markUnsaved(this.dataset.card);
+      });
+    });
+  }
+
+  function fillFromSaved(cardId, savedId) {
+    const st = cardStates[cardId];
+    if (!st) return;
+
+    const providerSel = document.querySelector(`.provider-select[data-card="${cardId}"]`);
+    const modelInput = document.querySelector(`.model-input[data-card="${cardId}"]`);
+    const baseUrlInput = document.querySelector(`.baseurl-input[data-card="${cardId}"]`);
+    const keyInput = document.querySelector(`.key-input[data-card="${cardId}"]`);
+
+    if (!savedId) {
+      providerSel.value = 'DeepSeek';
+      modelInput.value = 'deepseek-v4-flash';
+      baseUrlInput.value = PROVIDER_BASE_URLS['DeepSeek'] || '';
+      baseUrlInput.readOnly = true;
+      keyInput.value = '';
+      st.provider = 'DeepSeek';
+      st.model = 'deepseek-v4-flash';
+      st.baseUrl = PROVIDER_BASE_URLS['DeepSeek'] || '';
+      st.key = '';
+      st.savedId = '';
+      updateSavedTag(cardId, false);
+      const btn = document.getElementById(`saveBtn_${cardId}`);
+      if (btn) btn.disabled = true;
+      const hint = document.getElementById(`saveHint_${cardId}`);
+      if (hint) hint.style.display = 'none';
+      return;
+    }
+
+    // 从其他卡片引用已保存方案
+    const opt = document.querySelector(`.saved-select[data-card="${cardId}"] option[value="${savedId}"]`);
+    if (!opt) return;
+    const provider = opt.dataset.provider;
+    const model = opt.dataset.model;
+    const key = opt.dataset.key;
+    const baseUrl = opt.dataset.baseUrl;
+    if (!provider) return;
+
+    providerSel.value = provider;
+    modelInput.value = model || '';
+    baseUrlInput.value = baseUrl || PROVIDER_BASE_URLS[provider] || '';
+    baseUrlInput.readOnly = provider !== '自定义' && !provider.includes('Ollama');
+    keyInput.value = key || '';
+    st.provider = provider;
+    st.model = model || '';
+    st.baseUrl = baseUrl || PROVIDER_BASE_URLS[provider] || '';
+    st.key = key || '';
+    st.savedId = savedId;
+    updateSavedTag(cardId, true);
+    if (provider === '自定义' || provider.includes('Ollama')) {
+      const btn = document.getElementById(`saveBtn_${cardId}`);
+      if (btn) btn.disabled = false;
+      const hint = document.getElementById(`saveHint_${cardId}`);
+      if (hint) { hint.style.display = 'inline'; hint.textContent = provider.includes('Ollama') ? '选择 Ollama 可直接保存' : '选择自定义可直接保存'; }
+    } else {
+      const hint = document.getElementById(`saveHint_${cardId}`);
+      if (hint) hint.style.display = 'none';
+      const btn = document.getElementById(`saveBtn_${cardId}`);
+      if (btn) btn.disabled = true;
+    }
+  }
+
+  function onProviderChange(cardId) {
+    const st = cardStates[cardId];
+    if (!st) return;
+    const providerSel = document.querySelector(`.provider-select[data-card="${cardId}"]`);
+    const modelInput = document.querySelector(`.model-input[data-card="${cardId}"]`);
+    const baseUrlInput = document.querySelector(`.baseurl-input[data-card="${cardId}"]`);
+    const provider = providerSel.value;
+    modelInput.value = '';
+    if (provider === '自定义') {
+      baseUrlInput.readOnly = false;
+      if (!baseUrlInput.value) baseUrlInput.value = 'https://';
+      const btn = document.getElementById(`saveBtn_${cardId}`);
+      if (btn) btn.disabled = false;
+      const hint = document.getElementById(`saveHint_${cardId}`);
+      if (hint) { hint.style.display = 'inline'; hint.textContent = '选择自定义可直接保存'; }
+    } else if (provider.includes('Ollama')) {
+      baseUrlInput.readOnly = true;
+      baseUrlInput.value = PROVIDER_BASE_URLS[provider] || 'http://localhost:11434/v1';
+      const btn = document.getElementById(`saveBtn_${cardId}`);
+      if (btn) btn.disabled = false;
+      const hint = document.getElementById(`saveHint_${cardId}`);
+      if (hint) { hint.style.display = 'inline'; hint.textContent = '选择 Ollama 可直接保存'; }
+    } else {
+      const hint = document.getElementById(`saveHint_${cardId}`);
+      if (hint) hint.style.display = 'none';
+      baseUrlInput.readOnly = true;
+      baseUrlInput.value = PROVIDER_BASE_URLS[provider] || '';
+      const btn = document.getElementById(`saveBtn_${cardId}`);
+      if (btn) btn.disabled = true;
+    }
+    st.provider = provider;
+    st.model = '';
+    st.baseUrl = baseUrlInput.value;
+    st.savedId = '';
+    updateSavedTag(cardId, false);
+    const result = document.getElementById(`testResult_${cardId}`);
+    if (result) { result.className = 'result pending'; result.textContent = '⏳ 尚未测试'; }
+  }
+
+  function markUnsaved(cardId) {
+    const st = cardStates[cardId];
+    if (st && (st.provider === '自定义' || st.provider.includes('Ollama'))) return;
+    const btn = document.getElementById(`saveBtn_${cardId}`);
+    if (btn) btn.disabled = true;
+    const result = document.getElementById(`testResult_${cardId}`);
+    if (result && result.classList.contains('success')) {
+      result.className = 'result pending';
+      result.textContent = '⏳ 测试已过期，请重新测试';
+    }
+  }
+
+  function updateSavedTag(cardId, saved) {
+    const tag = document.getElementById(`savedTag_${cardId}`);
+    if (tag) tag.textContent = saved ? '💾 已保存' : '📝 未保存';
+  }
+
+  // ─── Actions ────────────────────────────────────────────
+  window.testConn = async function(cardId) {
+    const result = document.getElementById(`testResult_${cardId}`);
+    if (!result) return;
+    const modelInput = document.querySelector(`.model-input[data-card="${cardId}"]`);
+    const baseUrlInput = document.querySelector(`.baseurl-input[data-card="${cardId}"]`);
+    const keyInput = document.querySelector(`.key-input[data-card="${cardId}"]`);
+    const model = (modelInput ? modelInput.value : '').trim();
+    const baseUrl = (baseUrlInput ? baseUrlInput.value : '').trim();
+    const apiKey = (keyInput ? keyInput.value : '').trim();
+    if (!model) { result.className = 'result fail'; result.textContent = '❌ 请先填写模型名称'; return; }
+    if (!baseUrl) { result.className = 'result fail'; result.textContent = '❌ 请先填写 Base URL'; return; }
+    result.className = 'result pending';
+    result.innerHTML = '<span class="spinner"></span> 测试中…';
+    const btn = document.getElementById(`saveBtn_${cardId}`);
+    if (btn) btn.disabled = true;
+
+    try {
+      const data = await apiTestConn(cardId, baseUrl, apiKey, model);
+      if (data.ok === false || data.error) {
+        result.className = 'result fail';
+        result.textContent = '❌ ' + (data.error || '连接失败');
+      } else {
+        result.className = 'result success';
+        const cost = data.time_s ? ` (${data.time_s}s)` : '';
+        result.textContent = '✅ 连接成功' + cost;
+        if (btn) btn.disabled = false;
+      }
+    } catch (e) {
+      result.className = 'result fail';
+      result.textContent = '❌ 请求失败: ' + (e.message || '未知错误');
+    }
+  };
+
+  window.saveCard = async function(cardId) {
+    const st = cardStates[cardId];
+    if (!st) return;
+    const providerSel = document.querySelector(`.provider-select[data-card="${cardId}"]`);
+    const modelInput = document.querySelector(`.model-input[data-card="${cardId}"]`);
+    const baseUrlInput = document.querySelector(`.baseurl-input[data-card="${cardId}"]`);
+    const keyInput = document.querySelector(`.key-input[data-card="${cardId}"]`);
+
+    const provider = providerSel.value;
+    const model = modelInput.value;
+    const baseUrl = baseUrlInput.value;
+    const apiKey = keyInput.value;
+
+    if (!model) { toast('请填写模型名称'); return; }
+    if (!baseUrl) { toast('请填写 Base URL'); return; }
+
+    const result = document.getElementById(`testResult_${cardId}`);
+    if (result) { result.className = 'result pending'; result.innerHTML = '<span class="spinner"></span> 保存中…'; }
+
+    try {
+      const data = await apiSaveCard(cardId, provider, model, baseUrl, apiKey);
+      if (data.ok) {
+        // 保存成功后刷新配置
+        await loadConfigs();
+        toast('💾 ' + data.message);
+      } else {
+        toast('❌ 保存失败: ' + (data.error || '未知错误'));
+        if (result) { result.className = 'result fail'; result.textContent = '❌ ' + (data.error || '保存失败'); }
+      }
+    } catch (e) {
+      toast('❌ 保存请求失败: ' + (e.message || '未知错误'));
+      if (result) { result.className = 'result fail'; result.textContent = '❌ 请求失败'; }
+    }
+  };
+
+  window.toggleKeyVis = function(cardId) {
+    const input = document.querySelector(`.key-input[data-card="${cardId}"]`);
+    if (!input) return;
+    input.type = input.type === 'password' ? 'text' : 'password';
+  };
+
+  window.resetAll = async function() {
+    if (!confirm('确定清除所有已保存的模型配置？')) return;
+    // 逐个清空所有卡片
+    for (const card of CARDS) {
+      try {
+        await apiSaveCard(card.id, 'DeepSeek', '', '', '');
+      } catch (e) { /* ignore */ }
+    }
+    await loadConfigs();
+    toast('↩ 已清除所有保存的配置');
+  };
+
+  window.restartServer = async function() {
+    if (!confirm('确定重启服务？重启后配置即时生效，当前所有在线对话将中断。')) return;
+    const btn = document.querySelector('.global-actions .btn.restart');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 重启中…'; }
+    toast('⏳ 正在重启服务…');
+    try {
+      await fetch('/api/llm/configs/restart', { method: 'POST' });
+      setInterval(() => {
+        fetch('/admin/model-config', { method: 'HEAD' })
+          .then(() => { toast('✅ 服务已重启完成'); if (btn) { btn.disabled = false; btn.textContent = '🔄 重启服务'; } })
+          .catch(() => { /* 还没起来，继续等 */ });
+      }, 2000);
+    } catch (e) {
+      toast('❌ 重启请求失败: ' + (e.message || '未知错误'));
+      if (btn) { btn.disabled = false; btn.textContent = '🔄 重启服务'; }
+    }
+  };
+
+  // 底部全部保存
+  document.addEventListener('DOMContentLoaded', function() {
+    const saveAllBtn = document.querySelector('.global-actions .btn.primary');
+    if (saveAllBtn) {
+      saveAllBtn.onclick = async function() {
+        let count = 0;
+        for (const card of CARDS) {
+          const st = cardStates[card.id];
+          if (!st) continue;
+          const providerSel = document.querySelector(`.provider-select[data-card="${card.id}"]`);
+          const modelInput = document.querySelector(`.model-input[data-card="${card.id}"]`);
+          const baseUrlInput = document.querySelector(`.baseurl-input[data-card="${card.id}"]`);
+          const keyInput = document.querySelector(`.key-input[data-card="${card.id}"]`);
+          if (modelInput.value && baseUrlInput.value) {
+            try {
+              await apiSaveCard(card.id, providerSel.value, modelInput.value, baseUrlInput.value, keyInput.value);
+              count++;
+            } catch (e) { /* skip */ }
+          }
+        }
+        await loadConfigs();
+        toast(`💾 已保存 ${count} 个卡片配置`);
+      };
+    }
+
+    const testAllBtn = document.querySelector('.global-actions .btn.success');
+    if (testAllBtn) {
+      testAllBtn.onclick = async function() {
+        let success = 0, fail = 0;
+        for (const card of CARDS) {
+          const st = cardStates[card.id];
+          if (!st || !st.model || !st.baseUrl) continue;
+          const keyInput = document.querySelector(`.key-input[data-card="${card.id}"]`);
+          const apiKey = keyInput ? keyInput.value : '';
+          if (!apiKey && !st.key) continue;
+          try {
+            const data = await apiTestConn(card.id, st.baseUrl, apiKey || st.key, st.model);
+            if (data.ok === false) fail++; else success++;
+          } catch (e) { fail++; }
+        }
+        toast(`🔗 测试完成: ✅ ${success} 成功, ❌ ${fail} 失败`);
+        await loadConfigs();
+      };
+    }
+
+    const resetBtn = document.querySelector('.global-actions .btn.outline');
+    if (resetBtn) {
+      resetBtn.onclick = window.resetAll;
+    }
+  });
+
+  function toast(msg) {
+    const el = document.getElementById('toastMsg');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(el._timer);
+    el._timer = setTimeout(() => el.classList.remove('show'), 2200);
+  }
+  window.toast = toast;
+
+  // ─── Init ───────────────────────────────────────────────
+  loadConfigs();
+})();
+</script>
+</body>
+</html>
