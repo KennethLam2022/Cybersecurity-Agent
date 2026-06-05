@@ -1140,6 +1140,41 @@
       }).catch(()=>{});
     }, 15000);
   })();
+
+  // ─── Token 管理：自动注入 X-Admin-Token ───
+  (function initToken() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('token');
+    if (urlToken && !localStorage.getItem('admin_token')) {
+      localStorage.setItem('admin_token', urlToken);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  })();
+
+  const _origFetch = window.fetch;
+  window.fetch = function(input, init) {
+    init = init || {};
+    const token = localStorage.getItem('admin_token') || '';
+    if (token) {
+      try {
+        if (init.headers instanceof Headers) {
+          init.headers.set('X-Admin-Token', token);
+        } else {
+          init.headers = init.headers || {};
+          init.headers['X-Admin-Token'] = token;
+        }
+      } catch(e) {
+        console.error('设置 X-Admin-Token 失败:', e);
+      }
+    }
+    return _origFetch(input, init).then(function(resp) {
+      if (resp.status === 403) {
+        localStorage.removeItem('admin_token');
+        location.href = '/admin';
+      }
+      return resp;
+    });
+  };
 </script>
 </body>
 </html>

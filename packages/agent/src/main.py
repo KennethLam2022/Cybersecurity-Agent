@@ -30,175 +30,27 @@ if _PREPROCESSOR_SRC not in sys.path:
 
 from deduplicator import Deduplicator
 
+# ---- 导入拆分的模块 ----
+from auth import verify_admin_token, is_admin_route, validate_llm_url
+from llm_config_manager import (
+    _fernet, _CRYPTO_AVAILABLE,
+    _load_llm_config, _save_llm_config,
+    _get_db_path, _save_llm_key, _get_llm_key, _get_llm_key_mask, _has_llm_key, _delete_llm_key,
+    _save_llm_config_card, _get_all_llm_configs, _get_llm_config_card,
+    _hash_api_key, _encrypt_api_key, _decrypt_api_key, _make_key_mask,
+    _get_project_root,
+)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 _START_TIME = time.time()
 
-# 非对话/非 LLM 模型关键词过滤（刷新模型列表时排除掉）
+# 非对话/非 LLM 模型关键词过滤
 _EXCLUDE_MODEL_KEYWORDS = ["embedding", "reranker", "image", "video", "audio", "speech", "ocr", "asr", "tts", "bge", "wan", "kolors", "paddleocr", "captioner", "cosyvoice", "sensevoice"]
-
-# ---- 加密模块：必须在 from agent import CyberAgent 之前初始化 ----
-# 让 memory.get_llm_config_card 在 agent.py 导入时就能通过环境变量获取密钥
-try:
-    from cryptography.fernet import Fernet
-    _CRYPTO_AVAILABLE = True
-except ImportError:
-    _CRYPTO_AVAILABLE = False
-    logger.warning("cryptography 库未安装，API Key 将以明文存储（不安全）。请运行: pip install cryptography")
-
-# 加密密钥从环境变量读取，未设置则从文件读取/自动生成并持久化（生产环境必须设置）
-_ENCRYPTION_KEY = os.environ.get("LLM_KEY_ENCRYPTION_KEY")
-if _CRYPTO_AVAILABLE and not _ENCRYPTION_KEY:
-    _KEY_FILE = Path(_SRC).parent / "agent_data" / ".encryption_key"
-    if _KEY_FILE.exists():
-        _ENCRYPTION_KEY = _KEY_FILE.read_text(encoding="utf-8").strip()
-        logger.info(f"🔑 从文件读取加密密钥 (key 前8位: {_ENCRYPTION_KEY[:8]})")
-    else:
-        _ENCRYPTION_KEY = Fernet.generate_key().decode()
-        _KEY_FILE.write_text(_ENCRYPTION_KEY, encoding="utf-8")
-        logger.warning(f"🔑 已自动生成加密密钥并持久化到 {_KEY_FILE} (key 前8位: {_ENCRYPTION_KEY[:8]})")
-
-# 先设置环境变量，确保后续导入的模块都能通过环境变量获取密钥
-if _ENCRYPTION_KEY:
-    os.environ["LLM_KEY_ENCRYPTION_KEY"] = _ENCRYPTION_KEY
-    logger.info(f"📌 加密密钥已同步到环境变量 LLM_KEY_ENCRYPTION_KEY")
-
-if _CRYPTO_AVAILABLE:
-    _fernet = Fernet(_ENCRYPTION_KEY.encode() if isinstance(_ENCRYPTION_KEY, str) else _ENCRYPTION_KEY)
-    logger.info(f"🔐 Fernet 加密器已初始化 (key 前8位: {_ENCRYPTION_KEY[:8] if _ENCRYPTION_KEY else 'N/A'})")
 
 from agent import CyberAgent
 
-def _hash_api_key(api_key: str) -> str:
-    """SHA-256 哈希，用于完整性校验（不可逆）"""
-    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
-
-def _encrypt_api_key(api_key: str) -> str:
-    """AES 加密 API Key"""
-    if not _CRYPTO_AVAILABLE:
-        logger.error("cryptography 库未安装，无法加密 API Key")
-        raise RuntimeError("cryptography 库未安装，请运行: pip install cryptography")
-    return _fernet.encrypt(api_key.encode("utf-8")).decode()
-
-def _decrypt_api_key(api_key_enc: str) -> str:
-    """解密 API Key"""
-    if not _CRYPTO_AVAILABLE:
-        logger.error("cryptography 库未安装，无法解密 API Key")
-        raise RuntimeError("cryptography 库未安装")
-    return _fernet.decrypt(api_key_enc.encode("utf-8")).decode()
-
-def _make_key_mask(api_key: str) -> str:
-    """生成掩码：前8位 + 中间掩码 + 后4位"""
-    if len(api_key) <= 12:
-        return "•" * len(api_key)
-    return api_key[:8] + "•" * (len(api_key) - 12) + api_key[-4:]
-
-# ---- 认证中间件 ----
-_ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "change-me-in-production")
-
-async def verify_admin_token(request: Request) -> None:
-    """验证管理端点 Token"""
-    token = request.headers.get("X-Admin-Token", "")
-    if not token or token != _ADMIN_TOKEN:
-        logger.warning(f"⚠️ 未授权访问: {request.url.path}")
-        raise HTTPException(status_code=403, detail="未授权访问")
-
-# 受保护的管理路由
-_ADMIN_ROUTES = [
-    "/api/stats/drill-down",
-    "/api/stats/dashboard",
-    "/api/conversations/detail",
-    "/api/conversations/stats",
-    "/api/conversations/{conv_id}/hard",
-]
-
-def is_admin_route(path: str) -> bool:
-    """判断是否为管理路由（需要 X-Admin-Token）"""
-    # ---- 管理路由（需要 X-Admin-Token）----
-    for route in _ADMIN_ROUTES:
-        if path == route:
-            return True
-        # 参数化路由匹配：/api/conversations/{conv_id}/hard
-        # 只匹配以固定后缀结尾的路径（如 /hard），避免误匹配其他子路径
-        if "{" in route:
-            base = route.split("{")[0].rstrip("/")
-            suffix = route.split("}")[-1]  # 如 "/hard"
-            if suffix:
-                if path.startswith(base + "/") and path.endswith(suffix):
-                    # 提取中间部分作为 conv_id，确保不为空
-                    middle = path[len(base)+1:-len(suffix)] if suffix else path[len(base)+1:]
-                    if middle and "/" not in middle:
-                        return True
-            else:
-                # 无后缀的参数化路由（暂未使用）
-                if path.startswith(base + "/") and "/" not in path[len(base)+1:]:
-                    return True
-
-    # ---- 公开接口（聊天页面使用，无需认证）----
-    PUBLIC_ROUTES = {
-        "/", "/admin",
-        "/api/conversations",
-        "/api/chat/stream",
-        "/api/rating",
-        "/api/llm/config",
-        "/api/llm/presets",
-        "/api/llm/test",
-        "/api/llm/refresh-models",
-        "/api/llm/configs",
-        "/api/llm/configs/save",
-        "/api/llm/configs/test",
-        "/api/llm/configs/restart",
-        "/admin/model-config",
-        "/api/admin/stream",
-    }
-    if path in PUBLIC_ROUTES:
-        return False
-    # 前缀匹配公开路径
-    PUBLIC_PREFIXES = {"/api/conversations/", "/api/documents/", "/static/"}
-    for prefix in PUBLIC_PREFIXES:
-        if path.startswith(prefix):
-            return False
-
-    return False
-
-# ---- SSRF 防护：LLM API 域名白名单 ----
-_ALLOWED_LLM_DOMAINS = {
-    "api.siliconflow.cn",
-    "api.deepseek.com",
-    "dashscope.aliyuncs.com",
-    "open.bigmodel.cn",
-    "api.moonshot.cn",
-    "qianfan.baidubce.com",
-    "openrouter.ai",
-    "api.openai.com",
-    "api.anthropic.com",
-    "api.googleapis.com",
-    "generativelanguage.googleapis.com",
-    "localhost",
-    "127.0.0.1",
-}
-
-def validate_llm_url(url: str) -> bool:
-    """校验 LLM API URL 是否在白名单内，防止 SSRF"""
-    from urllib.parse import urlparse
-    try:
-        parsed = urlparse(url)
-        hostname = parsed.hostname
-        if not hostname:
-            return False
-        # 直接匹配域名
-        if hostname in _ALLOWED_LLM_DOMAINS:
-            return True
-        # 检查是否为白名单域名的子域名
-        for allowed in _ALLOWED_LLM_DOMAINS:
-            if hostname.endswith("." + allowed):
-                return True
-        return False
-    except Exception:
-        return False
-
-# ---- 实时监控事件总线 ----
 class EventBus:
     """SSE 事件广播：admin 页面实时监控"""
 
@@ -1394,7 +1246,7 @@ async def admin_documents():
     """文档入库管理页面"""
     html_path = _STATIC / "data_preview.html"
     if html_path.exists():
-        return HTMLResponse(html_path.read_text(encoding="utf-8"))
+        return HTMLResponse(html_path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"})
     return HTMLResponse("<h1>页面未找到</h1>")
 
 
@@ -1407,7 +1259,7 @@ async def admin_model_config():
         return HTMLResponse("<h1>静态文件目录不存在</h1>")
     html_path = _STATIC / "admin_model_preview.html"
     if html_path.exists():
-        return HTMLResponse(html_path.read_text(encoding="utf-8"))
+        return HTMLResponse(html_path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"})
     return HTMLResponse("<h1>页面未找到</h1>")
 
 

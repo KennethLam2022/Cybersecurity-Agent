@@ -719,6 +719,47 @@
   }
   window.toast = toast;
 
+  // ─── Token 管理 ──────────────────────────────────────
+  function getToken() {
+    return localStorage.getItem('admin_token') || '';
+  }
+
+  // 覆写 fetch：自动注入 X-Admin-Token
+  const _origFetch = window.fetch;
+  window.fetch = function(input, init) {
+    init = init || {};
+    const token = getToken();
+    if (token) {
+      try {
+        if (init.headers instanceof Headers) {
+          init.headers.set('X-Admin-Token', token);
+        } else {
+          init.headers = init.headers || {};
+          init.headers['X-Admin-Token'] = token;
+        }
+      } catch(e) {
+        console.error('设置 X-Admin-Token 失败:', e);
+      }
+    }
+    return _origFetch(input, init).then(function(resp) {
+      if (resp.status === 403) {
+        localStorage.removeItem('admin_token');
+        location.href = '/admin';
+      }
+      return resp;
+    });
+  };
+
+  // 从 URL 参数获取 token（首次使用时）
+  (function initToken() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('token');
+    if (urlToken && !getToken()) {
+      localStorage.setItem('admin_token', urlToken);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  })();
+
   // ─── Init ───────────────────────────────────────────────
   loadConfigs();
 })();

@@ -1015,7 +1015,7 @@ class CyberAgent:
                 [{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=128,
-                timeout=10,
+                timeout=30,
             )
             elapsed = time.time() - t0
             rewritten = (rewritten.get("content", "") if isinstance(rewritten, dict) else rewritten).strip().strip('"').strip("'")

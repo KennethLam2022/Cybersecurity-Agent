@@ -1,0 +1,228 @@
+"""单元测试 — 核心逻辑
+
+运行：python -m pytest tests/ -v
+"""
+import sys, os, json
+_SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
+import pytest
+
+# ============================================================
+# 1. _eval_common: compute_avg_stats
+# ============================================================
+from _eval_common import compute_avg_stats
+
+class TestComputeAvgStats:
+    def test_empty_results(self):
+        assert compute_avg_stats([]) == {
+            "faithfulness": 0.0, "relevancy": 0.0, "hallucination": 0.0,
+            "context_precision": 0.0, "context_recall": 0.0, "overall": 0.0,
+        }
+
+    def test_single_result(self):
+        r = [{
+            "faithfulness": 0.8, "relevancy": 0.7, "hallucination": 0.9,
+            "context_precision": 0.6, "context_recall": 0.5,
+        }]
+        avg = compute_avg_stats(r)
+        assert avg["faithfulness"] == 0.8
+        assert avg["relevancy"] == 0.7
+        assert avg["overall"] == round((0.8+0.7+0.9+0.6+0.5)/5, 4)
+
+    def test_multiple_results(self):
+        r = [
+            {"faithfulness": 1.0, "relevancy": 1.0, "hallucination": 1.0, "context_precision": 1.0, "context_recall": 1.0},
+            {"faithfulness": 0.0, "relevancy": 0.0, "hallucination": 0.0, "context_precision": 0.0, "context_recall": 0.0},
+        ]
+        avg = compute_avg_stats(r)
+        assert avg["faithfulness"] == 0.5
+        assert avg["overall"] == 0.5
+
+    def test_partial_scores(self):
+        """某些字段缺失时应跳过"""
+        r = [{"faithfulness": 1.0}, {"faithfulness": 0.5, "relevancy": 0.8}]
+        avg = compute_avg_stats(r)
+        assert avg["faithfulness"] == 0.75  # (1.0 + 0.5) / 2
+        assert avg["relevancy"] == 0.8  # only one value
+
+    def test_scores_nested_key(self):
+        """兼容嵌套 scores 结构"""
+        r = [{"scores": {"faithfulness": 0.9, "relevancy": 0.8}}]
+        avg = compute_avg_stats(r)
+        assert avg["faithfulness"] == 0.9
+        assert avg["relevancy"] == 0.8
+
+
+# ============================================================
+# 2. _eval_generation: _extract_json and _clean_answer
+# ============================================================
+from _eval_generation import _extract_json, _clean_answer
+
+class TestExtractJson:
+    def test_pure_json(self):
+        assert json.loads(_extract_json('{"score": 0.5}')) == {"score": 0.5}
+
+    def test_with_markdown_fence(self):
+        result = _extract_json('```json\n{"score": 0.8, "explanation": "好"}\n```')
+        assert json.loads(result) == {"score": 0.8, "explanation": "好"}
+
+    def test_no_json(self):
+        assert _extract_json("hello world") == "hello world"
+
+    def test_json_with_prefix_text(self):
+        result = _extract_json('分析结果如下：{"score": 0.9}')
+        assert json.loads(result) == {"score": 0.9}
+
+    def test_empty_string(self):
+        assert _extract_json("") == ""
+
+
+class TestCleanAnswer:
+    def test_remove_thinking_block(self):
+        answer = "【思考过程】\n我分析了参考资料\n---\n**结论**：个人信息是指..."
+        assert "【思考过程】" not in _clean_answer(answer)
+
+    def test_remove_inline_sources(self):
+        answer = "这是一个结论[来源1: GB/T 35273-2020]。"
+        assert "[来源1:" not in _clean_answer(answer)
+
+    def test_no_thinking_no_sources(self):
+        answer = "**结论**：个人信息是指以电子或其他方式记录的..."
+        assert _clean_answer(answer) == answer
+
+    def test_empty_answer(self):
+        assert _clean_answer("") == ""
+
+
+# ============================================================
+# 3. llm_provider: CircuitBreaker
+# ============================================================
+from llm_provider import CircuitBreaker
+
+class TestCircuitBreaker:
+    def test_initial_state(self):
+        cb = CircuitBreaker(failure_threshold=3, open_timeout=60.0)
+        assert cb.state == "CLOSED"
+
+    def test_trip_on_threshold(self):
+        cb = CircuitBreaker(failure_threshold=2, open_timeout=60.0)
+        # 连续失败 2 次应触发熔断
+        with pytest.raises(ValueError):
+            cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+        assert cb.state == "CLOSED"  # 1次失败，未到阈值
+        with pytest.raises(ValueError):
+            cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+        assert cb.state == "OPEN"  # 2次失败，熔断
+
+    def test_reset_on_success(self):
+        cb = CircuitBreaker(failure_threshold=2, open_timeout=60.0)
+        # 失败1次，然后成功
+        with pytest.raises(ValueError):
+            cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+        result = cb.call(lambda: "ok")
+        assert result == "ok"
+        assert cb.state == "CLOSED"
+        assert cb.failure_count == 0
+
+    def test_allows_request_in_half_open(self):
+        cb = CircuitBreaker(failure_threshold=2, open_timeout=0.01)
+        with pytest.raises(ValueError):
+            cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+        with pytest.raises(ValueError):
+            cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+        assert cb.state == "OPEN"
+        import time
+        time.sleep(0.02)
+        # HALF_OPEN 状态下，探测请求可以执行
+        result = cb.call(lambda: "recovered")
+        assert result == "recovered"
+        assert cb.state == "CLOSED"
+
+    def test_blocks_when_open(self):
+        cb = CircuitBreaker(failure_threshold=1, open_timeout=60.0)
+        with pytest.raises(ValueError):
+            cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+        assert cb.state == "OPEN"
+        with pytest.raises(RuntimeError, match="熔断器 OPEN"):
+            cb.call(lambda: "should not reach")
+
+    def test_different_instances_independent(self):
+        cb1 = CircuitBreaker(failure_threshold=2, open_timeout=60.0)
+        cb2 = CircuitBreaker(failure_threshold=2, open_timeout=60.0)
+        with pytest.raises(ValueError):
+            cb1.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+        with pytest.raises(ValueError):
+            cb1.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+        assert cb1.state == "OPEN"
+        assert cb2.state == "CLOSED"
+
+
+# ============================================================
+# 4. auth: validate_llm_url, is_admin_route
+# ============================================================
+from auth import validate_llm_url, is_admin_route, verify_admin_token
+
+class TestValidateLlmUrl:
+    def test_allowed_domain(self):
+        assert validate_llm_url("https://api.deepseek.com/v1") is True
+        assert validate_llm_url("https://api.openai.com/v1") is True
+
+    def test_allowed_subdomain(self):
+        assert validate_llm_url("https://us-east-1.api.siliconflow.cn") is True
+
+    def test_disallowed_domain(self):
+        assert validate_llm_url("https://evil-hacker.com") is False
+
+    def test_invalid_url(self):
+        assert validate_llm_url("not a url") is False
+
+
+class TestIsAdminRoute:
+    def test_admin_document_path(self):
+        assert is_admin_route("/api/documents/scan") is True
+
+    def test_admin_llm_configs(self):
+        assert is_admin_route("/api/llm/configs/save") is True
+
+    def test_public_chat_path(self):
+        assert is_admin_route("/api/conversations") is False
+
+    def test_public_static(self):
+        assert is_admin_route("/static/style.css") is False
+
+    def test_admin_conversation_hard_delete(self):
+        assert is_admin_route("/api/conversations/abc-123/hard") is True
+
+    def test_public_conversation_detail(self):
+        assert is_admin_route("/api/conversations/abc-123") is False
+
+
+# ============================================================
+# 5. auth: verify_admin_token
+# ============================================================
+import os
+from unittest.mock import Mock
+from fastapi import HTTPException, Request
+
+class TestVerifyAdminToken:
+    def test_invalid_token(self):
+        """使用默认 Token 'change-me-in-production' 验证"""
+        req = Mock(spec=Request)
+        req.headers = {"X-Admin-Token": "wrong-token"}
+        import asyncio
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(verify_admin_token(req))
+        assert exc.value.status_code == 403
+
+    def test_missing_token_header(self):
+        req = Mock(spec=Request)
+        req.headers = {}
+        import asyncio
+        with pytest.raises(HTTPException):
+            asyncio.run(verify_admin_token(req))
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

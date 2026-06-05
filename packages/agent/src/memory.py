@@ -110,6 +110,9 @@ class ConversationMemory:
 
     def _init_db(self):
         with sqlite3.connect(self._db_path) as conn:
+            # 启用 WAL 模式提升并发读写性能
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS conversations (
                     id TEXT PRIMARY KEY,
@@ -475,7 +478,7 @@ class ConversationMemory:
                 [{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=100,
-                timeout=10,
+                timeout=30,
             )
             return result.strip()
         except Exception as e:
