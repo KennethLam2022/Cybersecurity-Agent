@@ -533,7 +533,7 @@ def _generate_eval_summary(eval_llm, tab_type: str, result: dict, items: list) -
             for it in low_mrr:
                 low_mrr_detail += f"- 查询「{it['query']}」MRR={it.get('mrr', 0)}（首个相关结果排位靠后）\n"
 
-        prompt = f"""你是一位移动运营商网络安全检索质量分析专家。分析以下检索测试结果。
+        prompt = f"""你是一位网络安全检索质量分析专家。分析以下检索测试结果。
 
 ## 总体数据
 - 总题数：{total} | 通过：{passed} | 失败：{failed}
@@ -597,7 +597,7 @@ def _generate_eval_summary(eval_llm, tab_type: str, result: dict, items: list) -
                 for it in all_mode_fails:
                     all_mode_detail += f"- 查询「{it['query']}」期望来源「{it.get('expected','')}」\n"
 
-            prompt = f"""你是一位移动运营商检索系统架构师。分析以下4种检索模式的增益对比结果。
+            prompt = f"""你是一位检索系统架构师。分析以下4种检索模式的增益对比结果。
 
 ## 总体对比
 | 模式 | Recall@5 | MRR |
@@ -692,7 +692,7 @@ def _generate_eval_summary(eval_llm, tab_type: str, result: dict, items: list) -
                 trunc_str = f"，上下文被截断" if trunc.get("truncated_count", 0) > 0 else ""
                 low_detail += f"- 「{it['query']}」[{it.get('difficulty','')}] 得分 {sc*100:.0f}%{trunc_str}\n"
 
-        prompt = f"""你是一位移动运营商网络安全 Agent 综合质量评测分析师。分析以下综合质量评测结果。
+        prompt = f"""你是一位网络安全 Agent 综合质量评测分析师。分析以下综合质量评测结果。
 
 ## 总体数据
 - 总题数：{total} | 已评分：{total - errors} | 错误：{errors}
@@ -914,8 +914,8 @@ def _init_on_startup():
                 else:
                     _save_llm_config_card("chat", "DeepSeek", "deepseek-v4-flash", _default_base_url, _get_llm_key("DeepSeek"))
 
-                # promptEval 卡片：默认用 deepseek-chat
-                _save_llm_config_card("promptEval", "DeepSeek", "deepseek-chat", _default_base_url, _get_llm_key("DeepSeek"))
+                # promptEval 卡片：默认用同款模型
+                _save_llm_config_card("promptEval", "DeepSeek", "deepseek-v4-flash", _default_base_url, _get_llm_key("DeepSeek"))
 
                 # 其他卡片：fallback/chunk 用默认值
                 _save_llm_config_card("fallback", "Ollama", "qwen2.5:7b", "http://localhost:11434", "")
@@ -2325,7 +2325,7 @@ def _build_report_doc(title: str, date_line: str, summary_cards: list, headers: 
                         r.font.size = Pt(9)
 
     doc_obj.add_paragraph()
-    footer_p = doc_obj.add_paragraph("网络安全移动运营商智能 Agent - 自动生成")
+    footer_p = doc_obj.add_paragraph("网络安全智能 Agent - 自动生成")
     footer_p.alignment = 2  # right
     for r in footer_p.runs:
         r.font.size = Pt(8)
@@ -2583,6 +2583,71 @@ async def seed_e2e_eval_items():
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+
+@app.post("/api/stats/e2e-eval/generate-items")
+async def e2e_eval_generate_items(data: dict = None):
+    """用 LLM 根据关键词生成综合质量评测测试集（清空旧的，替换为新的）"""
+    keywords = (data or {}).get("keywords", "网络安全 等保 数据安全")
+    eval_llm = _get_backend_eval_llm()
+
+    prompt = f"""你是一个网络安全 RAG 系统综合质量评估专家。根据以下关键词，生成 20 条综合质量评测测试用例。
+
+关键词：{keywords}
+
+要求：
+1. 每条包含 query（查询语句）、domain（领域分类）、difficulty（难度：基础/中等/困难）、style（风格：plain/role）
+2. 覆盖不同难度（基础约30%、中等约40%、困难约30%），随机分配
+3. domain 根据关键词的语义自动判断，从以下选取一个最匹配的标签（不要编号）：
+   - 等保合规（等保、国标、网络安全法相关）
+   - 数据安全（数据安全法、个人信息保护、隐私、数据分类分级相关）
+   - 安全运营（安全运营、应急响应、SOC、SoC相关）
+   - 管理体系（安全管理组织、制度体系、培训相关）
+   - 基础设施安全（CII、关键基础设施、供应链安全相关）
+4. 角色扮演（role）风格约占一半，自然语言（plain）约占一半
+5. query 用中文，长度 15-50 字，贴合网络安全管理场景
+
+只输出 JSON 数组，不要多余文字，格式：
+[
+  {{"query": "等保三级对访问控制有什么要求？", "domain": "等保合规", "difficulty": "中等", "style": "plain"}},
+  {{"query": "我是安全管理员，CII安全检测评估每年要做几次？", "domain": "基础设施安全", "difficulty": "困难", "style": "role"}}
+]"""
+
+    if eval_llm:
+        try:
+            resp = eval_llm.chat([{"role": "user", "content": prompt}])
+            text = resp.get("content", "")
+            text = text.strip()
+            if text.startswith("```"): text = text.split("\n", 1)[1]
+            if text.endswith("```"): text = text.rsplit("```", 1)[0]
+            import json
+            items = json.loads(text.strip())
+            if not isinstance(items, list) or len(items) == 0:
+                return JSONResponse({"error": "LLM 返回格式异常"}, status_code=500)
+        except Exception as e:
+            logger.warning(f"E2E LLM 生成测试集失败: {e}")
+            return JSONResponse({"error": f"LLM 生成失败: {e}"}, status_code=500)
+    else:
+        return JSONResponse({"error": "后端评测 LLM 未配置"}, status_code=400)
+
+    # 清空旧用例，替换为新生成的
+    agent.memory.clear_e2e_eval_items()
+    saved = 0
+    for item in items:
+        try:
+            agent.memory.add_e2e_eval_item(
+                query=item.get("query", ""),
+                domain=item.get("domain", ""),
+                difficulty=item.get("difficulty", "中等"),
+                style=item.get("style", "plain"),
+            )
+            saved += 1
+        except Exception:
+            continue
+
+    logger.info(f"E2E 测试集已生成: {saved} 条（关键词: {keywords}）")
+    return {"ok": True, "count": saved, "items": items}
+
+
 @app.post("/api/stats/e2e-eval/run")
 async def e2e_eval_run(data: dict = None):
     """运行综合质量评测"""
@@ -2620,6 +2685,25 @@ async def e2e_eval_run(data: dict = None):
         # 2. 评测 LLM — 从 promptEval 卡读取配置（仅用于评分，不影响 agent.ask）
         eval_llm = None
         prompt_eval_cfg = _get_llm_config_card("promptEval")
+
+        # 如果 promptEval 卡是旧的 deepseek-chat，自动用 chat 卡的同款模型
+        if prompt_eval_cfg and prompt_eval_cfg.get("model", "").strip() == "deepseek-chat":
+            chat_cfg = _get_llm_config_card("chat")
+            if chat_cfg and chat_cfg.get("model"):
+                logger.info(
+                    "promptEval 卡模型为旧的 deepseek-chat，自动同步为 chat 卡模型: "
+                    f"{chat_cfg.get('provider','?')} / {chat_cfg.get('model','?')}"
+                )
+                prompt_eval_cfg["model"] = chat_cfg["model"]
+                prompt_eval_cfg["base_url"] = chat_cfg.get("base_url", prompt_eval_cfg["base_url"])
+                prompt_eval_cfg["provider"] = chat_cfg.get("provider", prompt_eval_cfg.get("provider", ""))
+                # 一并写入数据库，后续直接命中
+                _save_llm_config_card(
+                    "promptEval", chat_cfg.get("provider", "DeepSeek"),
+                    chat_cfg["model"], chat_cfg.get("base_url", prompt_eval_cfg["base_url"]),
+                    chat_cfg.get("api_key", prompt_eval_cfg.get("api_key", "")),
+                )
+
         if prompt_eval_cfg and prompt_eval_cfg.get("model") and prompt_eval_cfg.get("base_url"):
             try:
                 from llm_provider import LLMProvider as _LLMProvider
@@ -2631,7 +2715,7 @@ async def e2e_eval_run(data: dict = None):
                 )
                 logger.info(f"评测 LLM 使用 promptEval 卡片: {prompt_eval_cfg.get('provider','?')} / {prompt_eval_cfg.get('model','?')}")
             except Exception as e:
-                logger.warning(f"创建评测 LLM 失败，使用 chat 卡: {e}")
+                logger.warning(f"创建评测 LLM 失败: {e}")
 
         # 3. 跑评估
         ts = _datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2648,6 +2732,7 @@ async def e2e_eval_run(data: dict = None):
             use_llm=use_llm,
             output_file=output_json,
             eval_llm=eval_llm,
+            answer_llm=eval_llm,  # 回答也用评测 LLM（硅基流动），避免直连 DeepSeek 超时
         )
 
         # 4. 生成 HTML
@@ -2731,6 +2816,10 @@ async def get_e2e_eval_analysis():
     errors = latest.get("errors", 0)
     c5_rate = latest.get("c5_truncation_rate", 0)
 
+    def _s(v, k):
+        val = v.get("avg_scores", {}).get(k)
+        return f"{val*100:.1f}%" if val is not None else "N/A"
+
     # 取最近3个版本做趋势参考
     history = versions[-3:] if len(versions) >= 3 else versions
     trend_lines = "\n".join(
@@ -2739,11 +2828,7 @@ async def get_e2e_eval_analysis():
         for v in history
     )
 
-    def _s(v, k):
-        val = v.get("avg_scores", {}).get(k)
-        return f"{val*100:.1f}%" if val is not None else "N/A"
-
-    prompt = f"""你是一位移动运营商网络安全 RAG 系统质量分析专家。分析以下综合质量评测结果。
+    prompt = f"""你是一位网络安全 RAG 系统质量分析专家。分析以下综合质量评测结果。
 
 ## 最新版本概况
 - 版本：{latest.get('version','?')}（{latest.get('timestamp','')[:19] if latest.get('timestamp') else '?'}）
@@ -2782,7 +2867,8 @@ async def get_e2e_eval_analysis():
         return JSONResponse({"summary": "", "time": latest.get('timestamp','')[:19] if latest.get('timestamp') else "", "error": "后端评测 LLM 未配置"}, status_code=200)
 
     try:
-        resp = eval_llm.chat([{"role": "user", "content": prompt}])
+        loop = asyncio.get_event_loop()
+        resp = await loop.run_in_executor(None, lambda: eval_llm.chat([{"role": "user", "content": prompt}]))
         text = resp.get("content", "") if isinstance(resp, dict) else str(resp)
         text = text.strip()
         ts = latest.get("timestamp", "")[:19] if latest.get("timestamp") else ""
@@ -3555,7 +3641,7 @@ async def prompt_export_report():
                 r_tbl.cell(1+ri, 4).text = str(rr.get("evaluated_at", ""))[:16]
 
     doc_obj.add_paragraph()
-    footer_p = doc_obj.add_paragraph("网络安全移动运营商智能 Agent - 自动生成")
+    footer_p = doc_obj.add_paragraph("网络安全智能 Agent - 自动生成")
     footer_p.alignment = 2
     for r in footer_p.runs:
         r.font.size = Pt(8)

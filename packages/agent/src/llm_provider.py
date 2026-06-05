@@ -1,7 +1,7 @@
 """可配置 LLM Provider — OpenAI 兼容接口
 
 稳定性保障（参考知识库 E.3 + H.1）：
-  1. 超时分离：connect_timeout=10s, read_timeout=60s
+  1. 超时分离：connect_timeout=10s, read_timeout=180s
   2. 重试：仅对 timeout/429/5xx 重试 2 次（指数退避+jitter）
   3. 限流：令牌桶，防止 429
   4. 熔断：连续 3 次失败 → OPEN 60s → HALF_OPEN → 探测成功恢复
@@ -326,7 +326,7 @@ class LLMProvider:
             f"{self.base_url}/chat/completions",
             headers=self._build_headers(),
             json=payload,
-            timeout=(10, timeout_read),
+            timeout=timeout_read,
         )
         resp.raise_for_status()
         return resp.json()
@@ -337,7 +337,7 @@ class LLMProvider:
         messages: list[dict],
         temperature: float = 0.3,
         max_tokens: int = 4096,
-        timeout: int = 60,
+        timeout: int = 180,
         enable_thinking: bool = False,
         thinking_budget: int = 1024,
     ) -> dict:

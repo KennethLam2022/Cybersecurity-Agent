@@ -37,7 +37,7 @@ _CONTEXT_PRECISION_PROMPT = """你是一位严格的 RAG 评估专家。你的�
 - 如果回答拒绝回答或说"没有相关信息"而文档确实有相关内容，扣分
 
 输出必须是 JSON 格式（不要多余文字）：
-{"score": 0.0-1.0, "total_claims": N, "supported_claims": N, "explanation": "简要分析理由"}
+{{"score": 0.0-1.0, "total_claims": N, "supported_claims": N, "explanation": "简要分析理由"}}
 
 --- 用户问题 ---
 {query}
@@ -70,17 +70,17 @@ def eval_context_precision(
     if not answer or not answer.strip():
         return {"score": 0.0, "explanation": "回答为空", "details": {}}
 
+    # 清洗引用标记，避免 [来源N: ...] 干扰评分
+    answer_clean = _clean_answer(answer)
+
     context_text = _format_docs(retrieved_docs)
 
     if llm is not None:
         try:
             prompt = _CONTEXT_PRECISION_PROMPT.format(
-                query=query, context=context_text, answer=answer
+                query=query, context=context_text, answer=answer_clean
             )
-            resp = llm.chat([{"role": "user", "content": prompt}], timeout=120)
-            text = resp.get("content", "")
-            text = _extract_json(text)
-            result = json.loads(text)
+            result = _llm_judge(llm, prompt)
             score = max(0.0, min(1.0, float(result.get("score", 0))))
             return {
                 "score": round(score, 4),
@@ -91,7 +91,7 @@ def eval_context_precision(
                 },
             }
         except Exception as e:
-            logger.warning(f"LLM context_precision 评估失败，使用回退: {e}")
+            logger.warning(f"LLM context_precision 评估失败: {e}")
 
     # ── 启发式回退：基于关键词重叠的近似评估 ──
     return _heuristic_context_precision(answer, context_text)
@@ -156,7 +156,7 @@ _CONTEXT_RECALL_PROMPT = """你是一位严格的 RAG 评估专家。你的任�
 - 注意：只计文档中有的、与问题相关的信息；超出文档的内容不计入
 
 输出必须是 JSON 格式（不要多余文字）：
-{"score": 0.0-1.0, "total_key_points": N, "covered_key_points": N, "explanation": "简要分析理由"}
+{{"score": 0.0-1.0, "total_key_points": N, "covered_key_points": N, "explanation": "简要分析理由"}}
 
 --- 用户问题 ---
 {query}
@@ -189,6 +189,9 @@ def eval_context_recall(
     if not answer or not answer.strip():
         return {"score": 0.0, "explanation": "回答为空", "details": {}}
 
+    # 清洗引用标记，避免 [来源N: ...] 干扰评分
+    answer_clean = _clean_answer(answer)
+
     context_text = _format_docs(retrieved_docs)
     if not context_text.strip():
         return {"score": 0.0, "explanation": "没有检索到文档", "details": {}}
@@ -196,12 +199,9 @@ def eval_context_recall(
     if llm is not None:
         try:
             prompt = _CONTEXT_RECALL_PROMPT.format(
-                query=query, context=context_text, answer=answer
+                query=query, context=context_text, answer=answer_clean
             )
-            resp = llm.chat([{"role": "user", "content": prompt}], timeout=120)
-            text = resp.get("content", "")
-            text = _extract_json(text)
-            result = json.loads(text)
+            result = _llm_judge(llm, prompt)
             score = max(0.0, min(1.0, float(result.get("score", 0))))
             return {
                 "score": round(score, 4),
@@ -212,7 +212,7 @@ def eval_context_recall(
                 },
             }
         except Exception as e:
-            logger.warning(f"LLM context_recall 评估失败，使用回退: {e}")
+            logger.warning(f"LLM context_recall 评估失败: {e}")
 
     # ── 启发式回退 ──
     return _heuristic_context_recall(answer, context_text)
@@ -290,6 +290,68 @@ def _extract_json(text: str) -> str:
     if start != -1 and end != -1 and end > start:
         text = text[start : end + 1]
     return text
+
+
+def _llm_judge(llm, prompt: str, timeout: int = 300) -> dict:
+    """调用 LLM-as-Judge，统一处理调用参数 + JSON 解析
+
+    Args:
+        llm: LLMProvider 实例
+        prompt: 完整的评分 prompt
+        timeout: 超时秒数
+
+    Returns:
+        解析后的 JSON dict
+
+    Raises:
+        ValueError: LLM 返回的内容无法解析为 JSON
+    """
+    resp = llm.chat(
+        [{"role": "user", "content": prompt}],
+        temperature=0.01,   # 低温度保证 JSON 格式确定性
+        timeout=timeout,
+    )
+    raw = resp.get("content", "")
+    text = _extract_json(raw)
+
+    if not text.startswith("{"):
+        logger.warning(f"LLM 评分响应未包含 JSON | 原始响应前200字: {raw[:200]!r}")
+        raise ValueError(f"LLM 返回非 JSON: {raw[:80]!r}")
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        logger.warning(f"JSON 解析失败: {e} | 提取文本前200字: {text[:200]!r}")
+        raise ValueError(f"JSON 解析失败: {e}")
+
+
+def _clean_answer(answer: str) -> str:
+    """清洗回答中的引用标记，保留纯内容供评分
+
+    只影响评分函数内部的 answer 副本，前台显示的原始 answer 不变。
+    """
+    if not answer:
+        return answer
+
+    # 1. 移除 【思考过程】...--- 整块
+    answer = re.sub(
+        r'【思考过程】.*?(?:---|\Z)',
+        '',
+        answer,
+        flags=re.DOTALL,
+    )
+
+    # 2. 移除行内 [来源N: xxx] 或 [来源N]
+    answer = re.sub(r'\s*\[来源\d+[^\]]*\]', '', answer)
+
+    # 3. 移除 [注：xxx]（通常末尾）
+    answer = re.sub(r'\s*\[注：[^\]]*\]', '', answer)
+
+    # 4. 清理多余空行
+    answer = re.sub(r'\n{3,}', '\n\n', answer)
+    answer = answer.strip()
+
+    return answer
 
 
 # ──────────────────────────────────────────────

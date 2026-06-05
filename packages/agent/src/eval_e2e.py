@@ -54,71 +54,83 @@ from _eval_generation import eval_faithfulness, eval_relevancy, eval_hallucinati
 #  测试题（同 eval_30_v3.py 保持一致）
 # ============================================================
 QUESTIONS = [
-    # ── 02-等保国标 ──
-    {"id": "H01", "domain": "02-等保国标", "difficulty": "中等",
+    # ── 等保合规（5题：从原10题精选）──
+    {"id": "H01", "domain": "等保合规", "difficulty": "中等",
      "query": "我是运维工程师，我们系统要做等保三级，安全审计方面有啥要求？", "style": "role"},
-    {"id": "H02", "domain": "02-等保国标", "difficulty": "基础",
-     "query": "等保三级对入侵防范有什么技术要求？", "style": "plain"},
-    {"id": "H03", "domain": "02-等保国标", "difficulty": "困难",
+    {"id": "H02", "domain": "等保合规", "difficulty": "困难",
      "query": "我是安全主管，系统等保测评没过，常见的整改项有哪些？先改什么后改什么？", "style": "role"},
-    {"id": "H04", "domain": "02-等保国标", "difficulty": "中等",
-     "query": "等保三级对身份鉴别有什么要求？密码策略、登录那些。", "style": "plain"},
-    {"id": "H05", "domain": "02-等保国标", "difficulty": "中等",
+    {"id": "H03", "domain": "等保合规", "difficulty": "中等",
      "query": "我负责网络这一块，安全通信网络有啥技术要求？加密、隔离之类的。", "style": "role"},
-    {"id": "H06", "domain": "02-等保国标", "difficulty": "困难",
+    {"id": "H04", "domain": "等保合规", "difficulty": "困难",
      "query": "等保四级和三级到底差在哪？安全要求上有什么不一样？", "style": "plain"},
-    {"id": "H07", "domain": "02-等保国标", "difficulty": "基础",
-     "query": "我是小公司的，系统定等保二级够不够？二级都要做些什么？", "style": "role"},
-    {"id": "H08", "domain": "02-等保国标", "difficulty": "基础",
-     "query": "等保三级对数据存储加密有什么要求？", "style": "plain"},
-    {"id": "H09", "domain": "02-等保国标", "difficulty": "困难",
+    {"id": "H05", "domain": "等保合规", "difficulty": "困难",
      "query": "我是咨询顾问，客户问我等保三级和CII的关系，他们系统既是三级又是CII，安全要求怎么叠加？", "style": "role"},
-    {"id": "H10", "domain": "02-等保国标", "difficulty": "中等",
-     "query": "等保三级对恶意代码防范有什么要求？主机层面。", "style": "plain"},
-    # ── 03-数据安全 ──
-    {"id": "H11", "domain": "03-数据安全", "difficulty": "中等",
+
+    # ── 数据安全（5题）──
+    {"id": "H06", "domain": "数据安全", "difficulty": "中等",
      "query": "我是数据安全负责人，用户要求删除个人信息，我们怎么响应？流程是什么？", "style": "role"},
-    {"id": "H12", "domain": "03-数据安全", "difficulty": "基础",
+    {"id": "H07", "domain": "数据安全", "difficulty": "基础",
      "query": "数据分类分级应该怎么做？用户个人信息属于哪一级？", "style": "plain"},
-    {"id": "H13", "domain": "03-数据安全", "difficulty": "困难",
-     "query": "我是法务，跨境数据传输要怎么做才合规？工信部有没有具体要求？", "style": "role"},
-    {"id": "H14", "domain": "03-数据安全", "difficulty": "中等",
-     "query": "数据脱敏有哪些方案？运营商客服查询场景下推荐哪种？", "style": "plain"},
-    {"id": "H15", "domain": "03-数据安全", "difficulty": "中等",
+    {"id": "H08", "domain": "数据安全", "difficulty": "困难",
+     "query": "我是法务，跨境数据传输要怎么做才合规？法律法规有哪些具体要求？", "style": "role"},
+    {"id": "H09", "domain": "数据安全", "difficulty": "中等",
+     "query": "数据脱敏有哪些方案？客服查询场景下推荐哪种？", "style": "plain"},
+    {"id": "H10", "domain": "数据安全", "difficulty": "中等",
      "query": "我是业务部门负责人，数据安全法要求的数据安全风险评估怎么做？我们部门要配合什么？", "style": "role"},
-    # ── 04-安全运营 ──
-    {"id": "H16", "domain": "04-安全运营", "difficulty": "中等",
+
+    # ── 安全运营（4题）──
+    {"id": "H11", "domain": "安全运营", "difficulty": "中等",
      "query": "SOC安全运营中心建设需要多少人？三班倒怎么排？", "style": "plain"},
-    {"id": "H17", "domain": "04-安全运营", "difficulty": "困难",
+    {"id": "H12", "domain": "安全运营", "difficulty": "困难",
      "query": "我是安全总监，公司要做红蓝演练，怎么规划？一年几次合适？", "style": "role"},
-    {"id": "H18", "domain": "04-安全运营", "difficulty": "中等",
-     "query": "应急响应预案应该包括哪些内容？运营商最核心的应急场景有哪些？", "style": "plain"},
-    {"id": "H19", "domain": "04-安全运营", "difficulty": "困难",
+    {"id": "H13", "domain": "安全运营", "difficulty": "困难",
      "query": "我是运维负责人，第三方供应商要远程接入我们的网络做维护，安全上怎么管控？", "style": "role"},
-    {"id": "H20", "domain": "04-安全运营", "difficulty": "基础",
+    {"id": "H14", "domain": "安全运营", "difficulty": "基础",
      "query": "安全意识培训怎么做才有效？全员培训和定向培训分别怎么安排？", "style": "plain"},
-    # ── 05-管理体系 ──
-    {"id": "H21", "domain": "05-管理体系", "difficulty": "中等",
+
+    # ── 管理体系（4题）──
+    {"id": "H15", "domain": "管理体系", "difficulty": "中等",
      "query": "网络安全管理制度体系分几级？每级包含什么内容？", "style": "plain"},
-    {"id": "H22", "domain": "05-管理体系", "difficulty": "中等",
+    {"id": "H16", "domain": "管理体系", "difficulty": "中等",
      "query": "我是综合部新来的，公司安全组织架构怎么设？安全领导小组管什么？", "style": "role"},
-    {"id": "H23", "domain": "05-管理体系", "difficulty": "基础",
-     "query": "工信部网络信息安全考核都考什么？评分标准有哪些？", "style": "plain"},
-    {"id": "H24", "domain": "05-管理体系", "difficulty": "困难",
+    {"id": "H17", "domain": "管理体系", "difficulty": "困难",
      "query": "我是合规主管，公司要做ISO 27001认证，和等保的关系是什么？可以一起做吗？", "style": "role"},
-    {"id": "H25", "domain": "05-管理体系", "difficulty": "中等",
+    {"id": "H18", "domain": "管理体系", "difficulty": "中等",
      "query": "供应商安全管理有哪些要求？合作前、合作中、合作后分别要做什么？", "style": "plain"},
-    # ── 06-CII关键信息基础设施 ──
-    {"id": "H26", "domain": "06-CII关键信息基础设施", "difficulty": "中等",
-     "query": "关键信息基础设施怎么识别？运营商的哪些系统属于CII？", "style": "plain"},
-    {"id": "H27", "domain": "06-CII关键信息基础设施", "difficulty": "困难",
+
+    # ── 基础设施/CII（4题）──
+    {"id": "H19", "domain": "基础设施安全", "difficulty": "中等",
+     "query": "关键信息基础设施怎么识别？哪些系统属于CII？", "style": "plain"},
+    {"id": "H20", "domain": "基础设施安全", "difficulty": "困难",
      "query": "我是CII安全负责人，CII每年要做安全检测评估，具体怎么做？范围和频次？", "style": "role"},
-    {"id": "H28", "domain": "06-CII关键信息基础设施", "difficulty": "中等",
-     "query": "CII供应链安全有什么特殊要求？用华为中兴的设备有什么额外管控？", "style": "plain"},
-    {"id": "H29", "domain": "06-CII关键信息基础设施", "difficulty": "中等",
+    {"id": "H21", "domain": "基础设施安全", "difficulty": "中等",
+     "query": "CII供应链安全有什么特殊要求？设备采购有什么额外管控？", "style": "plain"},
+    {"id": "H22", "domain": "基础设施安全", "difficulty": "中等",
      "query": "我是安全管理员，重大安全事件的上报流程是什么？向谁报？多长时间内？", "style": "role"},
-    {"id": "H30", "domain": "06-CII关键信息基础设施", "difficulty": "基础",
-     "query": "CII和等保三级到底什么关系？是不是过了等保三级就不用做CII了？", "style": "plain"},
+
+    # ── 应急响应（3题 新增）──
+    {"id": "E01", "domain": "应急响应", "difficulty": "中等",
+     "query": "应急响应预案应该包含哪些核心内容？事件分级怎么定？", "style": "plain"},
+    {"id": "E02", "domain": "应急响应", "difficulty": "困难",
+     "query": "我是安全值班员，发现服务器被勒索病毒攻击了，第一步应该做什么？完整的应急处置流程是怎样的？", "style": "role"},
+    {"id": "E03", "domain": "应急响应", "difficulty": "基础",
+     "query": "应急演练有哪些类型？桌面推演和实战演练分别适合什么场景？一年几次合适？", "style": "plain"},
+
+    # ── 风险评估（3题 新增）──
+    {"id": "R01", "domain": "风险评估", "difficulty": "中等",
+     "query": "信息安全风险评估的流程是怎样的？有哪些常用的评估方法？", "style": "plain"},
+    {"id": "R02", "domain": "风险评估", "difficulty": "困难",
+     "query": "我是安全部新来的，公司要做信息安全风险评估，具体怎么开展？有哪些关键步骤和产出？", "style": "role"},
+    {"id": "R03", "domain": "风险评估", "difficulty": "基础",
+     "query": "风险评估和等保测评是什么关系？做了等保还要不要做风险评估？", "style": "plain"},
+
+    # ── 灾难恢复（1题 新增）──
+    {"id": "D01", "domain": "灾难恢复", "difficulty": "中等",
+     "query": "灾难恢复计划（DRP）应该包含哪些核心要素？RTO和RPO是什么意思？怎么确定指标？", "style": "plain"},
+
+    # ── 业务连续性（1题 新增）──
+    {"id": "B01", "domain": "业务连续性", "difficulty": "中等",
+     "query": "业务连续性管理（BCM）和灾难恢复（DR）有什么区别？怎么建立业务连续性管理体系？", "style": "plain"},
 ]
 
 
@@ -147,6 +159,7 @@ def run_evaluation(
     use_llm: bool = True,
     output_file: Optional[Path] = None,
     eval_llm=None,
+    answer_llm=None,
 ) -> list[dict]:
     """跑评估：提问 → 评分（域B + 域C）
 
@@ -156,6 +169,7 @@ def run_evaluation(
         use_llm: 是否使用 LLM 做评分（False 则用启发式回退）
         output_file: JSON 输出路径
         eval_llm: 独立的评测 LLM（如不提供则用 agent.llm）
+        answer_llm: 回答用的 LLM（如提供则临时替换 agent.llm，避免直连 DeepSeek 超时）
 
     Returns:
         带评分的结果列表
@@ -187,8 +201,16 @@ def run_evaluation(
         t0 = time.time()
 
         try:
-            # 1. 调用 agent
-            result = agent.ask(query)
+            # 1. 调用 agent（如提供了 answer_llm，临时替换 agent.llm 避免直连超时）
+            if answer_llm:
+                original_llm = getattr(agent, 'llm', None)
+                agent.llm = answer_llm
+                try:
+                    result = agent.ask(query)
+                finally:
+                    agent.llm = original_llm
+            else:
+                result = agent.ask(query)
             elapsed = time.time() - t0
 
             answer = result.get("answer", "")

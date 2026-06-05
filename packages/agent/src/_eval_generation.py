@@ -37,7 +37,7 @@ _FAITHFULNESS_PROMPT = """你是一位严格的 RAG 事实一致性评估专家�
 - 如果回答拒绝回答（如"无法回答"），而文档确实包含了相关信息，扣分
 
 输出必须是 JSON 格式（不要多余文字）：
-{"score": 0.0-1.0, "total_statements": N, "consistent_statements": N, "contradictions": ["具体矛盾1", ...], "explanation": "简要分析理由"}
+{{"score": 0.0-1.0, "total_statements": N, "consistent_statements": N, "contradictions": ["具体矛盾1", ...], "explanation": "简要分析理由"}}
 
 --- 用户问题 ---
 {query}
@@ -70,17 +70,17 @@ def eval_faithfulness(
     if not answer or not answer.strip():
         return {"score": 0.0, "explanation": "回答为空", "details": {}}
 
+    # 清洗引用标记，避免 [来源N: ...] 干扰评分
+    answer_clean = _clean_answer(answer)
+
     context_text = _format_docs(retrieved_docs)
 
     if llm is not None:
         try:
             prompt = _FAITHFULNESS_PROMPT.format(
-                query=query, context=context_text, answer=answer
+                query=query, context=context_text, answer=answer_clean
             )
-            resp = llm.chat([{"role": "user", "content": prompt}], timeout=120)
-            text = resp.get("content", "")
-            text = _extract_json(text)
-            result = json.loads(text)
+            result = _llm_judge(llm, prompt)
             score = max(0.0, min(1.0, float(result.get("score", 0))))
             return {
                 "score": round(score, 4),
@@ -92,7 +92,7 @@ def eval_faithfulness(
                 },
             }
         except Exception as e:
-            logger.warning(f"LLM faithfulness 评估失败，使用回退: {e}")
+            logger.warning(f"LLM faithfulness 评估失败: {e}")
 
     # ── 启发式回退 ──
     return _heuristic_faithfulness(answer, context_text)
@@ -168,7 +168,7 @@ _RELEVANCY_PROMPT = """你是一位严格的 RAG 回答相关性评估专家。�
 - 即使回答是正确的，如果不是针对问题给的 → 低分
 
 输出必须是 JSON 格式（不要多余文字）：
-{"score": 0.0-1.0, "explanation": "简要分析理由"}
+{{"score": 0.0-1.0, "explanation": "简要分析理由"}}
 
 --- 用户问题 ---
 {query}
@@ -200,13 +200,13 @@ def eval_relevancy(
     if not query or not query.strip():
         return {"score": 0.5, "explanation": "问题为空，无法判断相关性", "details": {}}
 
+    # 清洗引用标记，避免 [来源N: ...] 干扰评分
+    answer_clean = _clean_answer(answer)
+
     if llm is not None:
         try:
-            prompt = _RELEVANCY_PROMPT.format(query=query, answer=answer)
-            resp = llm.chat([{"role": "user", "content": prompt}], timeout=120)
-            text = resp.get("content", "")
-            text = _extract_json(text)
-            result = json.loads(text)
+            prompt = _RELEVANCY_PROMPT.format(query=query, answer=answer_clean)
+            result = _llm_judge(llm, prompt)
             score = max(0.0, min(1.0, float(result.get("score", 0))))
             return {
                 "score": round(score, 4),
@@ -214,7 +214,7 @@ def eval_relevancy(
                 "details": {"method": "llm"},
             }
         except Exception as e:
-            logger.warning(f"LLM relevancy 评估失败，使用回退: {e}")
+            logger.warning(f"LLM relevancy 评估失败: {e}")
 
     # ── 启发式回退 ──
     return _heuristic_relevancy(query, answer)
@@ -291,7 +291,7 @@ _HALLUCINATION_PROMPT = """你是一位严格的 RAG 幻觉检测专家。你的
 - 列出具体的幻觉陈述，方便定位问题
 
 输出必须是 JSON 格式（不要多余文字）：
-{"score": 0.0-1.0, "total_statements": N, "hallucinated_statements": N, "hallucination_list": ["具体幻觉1", ...], "explanation": "简要分析理由"}
+{{"score": 0.0-1.0, "total_statements": N, "hallucinated_statements": N, "hallucination_list": ["具体幻觉1", ...], "explanation": "简要分析理由"}}
 
 --- 用户问题 ---
 {query}
@@ -325,17 +325,17 @@ def eval_hallucination(
     if not answer or not answer.strip():
         return {"score": 0.0, "explanation": "回答为空", "details": {}}
 
+    # 清洗引用标记，避免 [来源N: ...] 干扰评分
+    answer_clean = _clean_answer(answer)
+
     context_text = _format_docs(retrieved_docs)
 
     if llm is not None:
         try:
             prompt = _HALLUCINATION_PROMPT.format(
-                query=query, context=context_text, answer=answer
+                query=query, context=context_text, answer=answer_clean
             )
-            resp = llm.chat([{"role": "user", "content": prompt}], timeout=120)
-            text = resp.get("content", "")
-            text = _extract_json(text)
-            result = json.loads(text)
+            result = _llm_judge(llm, prompt)
             score = max(0.0, min(1.0, float(result.get("score", 0))))
             # score 越高 = 幻觉越少
             return {
@@ -349,7 +349,7 @@ def eval_hallucination(
                 },
             }
         except Exception as e:
-            logger.warning(f"LLM hallucination 评估失败，使用回退: {e}")
+            logger.warning(f"LLM hallucination 评估失败: {e}")
 
     # ── 启发式回退 ──
     return _heuristic_hallucination(answer, context_text)
@@ -476,6 +476,68 @@ def _extract_json(text: str) -> str:
     if start != -1 and end != -1 and end > start:
         text = text[start : end + 1]
     return text
+
+
+def _llm_judge(llm, prompt: str, timeout: int = 300) -> dict:
+    """调用 LLM-as-Judge，统一处理调用参数 + JSON 解析
+
+    Args:
+        llm: LLMProvider 实例
+        prompt: 完整的评分 prompt
+        timeout: 超时秒数
+
+    Returns:
+        解析后的 JSON dict
+
+    Raises:
+        ValueError: LLM 返回的内容无法解析为 JSON
+    """
+    resp = llm.chat(
+        [{"role": "user", "content": prompt}],
+        temperature=0.01,   # 低温度保证 JSON 格式确定性
+        timeout=timeout,
+    )
+    raw = resp.get("content", "")
+    text = _extract_json(raw)
+
+    if not text.startswith("{"):
+        logger.warning(f"LLM 评分响应未包含 JSON | 原始响应前200字: {raw[:200]!r}")
+        raise ValueError(f"LLM 返回非 JSON: {raw[:80]!r}")
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        logger.warning(f"JSON 解析失败: {e} | 提取文本前200字: {text[:200]!r}")
+        raise ValueError(f"JSON 解析失败: {e}")
+
+
+def _clean_answer(answer: str) -> str:
+    """清洗回答中的引用标记，保留纯内容供评分
+
+    只影响评分函数内部的 answer 副本，前台显示的原始 answer 不变。
+    """
+    if not answer:
+        return answer
+
+    # 1. 移除 【思考过程】...--- 整块
+    answer = re.sub(
+        r'【思考过程】.*?(?:---|\Z)',
+        '',
+        answer,
+        flags=re.DOTALL,
+    )
+
+    # 2. 移除行内 [来源N: xxx] 或 [来源N]
+    answer = re.sub(r'\s*\[来源\d+[^\]]*\]', '', answer)
+
+    # 3. 移除 [注：xxx]（通常末尾）
+    answer = re.sub(r'\s*\[注：[^\]]*\]', '', answer)
+
+    # 4. 清理多余空行
+    answer = re.sub(r'\n{3,}', '\n\n', answer)
+    answer = answer.strip()
+
+    return answer
 
 
 # ──────────────────────────────────────────────

@@ -405,7 +405,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
                 <span>active_prompt.txt</span>
                 <span style="font-size:10px"></span>
               </div>
-              <textarea id="workspacePromptEditor" readonly style="width:100%;min-height:160px;padding:14px;border:none;background:#f5f5f7;color:var(--t);font-size:13px;line-height:1.6;font-family:monospace;outline:none;resize:vertical;display:block;box-sizing:border-box">你是一位移动运营商网络安全管理体系专家...</textarea>
+              <textarea id="workspacePromptEditor" readonly style="width:100%;min-height:160px;padding:14px;border:none;background:#f5f5f7;color:var(--t);font-size:13px;line-height:1.6;font-family:monospace;outline:none;resize:vertical;display:block;box-sizing:border-box">你是一位网络安全管理体系专家...</textarea>
               <div style="display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--b)">
                 <button onclick="restoreFromActive()" style="background:var(--b);color:var(--t);border:none;padding:6px 16px;border-radius:6px;font-size:12px;cursor:pointer;font-family:var(--f)">↩ 从 active_prompt.txt 还原</button>
                 <span style="flex:1"></span>
@@ -637,6 +637,26 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
   <!-- 综合质量 Tab -->
   <div class="tab-content" id="tabE2e">
     <div style="padding:20px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:600;color:var(--t1)">🔍 关键词生成测试集：</span>
+        <input id="e2eKeyword" value="网络安全 等保 数据安全" style="flex:1;min-width:180px;padding:6px 10px;border:1px solid var(--b2);border-radius:6px;font-size:13px;background:var(--bg1);color:var(--t1)">
+        <button onclick="generateE2eEval()" style="padding:6px 16px;background:var(--a);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">🎲 生成测试集</button>
+        <button onclick="seedDefaultE2e()" style="padding:6px 16px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">📦 默认30题</button>
+        <button onclick="toggleE2eTestSetPanel()" style="padding:6px 16px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">📋 管理测试集</button>
+      </div>
+      <!-- E2E 测试集管理面板 -->
+      <div id="e2eTestSetPanel" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--b);border-radius:8px;background:var(--card)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+          <span style="font-size:14px;font-weight:600;color:var(--t1)">📋 综合质量测试用例（共 <span id="e2eTestSetCount">0</span> 条）</span>
+          <button onclick="loadE2eTestSetItems()" style="padding:4px 12px;background:var(--b2);color:var(--t1);border:none;border-radius:4px;cursor:pointer;font-size:12px">🔄 刷新</button>
+        </div>
+        <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
+          <table class="data-table" style="width:100%;font-size:12px;border-collapse:collapse">
+            <thead><tr><th>ID</th><th>查询语句</th><th>领域</th><th>难度</th><th>风格</th><th>操作</th></tr></thead>
+            <tbody id="e2eTestSetBody"></tbody>
+          </table>
+        </div>
+      </div>
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
         <button class="btn" id="btnRunE2eEval" onclick="runE2eEval()" style="background:var(--a);color:#fff;border:none;padding:8px 20px;border-radius:8px;font-size:13px;cursor:pointer;font-family:var(--f)">
           ▶ 运行综合质量评测
@@ -1439,8 +1459,9 @@ async function checkDegradation() {
   try {
     const r = await fetch('/api/stats/e2e-eval/versions');
     if (!r.ok) return;
-    const versions = await r.json();
-    if (!Array.isArray(versions) || versions.length === 0) return;
+    const raw = await r.json();
+    const versions = Array.isArray(raw) ? raw : (raw.versions || []);
+    if (versions.length === 0) return;
 
     const alerts = [];
     const n = versions.length;
@@ -1511,8 +1532,9 @@ async function renderE2eTrendChart() {
   try {
     const r = await fetch('/api/stats/e2e-eval/versions');
     if (!r.ok) return;
-    const versions = await r.json();
-    if (!Array.isArray(versions) || versions.length < 1) return;
+    const raw = await r.json();
+    const versions = Array.isArray(raw) ? raw : (raw.versions || []);
+    if (versions.length < 1) return;
 
     const metricKeys = ['context_precision','context_recall','faithfulness','relevancy','hallucination'];
     const metricNames = {context_precision:'CP',context_recall:'CR',faithfulness:'FT',relevancy:'RL',hallucination:'HC'};
@@ -2318,7 +2340,7 @@ function exportWordReport(reportType) {
   <h2>总体概览</h2><div class="summary"><div class="summary-item"><span class="summary-num">${weighted}</span><span class="summary-label">加权总分</span></div><div class="summary-item"><span class="summary-num">${overall}</span><span class="summary-label">总体得分</span></div><div class="summary-item"><span class="summary-num">${passRate}</span><span class="summary-label">通过率</span></div><div class="summary-item"><span class="summary-num">${total}</span><span class="summary-label">测试总数</span></div></div>
   <h2>各维度平均得分</h2><table><thead><tr><th>维度</th><th>平均得分</th><th>测试次数</th></tr></thead><tbody>${dimRows||'<tr><td colspan="3" style="text-align:center;color:#999">暂无数据</td></tr>'}</tbody></table>
   <h2>测试用例明细</h2><table><thead><tr><th>ID</th><th>类别</th><th>问题</th><th>加权得分</th><th>状态</th><th>耗时</th></tr></thead><tbody>${caseRows||'<tr><td colspan="6" style="text-align:center;color:#999">暂无数据</td></tr>'}</tbody></table>
-  <div class="footer">网络安全移动运营商智能 Agent · ${typeLabel}评测系统</div></body></html>`;
+  <div class="footer">网络安全智能 Agent · ${typeLabel}评测系统</div></body></html>`;
   const blob = new Blob([html], {type:'application/msword;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = fileName;
@@ -3066,9 +3088,9 @@ async function loadE2eEval() {
     const results = await r.json();
     renderE2eResults(results);
 
-    // 显示 LLM 分析建议
+    // 显示 LLM 分析建议（从缓存读取，E2E 运行完成后已预生成）
     try {
-      const r2 = await fetch('/api/stats/e2e-eval/analysis');
+      const r2 = await fetch('/api/stats/eval-summary/e2e-quality');
       if (r2.ok) {
         const d2 = await r2.json();
         if (d2.summary) {
@@ -3186,6 +3208,85 @@ async function runE2eEval() {
     btn.disabled = false;
     btn.textContent = '▶ 运行综合质量评测';
   }
+}
+
+async function generateE2eEval() {
+  const kw = document.getElementById('e2eKeyword').value.trim() || '网络安全 等保 数据安全';
+  const btn = document.querySelector('#tabE2e button[onclick*="generateE2eEval"]');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ 生成中...';
+  try {
+    const r = await fetch('/api/stats/e2e-eval/generate-items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({keywords:kw})});
+    const d = await r.json();
+    if (d.error) { showToast('❌ '+d.error, ''); return; }
+    showToast(`✅ 生成 ${d.count} 条综合质量评测测试用例`);
+    // 自动打开管理面板
+    document.getElementById('e2eTestSetPanel').style.display = 'block';
+    await loadE2eTestSetItems();
+  } catch(e) { showToast('❌ '+e.message, ''); }
+  btn.disabled = false; btn.textContent = orig;
+}
+
+async function seedDefaultE2e() {
+  const btn = document.querySelector('#tabE2e button[onclick*="seedDefaultE2e"]');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ 填充中...';
+  try {
+    const r = await fetch('/api/stats/e2e-eval/items/seed', {method:'POST'});
+    const d = await r.json();
+    if (d.error) { showToast('❌ '+d.error, ''); return; }
+    showToast(`✅ 已填充 ${d.seeded} 条默认测试题`);
+    // 自动打开管理面板
+    document.getElementById('e2eTestSetPanel').style.display = 'block';
+    await loadE2eTestSetItems();
+  } catch(e) { showToast('❌ '+e.message, ''); }
+  btn.disabled = false; btn.textContent = orig;
+}
+
+function toggleE2eTestSetPanel() {
+  const panel = document.getElementById('e2eTestSetPanel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  if (panel.style.display === 'block') loadE2eTestSetItems();
+}
+
+async function loadE2eTestSetItems() {
+  try {
+    const r = await fetch('/api/stats/e2e-eval/items');
+    const d = await r.json();
+    const items = d.items || [];
+    document.getElementById('e2eTestSetCount').textContent = items.length;
+    const tbody = document.getElementById('e2eTestSetBody');
+    if (items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--t2);padding:16px">暂无测试用例，请先"生成测试集"或"默认30题"</td></tr>';
+      return;
+    }
+    const diffMap = {'基础':'基础','中等':'中等','困难':'困难'};
+    const diffColor = {'基础':'var(--g)','中等':'var(--y)','困难':'var(--r)'};
+    tbody.innerHTML = items.map(i => {
+      const diff = i.difficulty || '中等';
+      return `<tr>
+        <td>${i.id}</td>
+        <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(i.query)}">${escHtml(i.query)}</td>
+        <td style="font-size:11px">${escHtml(i.domain || '-')}</td>
+        <td><span style="font-size:10px;padding:1px 6px;border-radius:4px;background:${diffColor[diff]||diffColor['中等']};color:#fff">${diffMap[diff]||diff}</span></td>
+        <td style="font-size:11px">${i.style === 'role' ? '角色扮演' : '自然语言'}</td>
+        <td><button onclick='deleteE2eItem(${i.id})' style="padding:2px 8px;background:var(--r);color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px">删除</button></td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('e2eTestSetBody').innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--r);padding:16px">加载失败: ${e.message}</td></tr>`;
+  }
+}
+
+async function deleteE2eItem(id) {
+  if (!confirm('确定删除这条测试用例？')) return;
+  try {
+    const r = await fetch('/api/stats/e2e-eval/items/'+id, {method:'DELETE'});
+    const d = await r.json();
+    if (d.success) showToast('✅ 已删除');
+    else showToast('❌ 删除失败: '+(d.error||''));
+    await loadE2eTestSetItems();
+  } catch(e) { showToast('❌ '+e.message, ''); }
 }
 
 async function loadTestSetItems() {

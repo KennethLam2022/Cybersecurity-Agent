@@ -26,105 +26,83 @@ VERSION = "v3_human_tone"
 
 # 标记：👤 = 带用户角色，💬 = 纯自然语言
 QUESTIONS = [
-    # ── 02-等保国标（10题：5带角色 + 5不带角色）──
-    # 👤
+    # ── 02-等保国标（5题）──
     {"id": "H01", "domain": "02-等保国标", "difficulty": "中等",
      "query": "我是运维工程师，我们系统要做等保三级，安全审计方面有啥要求？", "style": "role"},
-    # 💬
-    {"id": "H02", "domain": "02-等保国标", "difficulty": "基础",
-     "query": "等保三级对入侵防范有什么技术要求？", "style": "plain"},
-    # 👤
-    {"id": "H03", "domain": "02-等保国标", "difficulty": "困难",
+    {"id": "H02", "domain": "02-等保国标", "difficulty": "困难",
      "query": "我是安全主管，系统等保测评没过，常见的整改项有哪些？先改什么后改什么？", "style": "role"},
-    # 💬
-    {"id": "H04", "domain": "02-等保国标", "difficulty": "中等",
-     "query": "等保三级对身份鉴别有什么要求？密码策略、登录那些。", "style": "plain"},
-    # 👤
-    {"id": "H05", "domain": "02-等保国标", "difficulty": "中等",
-     "query": "我负责网络这一块，安全通信网络有啥技术要求？加密、隔离之类的。", "style": "role"},
-    # 💬
-    {"id": "H06", "domain": "02-等保国标", "difficulty": "困难",
+    {"id": "H03", "domain": "02-等保国标", "difficulty": "困难",
      "query": "等保四级和三级到底差在哪？安全要求上有什么不一样？", "style": "plain"},
-    # 👤
-    {"id": "H07", "domain": "02-等保国标", "difficulty": "基础",
-     "query": "我是小公司的，系统定等保二级够不够？二级都要做些什么？", "style": "role"},
-    # 💬
-    {"id": "H08", "domain": "02-等保国标", "difficulty": "中等",
+    {"id": "H04", "domain": "02-等保国标", "difficulty": "中等",
      "query": "安全区域边界的访问控制，等保三级有什么具体要求？", "style": "plain"},
-    # 👤
-    {"id": "H09", "domain": "02-等保国标", "difficulty": "中等",
+    {"id": "H05", "domain": "02-等保国标", "difficulty": "中等",
      "query": "我是安全运维，等保三级对安全管理中心有啥要求？日志集中那些。", "style": "role"},
-    # 💬
-    {"id": "H10", "domain": "02-等保国标", "difficulty": "困难",
-     "query": "等保三级对数据安全保护有哪些要求？存储加密、备份那些。", "style": "plain"},
 
-    # ── 01-国家法律（8题：4带角色 + 4不带角色）──
-    # 💬
-    {"id": "H11", "domain": "01-国家法律", "difficulty": "基础",
+    # ── 01-国家法律（5题）──
+    {"id": "H06", "domain": "01-国家法律", "difficulty": "基础",
      "query": "处理用户个人信息要满足什么条件才算合法？", "style": "plain"},
-    # 👤
-    {"id": "H12", "domain": "01-国家法律", "difficulty": "困难",
+    {"id": "H07", "domain": "01-国家法律", "difficulty": "困难",
      "query": "我是法务，公司有海外业务，数据能出海吗？出海要满足什么条件？", "style": "role"},
-    # 💬
-    {"id": "H13", "domain": "01-国家法律", "difficulty": "中等",
-     "query": "数据分类分级保护制度具体怎么落地执行？", "style": "plain"},
-    # 👤
-    {"id": "H14", "domain": "01-国家法律", "difficulty": "中等",
+    {"id": "H08", "domain": "01-国家法律", "difficulty": "中等",
      "query": "我是产品经理，收集用户信息时什么是最小必要原则？怎么把握尺度？", "style": "role"},
-    # 💬
-    {"id": "H15", "domain": "01-国家法律", "difficulty": "困难",
-     "query": "网络安全法对关键信息基础设施有什么特别要求？", "style": "plain"},
-    # 👤
-    {"id": "H16", "domain": "01-国家法律", "difficulty": "基础",
-     "query": "我公司刚成立，数据安全法要求建立哪些数据安全制度？", "style": "role"},
-    # 💬
-    {"id": "H17", "domain": "01-国家法律", "difficulty": "中等",
+    {"id": "H09", "domain": "01-国家法律", "difficulty": "中等",
      "query": "哪些信息算敏感个人信息？处理规则有什么特殊要求？", "style": "plain"},
-    # 👤
-    {"id": "H18", "domain": "01-国家法律", "difficulty": "困难",
+    {"id": "H10", "domain": "01-国家法律", "difficulty": "困难",
      "query": "我是合规经理，网络安全法和等级保护制度是什么关系？我们该怎么合规？", "style": "role"},
 
-    # ── 03-CII关基（6题：3带角色 + 3不带角色）──
-    # 💬
-    {"id": "H19", "domain": "03-CII关基", "difficulty": "困难",
+    # ── 03-CII关基（4题）──
+    {"id": "H11", "domain": "03-CII关基", "difficulty": "困难",
      "query": "等保和CII到底啥关系？一个系统既是等保三级又是CII，怎么管？", "style": "plain"},
-    # 👤
-    {"id": "H20", "domain": "03-CII关基", "difficulty": "中等",
-     "query": "我是采购部负责人，关键信息基础设施的供应链安全要管哪些？设备采购有啥要求？", "style": "role"},
-    # 💬
-    {"id": "H21", "domain": "03-CII关基", "difficulty": "中等",
+    {"id": "H12", "domain": "03-CII关基", "difficulty": "中等",
      "query": "CII每年都要做安全检测评估吗？都查什么？报告怎么写？", "style": "plain"},
-    # 👤
-    {"id": "H22", "domain": "03-CII关基", "difficulty": "基础",
-     "query": "我们是运营商，什么样的系统会被认定为CII？认定流程是怎样的？", "style": "role"},
-    # 💬
-    {"id": "H23", "domain": "03-CII关基", "difficulty": "中等",
-     "query": "运营CII要履行哪些安全保护义务？", "style": "plain"},
-    # 👤
-    {"id": "H24", "domain": "03-CII关基", "difficulty": "中等",
+    {"id": "H13", "domain": "03-CII关基", "difficulty": "基础",
+     "query": "什么样的系统会被认定为CII？认定流程是怎样的？", "style": "role"},
+    {"id": "H14", "domain": "03-CII关基", "difficulty": "中等",
      "query": "我是安全值班的，CII出安全事件了，上报流程是怎样的？多长时间内要报？", "style": "role"},
 
-    # ── 04-通信行业（3题：1带角色 + 2不带角色）──
-    # 💬
-    {"id": "H25", "domain": "04-通信行业", "difficulty": "基础",
+    # ── 04-通信行业（3题）──
+    {"id": "H15", "domain": "04-通信行业", "difficulty": "基础",
      "query": "电信网和互联网安全防护的定级备案流程是怎样的？", "style": "plain"},
-    # 👤
-    {"id": "H26", "domain": "04-通信行业", "difficulty": "中等",
-     "query": "我是省公司的，工信部网络信息安全考核都考什么？评分标准有哪些？", "style": "role"},
-    # 💬
-    {"id": "H27", "domain": "04-通信行业", "difficulty": "中等",
-     "query": "用户个人信息保护有什么技术要求？运营商该怎么落地？", "style": "plain"},
+    {"id": "H16", "domain": "04-通信行业", "difficulty": "中等",
+     "query": "工信部网络信息安全考核都考什么？评分标准有哪些？", "style": "role"},
+    {"id": "H17", "domain": "04-通信行业", "difficulty": "中等",
+     "query": "用户个人信息保护有什么技术要求？该怎么落地？", "style": "plain"},
 
-    # ── 05-跨领域综合（3题：2带角色 + 1不带角色）──
-    # 👤
-    {"id": "H28", "domain": "05-跨领域综合", "difficulty": "困难",
-     "query": "我是安全总监，省级运营商既要满足等保三级又要满足CII要求，管理制度怎么整合？", "style": "role"},
-    # 💬
-    {"id": "H29", "domain": "05-跨领域综合", "difficulty": "困难",
+    # ── 05-跨领域综合（3题）──
+    {"id": "H18", "domain": "05-跨领域综合", "difficulty": "困难",
+     "query": "我是安全总监，既要满足等保三级又要满足CII要求，管理制度怎么整合？", "style": "role"},
+    {"id": "H19", "domain": "05-跨领域综合", "difficulty": "困难",
      "query": "用户的手机号、位置信息、通话记录属于什么级别的数据？需要什么保护措施？", "style": "plain"},
-    # 👤
-    {"id": "H30", "domain": "05-跨领域综合", "difficulty": "困难",
-     "query": "我是技术部负责人，采购5G核心网设备时供应链安全要关注哪些风险点？", "style": "role"},
+    {"id": "H20", "domain": "05-跨领域综合", "difficulty": "困难",
+     "query": "采购核心网设备时供应链安全要关注哪些风险点？", "style": "role"},
+
+    # ── 07-应急响应（3题 新增）──
+    {"id": "E01", "domain": "07-应急响应", "difficulty": "中等",
+     "query": "应急响应预案应该包含哪些核心内容？事件分级怎么定？", "style": "plain"},
+    {"id": "E02", "domain": "07-应急响应", "difficulty": "困难",
+     "query": "我是安全值班员，发现服务器被勒索病毒攻击了，第一步应该做什么？完整的应急处置流程是怎样的？", "style": "role"},
+    {"id": "E03", "domain": "07-应急响应", "difficulty": "基础",
+     "query": "应急演练有哪些类型？桌面推演和实战演练分别适合什么场景？", "style": "plain"},
+
+    # ── 08-风险评估（3题 新增）──
+    {"id": "R01", "domain": "08-风险评估", "difficulty": "中等",
+     "query": "信息安全风险评估的流程是怎样的？有哪些常用的评估方法？", "style": "plain"},
+    {"id": "R02", "domain": "08-风险评估", "difficulty": "困难",
+     "query": "我是安全工程师，公司要做信息安全风险评估，具体怎么开展？有哪些关键步骤和产出？", "style": "role"},
+    {"id": "R03", "domain": "08-风险评估", "difficulty": "基础",
+     "query": "风险评估和等保测评是什么关系？做了等保还要不要做风险评估？", "style": "plain"},
+
+    # ── 09-灾难恢复（2题 新增）──
+    {"id": "D01", "domain": "09-灾难恢复", "difficulty": "中等",
+     "query": "灾难恢复计划（DRP）应该包含哪些核心要素？RTO和RPO是什么意思？怎么确定指标？", "style": "plain"},
+    {"id": "D02", "domain": "09-灾难恢复", "difficulty": "中等",
+     "query": "我是运维主管，公司要制定灾备方案，同城灾备和异地灾备有什么区别？怎么选？", "style": "role"},
+
+    # ── 10-业务连续性（2题 新增）──
+    {"id": "B01", "domain": "10-业务连续性", "difficulty": "中等",
+     "query": "业务连续性管理（BCM）和灾难恢复（DR）有什么区别？怎么建立业务连续性管理体系？", "style": "plain"},
+    {"id": "B02", "domain": "10-业务连续性", "difficulty": "困难",
+     "query": "我是安全经理，公司要做业务连续性管理体系建设，从哪里开始？关键步骤是什么？", "style": "role"},
 ]
 
 
