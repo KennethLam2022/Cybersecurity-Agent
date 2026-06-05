@@ -726,15 +726,20 @@ class CyberAgent:
             # llm.chat 返回 {"content": str, ...} 或 str
             result = (result["content"] if isinstance(result, dict) else result).strip()
 
+            # 先检测 PASS 标示（必须在剪裁之前）
+            passed = result.endswith("[PASS]")
+
             # 后处理：去掉 LLM 可能残余的说明性前缀/后缀
             for prefix in ["清理后的回答：", "需要修改的回答：", "核查结果：", "修改后：", "删除以下句子："]:
                 if result.startswith(prefix):
                     result = result[len(prefix):].strip()
-            for suffix in ["[PASS]", "以上是清理后的回答", "以上是核查结果"]:
+            for suffix in ["以上是清理后的回答", "以上是核查结果"]:
                 if result.endswith(suffix):
                     result = result[:-len(suffix)].strip()
+            if result.endswith("[PASS]"):
+                result = result[:-len("[PASS]")].strip()
 
-            if result == "[PASS]":
+            if passed:
                 logger.info(f"自检通过：回答结论全部有依据 ({elapsed:.1f}s)")
                 return answer
             if result and result != "[PASS]":
@@ -1439,6 +1444,13 @@ class CyberAgent:
         if annotated != full_content:
             self.memory._update_last_message(conversation_id, annotated, sources=sources)
             full_content = annotated
+
+        # ---- 事实自检（与 ask() 路径一致） ----
+        verified = self._verify_answer(full_content, sources)
+        if verified != full_content:
+            logger.info(f"流式路径自检：删除了无依据内容，已修正记忆中的版本")
+            self.memory._update_last_message(conversation_id, verified, sources=sources)
+            full_content = verified
 
         first_msgs = self.memory.get_history(conversation_id)
         if len([m for m in first_msgs if m["role"] == "user"]) == 1:

@@ -50,6 +50,9 @@ def extract_sections(file_path: str) -> list[dict]:
 
     result = []
     for idx, (sec_title, sec_text) in enumerate(sections):
+        # 跳过空节（仅空白行/无内容），避免污染索引
+        if not sec_text.strip():
+            continue
         text = sec_text
         if version_warning:
             text = f"{version_warning}\n\n{sec_text}"

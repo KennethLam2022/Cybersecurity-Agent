@@ -17,6 +17,8 @@ _SRC = os.path.dirname(os.path.abspath(__file__))
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
+from _eval_common import compute_avg_stats, render_html_page
+
 from agent import CyberAgent
 
 EVAL_DIR = Path(_SRC).parent.parent.parent / "eval_results"
@@ -402,6 +404,7 @@ def main():
                 port = 8762
                 os.chdir(EVAL_DIR)
                 handler = http.server.SimpleHTTPRequestHandler
+                socketserver.TCPServer.allow_reuse_address = True
                 httpd = socketserver.TCPServer(("", port), handler)
                 url = f"http://localhost:{port}/{html_path.name}"
                 print(f"\n  🌐 http://localhost:{port}/{html_path.name}")
@@ -444,6 +447,7 @@ def main():
             port = 8762
             os.chdir(EVAL_DIR)
             handler = http.server.SimpleHTTPRequestHandler
+            socketserver.TCPServer.allow_reuse_address = True
             httpd = socketserver.TCPServer(("", port), handler)
             url = f"http://localhost:{port}/{html_path.name}"
             print(f"\n  🌐 http://localhost:{port}/{html_path.name}")
@@ -475,6 +479,7 @@ def main():
         port = 8762
         os.chdir(EVAL_DIR)
         handler = http.server.SimpleHTTPRequestHandler
+        socketserver.TCPServer.allow_reuse_address = True
         httpd = socketserver.TCPServer(("", port), handler)
         url = f"http://localhost:{port}/{html_path.name}"
         print(f"\n  🌐 http://localhost:{port}/{html_path.name}")
