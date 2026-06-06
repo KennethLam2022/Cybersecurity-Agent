@@ -318,8 +318,8 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
               </div>
               <!-- action bar -->
               <div class="action-bar">
-                <div class="select-wrap"><span>测试集:</span><select id="testSetSelectFull" style="background:transparent;border:none;color:var(--t);font-size:12px;font-family:var(--f);outline:none;cursor:pointer"><option value="default" selected>内置 31 条</option></select></div>
-                <button class="btn-sm ai" onclick="showAiGenerateModal()">🎲 AI 生成</button>
+                <div style="display:flex;align-items:center;gap:6px"><span style="font-size:12px;color:var(--t2)">关键词:</span><input id="fullTestKeyword" value="网络安全 等保 数据安全" style="flex:1;padding:5px 10px;border:1px solid var(--b2);border-radius:6px;font-size:12px;background:var(--bg1);color:var(--t1);outline:none;width:240px"></div>
+                <button class="btn-sm ai" onclick="doAiGenerateFromBar()">🎲 AI 生成</button>
                 <button class="btn-sm run" onclick="runAllTests()">▶ 运行全部</button>
                 <span class="spacer"></span>
                 <button class="btn-sm outline" onclick="switchPromptView('workspace')">📦 版本历史 →</button>
@@ -371,7 +371,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
               </div>
               <!-- action bar -->
               <div class="action-bar">
-                <div class="select-wrap"><span>基线:</span><select id="baselineSelectElastic" style="background:transparent;border:none;color:var(--t);font-size:12px;font-family:var(--f);outline:none;cursor:pointer"><option selected>等保三级有哪些基本要求？</option><option>数据安全法适用范围？</option><option>5G网络的安全要求？</option></select></div>
+                <div style="display:flex;align-items:center;gap:6px"><span style="font-size:12px;color:var(--t2)">基线:</span><input id="baselineInputElastic" value="等保三级有哪些基本要求？" style="flex:1;padding:5px 10px;border:1px solid var(--b2);border-radius:6px;font-size:12px;background:var(--bg1);color:var(--t1);outline:none;width:300px"></div>
                 <button class="btn-sm ai" onclick="showAiGenerateModal()">🎲 AI 生成变体</button>
                 <button class="btn-sm run" onclick="runAllTests()" style="background:#8e44ad">▶ 运行全部</button>
                 <span class="spacer"></span>
@@ -405,11 +405,12 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
                 <span>active_prompt.txt</span>
                 <span style="font-size:10px"></span>
               </div>
-              <textarea id="workspacePromptEditor" readonly style="width:100%;min-height:160px;padding:14px;border:none;background:#f5f5f7;color:var(--t);font-size:13px;line-height:1.6;font-family:monospace;outline:none;resize:vertical;display:block;box-sizing:border-box">你是一位网络安全管理体系专家...</textarea>
+              <textarea id="workspacePromptEditor" style="width:100%;min-height:160px;padding:14px;border:none;background:#f5f5f7;color:var(--t);font-size:13px;line-height:1.6;font-family:monospace;outline:none;resize:vertical;display:block;box-sizing:border-box"></textarea>
               <div style="display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--b)">
+                <button onclick="saveWorkspacePrompt()" style="background:var(--a);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;cursor:pointer;font-family:var(--f)">💾 保存为新版本</button>
                 <button onclick="restoreFromActive()" style="background:var(--b);color:var(--t);border:none;padding:6px 16px;border-radius:6px;font-size:12px;cursor:pointer;font-family:var(--f)">↩ 从 active_prompt.txt 还原</button>
                 <span style="flex:1"></span>
-                <span style="font-size:10px;color:var(--t2)">如需编辑 → 版本管理中新建版本</span>
+                <span style="font-size:10px;color:var(--t2)">编辑后点击「保存为新版本」</span>
               </div>
             </div>
           </div>
@@ -1360,7 +1361,15 @@ function switchTab(name) {
     selectConversation(currentConvId);
   }
   if (name === 'prompt') {
-    loadLatestPromptResult();
+    // 先让 tab 可见，再加载数据渲染图表
+    loadLatestPromptResult().then(() => {
+      // 确保容器可见后重新渲染图表
+      setTimeout(() => {
+        [promptRadarChart, promptHistoryChart, promptContributionChart].forEach(c => {
+          if (c && typeof c.resize === 'function') c.resize();
+        });
+      }, 100);
+    });
     loadDefaultSet();
     renderChangelog();
     // 工作台自动加载当前 System Prompt
@@ -1980,8 +1989,14 @@ setInterval(fetchConversations, 60000);
 // 每5分钟刷新看板
 setInterval(renderDashboard, 300000);
 
-// 页面加载后自动加载最新 Prompt 评测结果（图表驻留）
-setTimeout(loadLatestPromptResult, 1000);
+// 页面加载后预取 Prompt 评测数据（不渲染图表，等切换到 tab 时再渲染）
+let _cachedLatestReport = null;
+setTimeout(async () => {
+  try {
+    const r = await fetch('/api/prompt/test/latest');
+    if (r.ok) _cachedLatestReport = await r.json();
+  } catch(e) {}
+}, 1000);
 
 // ============================================================
 // Prompt 评测功能
@@ -1996,6 +2011,8 @@ let _currentSetId = null;
 let _currentSetLabel = '';
 let _testItems = [];
 let _editingItemId = null;
+let _fullChangelog = [];
+let _elasticChangelog = [];
 let _fixItemId = null;
 let _fixResult = null;
 let _isRunning = false;
@@ -2005,34 +2022,38 @@ async function loadLatestPromptResult() {
   try {
     const resp = await fetch('/api/prompt/test/latest');
     if (!resp.ok) return;
-    const report = await resp.json();
-    if (report.error) return;
+    const data = await resp.json();
+    if (data.error) return;
 
-    _promptTestResults = report.results || [];
+    const results = data.results || [];
+    const latest = results[0] || {};
+    _promptTestResults = results;
     try {
       const suiteResp = await fetch('/api/prompt/test/suite');
       if (suiteResp.ok) _promptTestSuite = await suiteResp.json();
     } catch(e) {}
 
     const statusEl = document.getElementById('promptTestStatus');
-    statusEl.textContent = `📋 上次测试 (${report.passed}/${report.total})`;
-    statusEl.style.color = report.pass_rate >= 80 ? 'green' : report.pass_rate >= 60 ? 'orange' : 'red';
+    statusEl.textContent = `📋 上次测试 (${latest.passed||0}/${latest.total||0})`;
+    statusEl.style.color = (latest.pass_rate||0) >= 80 ? 'green' : (latest.pass_rate||0) >= 60 ? 'orange' : 'red';
 
-    document.getElementById('promptWeightedScore').textContent = (report.weighted_score || 0) + '%';
-    document.getElementById('promptOverallScore').textContent = (report.overall_score || 0) + '%';
-    document.getElementById('promptPassRate').textContent = (report.pass_rate || 0) + '%';
-    document.getElementById('promptTotal').textContent = report.total || 0;
+    document.getElementById('promptWeightedScore').textContent = (latest.weighted_score || 0) + '%';
+    document.getElementById('promptOverallScore').textContent = (latest.overall_score || 0) + '%';
+    document.getElementById('promptPassRate').textContent = (latest.pass_rate || 0) + '%';
+    document.getElementById('promptTotal').textContent = latest.total || 0;
 
-    if (report.dimension_scores && Object.keys(report.dimension_scores).length > 0) {
-      renderPromptContribution(report.dimension_scores);
-      renderPromptRadar(report.dimension_scores);
+    if (latest.dimension_scores && Object.keys(latest.dimension_scores).length > 0) {
+      renderPromptContribution(latest.dimension_scores);
+      renderPromptRadar(latest.dimension_scores);
     }
     await loadPromptHistory();
     await loadPromptVersions();
 
-    document.getElementById('promptTestResult').style.display = 'block';
+    // 显示对应视图 — 不强制隐藏弹性面板，避免 inline style 覆盖
+    const fullPanel = document.getElementById('promptTestResultFull');
+    if (fullPanel) fullPanel.style.display = 'block';
   } catch(e) {
-    // 没有历史数据，不报错
+    console.warn('loadLatestPromptResult 出错:', e);
   }
 }
 
@@ -2049,6 +2070,11 @@ function switchPromptView(name) {
   tb.style.background = 'var(--a)';
   tb.style.color = '#fff';
   tb.style.fontWeight = '600';
+  // 清除可能的 inline display:none，确保内容可见
+  ['promptTestResultFull', 'promptTestResultElastic'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.style.display === 'none') el.style.display = '';
+  });
   // 切换视图后重新渲染图表（确保容器可见）
   setTimeout(() => {
     for (const key in chartInstances) {
@@ -2096,7 +2122,6 @@ async function loadDefaultSet() {
     const data = await resp.json();
     const items = data.items || [];
     if (items.length === 0) {
-      // API 无数据，显示空状态
       _currentSetId = null;
       _currentSetLabel = '暂无测试用例';
       _testItems = [];
@@ -2105,7 +2130,7 @@ async function loadDefaultSet() {
       return;
     }
     _currentSetId = null;
-    _currentSetLabel = `内置 ${items.length} 条`;
+    _currentSetLabel = `全部测试集 (${items.length} 条)`;
     _testItems = items;
     renderTestItems(items);
     renderChangelog();
@@ -2145,31 +2170,28 @@ function renderTestItems(items) {
   const containerFull = document.getElementById('testItemsContainerFull');
   const containerElastic = document.getElementById('testItemsContainerElastic');
   document.getElementById('testSetLabelFull').textContent = _currentSetLabel || '';
-  document.getElementById('testSetLabelElastic').textContent = _currentSetLabel || '';
+  // 弹性测试不显示全量集的标签（弹性有自己独立的提示）
 
   if (!items || items.length === 0) {
     containerFull.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t2);font-size:13px">暂无测试项</div>';
-    containerElastic.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t2);font-size:13px">暂无测试项</div>';
+    containerElastic.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--t2);font-size:14px;line-height:2">🔄 弹性测试用例由 AI 按基线动态生成<br><span style="font-size:12px">请点击「▶ 运行全部」或「🎲 AI 生成变体」创建</span></div>';
+    document.getElementById('testItemCountFull').textContent = 0;
+    document.getElementById('testItemCountElastic').textContent = 0;
     return;
   }
-
-  const isElastic = items[0] && (items[0].variant_type || items[0].category === '措辞' || items[0].category === '模糊' || items[0].category === '错别字' || items[0].category === '极端' || items[0].category === '对抗');
 
   const diffLabels = {easy:'简单', medium:'中等', hard:'困难'};
   const diffColor = {easy:'green', medium:'orange', hard:'red'};
 
-  let html = '<div class="table-header"><span>ID</span><span>' + (isElastic ? '变体类型' : '类别') + '</span><span>' + (isElastic ? '提问方式' : '问题') + '</span><span>难度</span><span style="text-align:right">操作</span></div>';
-
-  html += items.map(item => {
+  // 全量测试列表
+  let htmlFull = '<div class="table-header"><span>ID</span><span>类别</span><span>问题</span><span>难度</span><span style="text-align:right">操作</span></div>';
+  htmlFull += items.map(item => {
     const diff = item.difficulty || 'medium';
     const query = item.query || item.question || '';
-    const cat = item.category || '通用';
-    const vtype = item.variant_type || '';
-    const catDisplay = vtype ? `<span style="color:${vtype==='措辞'?'#34c759':vtype==='模糊'?'#ff9500':vtype==='错别字'?'#ff3b30':vtype==='极端'?'#5ac8fa':vtype==='对抗'?'#ff6482':'#888'}">● ${vtype || cat}</span>` : cat;
     const qShort = query.length > 50 ? query.slice(0,50)+'...' : query;
     return `<div class="table-row">
       <span class="id">${item.id || item.item_id || '-'}</span>
-      <span class="cat">${catDisplay}</span>
+      <span class="cat">${item.category || '通用'}</span>
       <span class="q" title="${escHtml(query)}">${escHtml(qShort)}</span>
       <span class="diff" style="color:${diffColor[diff] || 'orange'}">${diffLabels[diff] || diff}</span>
       <span class="ops">
@@ -2180,10 +2202,13 @@ function renderTestItems(items) {
     </div>`;
   }).join('');
 
-  containerFull.innerHTML = html;
-  containerElastic.innerHTML = html;
+  // 弹性测试 — 当前 DB 无 variant_type 区分，显示提示
+  const htmlElastic = '<div style="padding:40px 20px;text-align:center;color:var(--t2);font-size:14px;line-height:2">🔄 弹性测试用例由 AI 按基线动态生成<br><span style="font-size:12px">请点击「▶ 运行全部」或「🎲 AI 生成变体」创建</span></div>';
+
+  containerFull.innerHTML = htmlFull;
+  containerElastic.innerHTML = htmlElastic;
   document.getElementById('testItemCountFull').textContent = items.length;
-  document.getElementById('testItemCountElastic').textContent = items.length;
+  document.getElementById('testItemCountElastic').textContent = 0;
 }
 
 function renderPromptContribution(dimScores) {
@@ -2191,6 +2216,18 @@ function renderPromptContribution(dimScores) {
 
   const labels = Object.keys(dimScores);
   const values = Object.values(dimScores);
+
+  // 如果无分数，渲染占位消息
+  if (labels.length === 0) {
+    promptContributionChart = makeChart('promptContributionChart', {
+      title: {text: '各维度得分', textStyle:{fontSize:14,fontWeight:600}},
+      xAxis: {type:'category', data:['无数据']},
+      yAxis: {type:'value', min:0, max:100},
+      series: [{type:'bar', data:[0], itemStyle:{color:'#ccc'}}],
+      graphic: [{type:'text', left:'center', top:'middle', style:{text:'暂无评测数据', fill:'#999', fontSize:14}}],
+    });
+    return;
+  }
 
   promptContributionChart = makeChart('promptContributionChart', {
     title: {text: '各维度得分', textStyle:{fontSize:14,fontWeight:600}},
@@ -2235,6 +2272,90 @@ function renderPromptRadar(dimScores) {
   // 同步渲染工作台全量雷达图
   makeChart('wsFullRadar', {
     radar:{indicator:labels.map(l=>({name:l,max:100})),center:['50%','50%'],radius:'60%',axisName:{color:'#888',fontSize:10},splitArea:{areaStyle:{color:['rgba(233,69,96,0.02)','rgba(233,69,96,0.05)']}},axisLine:{lineStyle:{color:'#333'}}},series:[{type:'radar',data:[{value:values.map(v=>v*100),areaStyle:{color:'rgba(233,69,96,0.15)'},lineStyle:{color:'#e94560',width:2},itemStyle:{color:'#e94560'}}]}],tooltip:{trigger:'item'},
+  });
+}
+
+function renderFallbackCharts() {
+  renderPromptContribution({});
+  renderPromptRadar({});
+}
+
+// ---- 弹性测试图表 ----
+function renderElasticCharts(d) {
+  // 一致性数据在 dimension_scores 中的 consistency_details 键下
+  const dimScores = d.dimension_scores || {};
+  const cd = dimScores.consistency_details || d.consistency_details || {};
+  const variants = Object.keys(cd);
+  const semanticScores = variants.map(v => (cd[v].semantic_score || 0) * 100);
+  const coverageScores = variants.map(v => (cd[v].coverage || 0) * 100);
+  makeChart('elasticConsistencyChart', {
+    title: {text: '各变体一致性得分', textStyle:{fontSize:13,fontWeight:600}, left:'center'},
+    tooltip: {trigger:'axis'},
+    legend: {data:['语义一致性','要点覆盖率'], top:24, textStyle:{fontSize:10}},
+    grid:{left:40,right:10,top:56,bottom:24},
+    xAxis: {type:'category', data:variants, axisLabel:{fontSize:10,color:'#888'}},
+    yAxis: {type:'value', min:0, max:100, axisLabel:{fontSize:10,color:'#888'}, splitLine:{lineStyle:{color:'#ddd'}}},
+    series: [
+      {name:'语义一致性', type:'bar', data:semanticScores, itemStyle:{color:'#8e44ad',borderRadius:[4,4,0,0]}, barMaxWidth:16},
+      {name:'要点覆盖率', type:'bar', data:coverageScores, itemStyle:{color:'#a78bfa',borderRadius:[4,4,0,0]}, barMaxWidth:16},
+    ],
+  });
+  // 同步工作台弹性柱状图
+  makeChart('wsElasticBar', {
+    grid:{left:40,right:10,top:6,bottom:24},xAxis:{type:'category',data:variants,axisLabel:{fontSize:10,color:'#888'}},yAxis:{type:'value',min:0,max:100,axisLabel:{fontSize:10,color:'#888'},splitLine:{lineStyle:{color:'#ddd'}}},series:[{name:'语义一致性',type:'bar',data:semanticScores,itemStyle:{color:'#8e44ad',borderRadius:[4,4,0,0]},barMaxWidth:16}],tooltip:{trigger:'axis'},
+  });
+
+  // 鲁棒性雷达图
+  const rd = dimScores.robustness_details || d.robustness_details || {};
+  const noiseNames = Object.keys(rd);
+  if (noiseNames.length > 0) {
+    // 聚合4个维度
+    const dims = ['spelling_tolerance','fuzzy_tolerance','extreme_input','adversarial'];
+    const dimLabels = ['拼写容错','模糊容错','极端输入','对抗性'];
+    const avgScores = dims.map(dim => {
+      const vals = noiseNames.map(n => (rd[n][dim] || 0) * 100);
+      return vals.reduce((a,b)=>a+b,0) / vals.length;
+    });
+    makeChart('elasticRobustnessChart', {
+      title: {text: '鲁棒性评估', textStyle:{fontSize:13,fontWeight:600}, left:'center'},
+      tooltip: {trigger:'item',formatter:p=>`${p.name}: ${p.value}%`},
+      radar: {
+        indicator: dimLabels.map(l => ({name:l, max:100})),
+        center: ['50%', '50%'], radius: '60%',
+        axisName:{color:'#888',fontSize:10},
+        splitArea:{areaStyle:{color:['rgba(142,68,173,0.02)','rgba(142,68,173,0.05)']}},
+        axisLine:{lineStyle:{color:'#333'}},
+      },
+      series: [{type:'radar', data:[{value:avgScores,name:'鲁棒性',areaStyle:{color:'rgba(142,68,173,0.15)'},lineStyle:{color:'#8e44ad',width:2},itemStyle:{color:'#8e44ad'}}]}],
+    });
+    // 同步工作台鲁棒性雷达
+    makeChart('wsElasticRadar', {
+      radar:{indicator:dimLabels.map(l=>({name:l,max:100})),center:['50%','50%'],radius:'60%',axisName:{color:'#888',fontSize:10},splitArea:{areaStyle:{color:['rgba(142,68,173,0.02)','rgba(142,68,173,0.05)']}},axisLine:{lineStyle:{color:'#333'}}},series:[{type:'radar',data:[{value:avgScores,areaStyle:{color:'rgba(142,68,173,0.15)'},lineStyle:{color:'#8e44ad',width:2},itemStyle:{color:'#8e44ad'}}]}],tooltip:{trigger:'item'},
+    });
+  }
+
+  // 偏差分析（基线 vs 各变体长度偏差）
+  const baseline = d.baseline || {};
+  const baseLen = baseline.length || 1;
+  const res = d.results || [];
+  const devLabels = res.map(r => r.name || '?');
+  const devValues = res.map(r => baseLen > 0 ? Math.round((r.length - baseLen) / baseLen * 100) : 0);
+  makeChart('elasticDeviationChart', {
+    title: {text: '基线 vs 变体偏差分析', textStyle:{fontSize:13,fontWeight:600}, left:'center'},
+    tooltip: {trigger:'axis',formatter:p=>`${p[0].name}: ${p[0].value}%`},
+    grid:{left:60,right:20,top:36,bottom:40},
+    xAxis: {type:'category', data:devLabels, axisLabel:{fontSize:10,color:'#888',rotate:20}},
+    yAxis: {type:'value', name:'偏差%', axisLabel:{fontSize:10,color:'#888',formatter:v=>v+'%'}, splitLine:{lineStyle:{color:'#ddd'}}},
+    series: [{
+      type:'bar', data:devValues,
+      itemStyle:{color:p=>Math.abs(p.value) > 20 ? '#e94560' : '#8e44ad',borderRadius:[4,4,0,0]},
+      barMaxWidth:18,
+      label:{show:true,position:'top',fontSize:10,color:'#888',formatter:p=>p.value+'%'},
+    }],
+  });
+  // 同步工作台偏差图
+  makeChart('wsElasticDeviation', {
+    grid:{left:50,right:10,top:6,bottom:40},xAxis:{type:'category',data:devLabels,axisLabel:{fontSize:10,color:'#888',rotate:20}},yAxis:{type:'value',name:'偏差%',axisLabel:{fontSize:10,color:'#888',formatter:v=>v+'%'},splitLine:{lineStyle:{color:'#ddd'}}},series:[{type:'bar',data:devValues,itemStyle:{color:p=>Math.abs(p.value)>20?'#e94560':'#8e44ad',borderRadius:[4,4,0,0]},barMaxWidth:16,label:{show:true,position:'top',fontSize:10,color:'#888',formatter:p=>p.value+'%'}}],tooltip:{trigger:'axis'},
   });
 }
 
@@ -2361,24 +2482,95 @@ function toggleSystemPromptPanel() { toggleSystemPrompt(); }
 // ---- 运行单条测试 ----
 async function runSingleTest(itemId) {
   if (_isRunning) { showToast('⏳ 测试进行中'); return; }
+  console.log('[Debug] runSingleTest called for itemId=', itemId);
   showToast(`▶️ 运行 #${itemId}...`);
-  try { const r=await fetch(`/api/prompt/test/run-single/${itemId}`,{method:'POST'}); const d=await r.json(); if(d.error){showToast('❌ '+d.error);return;} showToast('✅ 完成'); refreshAfterRun(); }
-  catch(e) { showToast('❌ '+e.message); }
+  try {
+    const r=await fetch(`/api/prompt/test/run-single/${itemId}`,{method:'POST'});
+    const d=await r.json();
+    console.log('[Debug] API response:', d);
+    if(d.error){showToast('❌ '+d.error);return;}
+    const result = d.result || {};
+    const scores = result.scores || {};
+    const scoreKeys = Object.keys(scores);
+    console.log('[Debug] scores keys:', scoreKeys, 'values:', JSON.stringify(scores));
+    if (scoreKeys.length > 0) {
+      const avg = result.avg_score || 0;
+      const weighted = result.weighted_score || 0;
+      document.getElementById('promptWeightedScore').textContent = weighted+'%';
+      document.getElementById('promptOverallScore').textContent = (avg*100)+'%';
+      document.getElementById('promptPassRate').textContent = (result.passed ? 100 : 0)+'%';
+      document.getElementById('promptTotal').textContent = 1;
+      // 更新维度贡献图
+      console.log('[Debug] rendering promptContributionChart...');
+      const chart1 = document.getElementById('promptContributionChart');
+      console.log('[Debug] promptContributionChart element:', chart1);
+      renderPromptContribution(scores);
+      const chart2 = document.getElementById('promptRadarChart');
+      console.log('[Debug] promptRadarChart element:', chart2);
+      renderPromptRadar(scores);
+    } else {
+      console.warn('[Debug] No score keys found, calling renderFallbackCharts');
+      renderFallbackCharts();
+    }
+    showToast(`✅ 完成 · 加权${(result.weighted_score||0)}% 平均${(result.avg_score||0)*100}%`);
+    // 只刷新版本列表和历史，不覆盖当前单题图表
+    await loadPromptVersions();
+    try { await loadPromptHistory(); } catch(e) {}
+    // 同步工作台统计数据
+    document.getElementById('wsWeightedScore').textContent = document.getElementById('promptWeightedScore').textContent;
+    document.getElementById('wsOverallScore').textContent = document.getElementById('promptOverallScore').textContent;
+    document.getElementById('wsPassRate').textContent = document.getElementById('promptPassRate').textContent;
+    document.getElementById('wsTotal').textContent = document.getElementById('promptTotal').textContent;
+    // 更新测试状态栏
+    const se=document.getElementById('promptTestStatus');
+    se.textContent=`📋 最近 (#${itemId}) ${result.passed?'✅ 通过':'❌ 未通过'}`;
+    se.style.color=result.passed?'green':'red';
+    // 刷新测试列表
+    await loadDefaultSet();
+  } catch(e) { showToast('❌ '+e.message); }
 }
 
 // ---- 运行全部测试 ----
 async function runAllTests() {
   if (_isRunning) { showToast('⏳ 测试进行中'); return; }
+  // 判断当前视图：全量测试 vs 弹性测试
+  const isElastic = document.getElementById('ptbElastic')?.classList.contains('active');
+  if (isElastic) {
+    await runElasticTests();
+    return;
+  }
   if (!_testItems||!_testItems.length) { showToast('⚠️ 请先加载测试集'); return; }
   _isRunning = true;
   const pb=document.getElementById('testProgressBar'), pf=document.getElementById('progressFill'), pt=document.getElementById('progressText'), pc=document.getElementById('progressCount');
-  pb.style.display='block'; const total=_testItems.length; let done=0;
-  for (const item of _testItems) {
-    const id=item.id||item.item_id; pt.textContent=`⏳ 测试 #${id}...`; done++; pc.textContent=`${done}/${total}`; pf.style.width=`${(done/total)*100}%`;
-    try { await fetch(`/api/prompt/test/run-single/${id}`,{method:'POST'}); } catch(e) { console.error(`#${id} 失败:`,e); }
-  }
-  pt.textContent='✅ 完成'; pf.style.width='100%'; _isRunning=false;
-  setTimeout(()=>pb.style.display='none',2000); refreshAfterRun();
+  pb.style.display='block'; const total=_testItems.length;
+  pt.textContent='⏳ 批量测试中...'; pc.textContent=`0/${total}`; pf.style.width='0%';
+  try {
+    const set_id = _testItems[0].set_id || 'builtin';
+    const r=await fetch('/api/prompt/test/run-all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({set_id})});
+    const d=await r.json();
+    if(d.error){showToast('❌ '+d.error);_isRunning=false;pb.style.display='none';return;}
+    pt.textContent='✅ 完成 '+d.passed+'/'+d.total+' 通过'; pf.style.width='100%'; pc.textContent=`${d.total}/${d.total}`;
+    _isRunning=false;
+    setTimeout(()=>pb.style.display='none',2000); refreshAfterRun();
+  } catch(e) { showToast('❌ 批量测试失败: '+e.message); _isRunning=false; pb.style.display='none'; }
+}
+
+async function runElasticTests() {
+  _isRunning = true;
+  const pb=document.getElementById('testProgressBar'), pf=document.getElementById('progressFill'), pt=document.getElementById('progressText'), pc=document.getElementById('progressCount');
+  pb.style.display='block';
+  pt.textContent='⏳ 弹性测试中（基线+5变体+4噪声）...'; pc.textContent='0/10'; pf.style.width='0%';
+  // 获取基线问题
+  const baselineInput = document.getElementById('baselineInputElastic');
+  const baseQuery = baselineInput ? baselineInput.value.trim() : '等保三级有哪些基本要求？';
+  try {
+    const r=await fetch('/api/prompt/test/run-elastic',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:baseQuery})});
+    const d=await r.json();
+    if(d.error){showToast('❌ '+d.error);_isRunning=false;pb.style.display='none';return;}
+    pt.textContent='✅ 弹性测试完成'; pf.style.width='100%'; pc.textContent=`10/10`;
+    _isRunning=false;
+    setTimeout(()=>pb.style.display='none',2000); refreshAfterRun();
+  } catch(e) { showToast('❌ 弹性测试失败: '+e.message); _isRunning=false; pb.style.display='none'; }
 }
 
 // ---- 版本管理 ----
@@ -2510,42 +2702,47 @@ async function showVersionDetail(id) {
 
 async function refreshAfterRun() {
   try { const r=await fetch('/api/prompt/test/latest'); if(!r.ok)return; const d=await r.json(); if(d.error)return;
-    _promptTestResults=d.results||[];
+    const results = d.results || [];
+    _promptTestResults = results;
+    // 取最新一条记录
+    const latest = results[0] || {};
     // 判断是全量还是弹性结果
-    const isElastic = d.variant_type || d.consistency_score !== undefined || (d.results&&d.results[0]&&d.results[0].variant_type);
+    const isElastic = latest.variant_type || latest.consistency_score !== undefined || (results[0]&&results[0].variant_type);
     if (!isElastic) {
       // 全量结果
-      document.getElementById('promptWeightedScore').textContent=(d.weighted_score||0)+'%';
-      document.getElementById('promptOverallScore').textContent=(d.overall_score||0)+'%';
-      document.getElementById('promptPassRate').textContent=(d.pass_rate||0)+'%';
-      document.getElementById('promptTotal').textContent=d.total||0;
-      if(d.dimension_scores&&Object.keys(d.dimension_scores).length>0){renderPromptContribution(d.dimension_scores);renderPromptRadar(d.dimension_scores);}
+      document.getElementById('promptWeightedScore').textContent=(latest.weighted_score||0)+'%';
+      document.getElementById('promptOverallScore').textContent=(latest.overall_score||0)+'%';
+      document.getElementById('promptPassRate').textContent=(latest.pass_rate||0)+'%';
+      document.getElementById('promptTotal').textContent=latest.total||0;
+      if(latest.dimension_scores&&Object.keys(latest.dimension_scores).length>0){renderPromptContribution(latest.dimension_scores);renderPromptRadar(latest.dimension_scores);}
       document.getElementById('promptTestResultFull').style.display='block';
     } else {
       // 弹性结果
-      document.getElementById('elasticConsistencyScore').textContent=(d.consistency_score||d.weighted_score||0)+'%';
-      document.getElementById('elasticRobustnessScore').textContent=(d.robustness_score||d.overall_score||0)+'%';
-      document.getElementById('elasticCompositeScore').textContent=(d.composite_score||d.pass_rate||0)+'%';
-      document.getElementById('elasticTotalCount').textContent=d.total||0;
+      document.getElementById('elasticConsistencyScore').textContent=(latest.consistency_score||latest.weighted_score||0)+'%';
+      document.getElementById('elasticRobustnessScore').textContent=(latest.robustness_score||latest.overall_score||0)+'%';
+      document.getElementById('elasticCompositeScore').textContent=(latest.composite_score||latest.pass_rate||0)+'%';
+      document.getElementById('elasticTotalCount').textContent=latest.total||0;
       document.getElementById('promptTestResultElastic').style.display='block';
+      // 渲染弹性图表
+      renderElasticCharts(latest);
     }
-    const se=document.getElementById('promptTestStatus'); se.textContent=`📋 最新 (${d.passed}/${d.total})`; se.style.color=d.pass_rate>=80?'green':d.pass_rate>=60?'orange':'red';
+    const se=document.getElementById('promptTestStatus'); se.textContent=`📋 最新 (${latest.passed||0}/${latest.total||0})`; se.style.color=latest.pass_rate>=80?'green':latest.pass_rate>=60?'orange':'red';
     // 同时更新工作台统计数据
-    document.getElementById('wsWeightedScore').textContent=(d.weighted_score||0)+'%';
-    document.getElementById('wsOverallScore').textContent=(d.overall_score||0)+'%';
-    document.getElementById('wsPassRate').textContent=(d.pass_rate||0)+'%';
-    document.getElementById('wsTotal').textContent=d.total||0;
-    document.getElementById('wsElasticConsistency').textContent=(d.consistency_score||d.weighted_score||0)+'%';
-    document.getElementById('wsElasticRobustness').textContent=(d.robustness_score||d.overall_score||0)+'%';
-    document.getElementById('wsElasticComposite').textContent=(d.composite_score||d.pass_rate||0)+'%';
-    document.getElementById('wsElasticTotal').textContent=d.total||0;
+    document.getElementById('wsWeightedScore').textContent=(latest.weighted_score||0)+'%';
+    document.getElementById('wsOverallScore').textContent=(latest.overall_score||0)+'%';
+    document.getElementById('wsPassRate').textContent=(latest.pass_rate||0)+'%';
+    document.getElementById('wsTotal').textContent=latest.total||0;
+    document.getElementById('wsElasticConsistency').textContent=(latest.consistency_score||latest.weighted_score||0)+'%';
+    document.getElementById('wsElasticRobustness').textContent=(latest.robustness_score||latest.overall_score||0)+'%';
+    document.getElementById('wsElasticComposite').textContent=(latest.composite_score||latest.pass_rate||0)+'%';
+    document.getElementById('wsElasticTotal').textContent=latest.total||0;
     await loadPromptHistory(); await loadPromptVersions();
     // 自动生成变更总结
-    if (d.total > 0) {
+    if (latest.total > 0) {
       if (isElastic) {
-        addChangelogEntry({ tag: '弹性运行', tagCls: 'elastic-run', desc: `运行 ${d.total} 条变体测试 · 一致性总分 ${(d.consistency_score||d.weighted_score||0)}% · 鲁棒性总分 ${(d.robustness_score||d.overall_score||0)}% · 综合评分 ${(d.composite_score||d.pass_rate||0)}%` }, 'elastic');
+        addChangelogEntry({ tag: '弹性运行', tagCls: 'elastic-run', desc: `运行 ${latest.total} 条变体测试 · 一致性总分 ${(latest.consistency_score||latest.weighted_score||0)}% · 鲁棒性总分 ${(latest.robustness_score||latest.overall_score||0)}% · 综合评分 ${(latest.composite_score||latest.pass_rate||0)}%` }, 'elastic');
       } else {
-        addChangelogEntry({ tag: '全量运行', tagCls: 'full-run', desc: `运行 ${d.total} 条全量测试 · 加权总分 ${(d.weighted_score||0)}% · 总体得分 ${(d.overall_score||0)}% · 通过率 ${(d.pass_rate||0)}% · ${(d.total-d.passed)} 条失败项` }, 'full');
+        addChangelogEntry({ tag: '全量运行', tagCls: 'full-run', desc: `运行 ${latest.total} 条全量测试 · 加权总分 ${(latest.weighted_score||0)}% · 总体得分 ${(latest.overall_score||0)}% · 通过率 ${(latest.pass_rate||0)}% · ${(latest.total-latest.passed)} 条失败项` }, 'full');
       }
     }
   } catch(e) { console.error('刷新失败:',e); }
@@ -2554,6 +2751,23 @@ async function refreshAfterRun() {
 // ---- AI 生成 ----
 function showAiGenerateModal() { document.getElementById('aiKeywordInput').value=''; document.getElementById('aiModalStatus').textContent=''; document.getElementById('aiGenerateBtn').disabled=false; document.getElementById('aiModal').style.display='flex'; }
 function closeAiModal() { document.getElementById('aiModal').style.display='none'; }
+async function doAiGenerateFromBar() {
+  const kw = document.getElementById('fullTestKeyword').value.trim();
+  if (!kw) { showToast('⚠️ 请输入关键词'); return; }
+  const btn = document.querySelector('.action-bar .btn-sm.ai');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ 生成中...';
+  try {
+    const r = await fetch('/api/prompt/test/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({keywords:kw})});
+    const d = await r.json();
+    if (d.error) { showToast('❌ '+d.error); return; }
+    showToast(`✅ 已生成 ${d.count||(d.items||[]).length} 条测试用例`);
+    if (d.set_id) await loadTestItems(d.set_id); else await loadDefaultSet();
+    const cnt = d.count || (d.items||[]).length || 0;
+    if (cnt > 0) addChangelogEntry({ tag: 'AI生成', tagCls: 'full-ai', desc: `管理员利用 AI 生成 ${cnt} 条全量测试集 · 关键词：${kw}` }, 'full');
+  } catch(e) { showToast('❌ '+e.message); }
+  btn.disabled = false; btn.textContent = orig;
+}
 async function doAiGenerate() {
   const kw=document.getElementById('aiKeywordInput').value.trim(); if(!kw){document.getElementById('aiModalStatus').textContent='⚠️ 请输入关键词';return;}
   const btn=document.getElementById('aiGenerateBtn'); btn.disabled=true; document.getElementById('aiModalStatus').textContent='⏳ 生成中...';
@@ -2645,6 +2859,20 @@ async function restoreFromActive() {
   } catch(e) { showToast('❌ 还原失败: '+e.message); }
 }
 
+async function saveWorkspacePrompt() {
+  const editor = document.getElementById('workspacePromptEditor');
+  const prompt = editor.value.trim();
+  if (!prompt) { showToast('❌ Prompt 内容不能为空'); return; }
+  const name = `工作台编辑_${new Date().toISOString().slice(0,10)}_${new Date().toTimeString().slice(0,8).replace(/:/g,'')}`;
+  const desc = '从工作台直接保存';
+  try {
+    const r=await fetch('/api/prompt/versions', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, description:desc, system_prompt:prompt})});
+    const d=await r.json();
+    if (d.ok) { showToast('✅ 已保存为版本: '+name); loadPromptVersions(); }
+    else showToast('❌ 保存失败: '+(d.message||''));
+  } catch(e) { showToast('❌ 保存失败: '+e.message); }
+}
+
 function exportSummaryReport() {
   const mode = document.querySelector('.prompt-view.active')?.id;
   if (mode === 'promptViewFull') exportWordReport('full');
@@ -2654,7 +2882,7 @@ function exportSummaryReport() {
 
 async function switchVersion(vn) {
   if(!confirm(`确认切换到 "${vn}"？`))return;
-  try { const r=await fetch('/api/prompt/versions/switch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version_name:vn})}); const d=await r.json(); if(d.ok){showToast('已切换到 '+vn);loadPromptVersions();} else showToast('失败: '+d.message); } catch(e){showToast('失败: '+e.message);}
+  try { const r=await fetch('/api/prompt/versions/switch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version_name:vn})}); const d=await r.json(); if(d.ok){showToast('已切换到 '+vn);loadPromptVersions();fetch('/api/prompt/system-prompt').then(r=>r.json()).then(d=>{if(d.system_prompt)document.getElementById('workspacePromptEditor').value=d.system_prompt;});} else showToast('失败: '+d.message); } catch(e){showToast('失败: '+e.message);}
 }
 
 async function restoreVersion(vn) {
