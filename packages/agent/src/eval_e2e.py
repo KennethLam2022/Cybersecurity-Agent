@@ -704,9 +704,7 @@ def find_latest_results() -> tuple[Optional[Path], Optional[Path]]:
 def load_questions_from_db(db_path: Optional[str] = None) -> list[dict]:
     """从 SQLite e2e_eval_items 表加载测试题"""
     if db_path is None:
-        _memory_py = _SRC / "memory.py"
-        _agent_data = _SRC.parent / "agent_data"
-        db_path = str(_agent_data / "agent.db") if _agent_data.exists() else ""
+        db_path = str(_PROJECT_ROOT / "agent_data" / "conversations.db")
     if not db_path or not os.path.exists(db_path):
         logger.info("  [WARN] DB 不存在，回退硬编码测试集")
         return QUESTIONS
