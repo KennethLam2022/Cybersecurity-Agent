@@ -8,7 +8,17 @@
   - 不带角色（💬）：纯自然语言提问
   每个领域两种类型各占一半。
 """
-import os, sys, json, time, csv, http.server, socketserver, webbrowser, threading, argparse
+from _eval_common import compute_avg_stats, render_html_page
+import os
+import sys
+import json
+import time
+import csv
+import http.server
+import socketserver
+import webbrowser
+import threading
+import argparse
 import html as html_lib
 from pathlib import Path
 from datetime import datetime
@@ -17,9 +27,6 @@ _SRC = os.path.dirname(os.path.abspath(__file__))
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-from _eval_common import compute_avg_stats, render_html_page
-
-from agent import CyberAgent
 
 EVAL_DIR = Path(_SRC).parent.parent.parent / "eval_results"
 EVAL_DIR.mkdir(parents=True, exist_ok=True)
@@ -115,14 +122,14 @@ def run_evaluation(agent, output_file):
     role_count = sum(1 for q in QUESTIONS if q.get("style") == "role")
     plain_count = total - role_count
 
-    print(f"\n{'='*70}")
-    print(f"  30题评估v3 — 人话版（不带文档编号）")
-    print(f"  带角色: {role_count}题 | 纯自然语言: {plain_count}题")
-    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"{'='*70}\n")
+    logger.info(f"\n{'='*70}")
+    logger.info(f"  30题评估v3 — 人话版（不带文档编号）")
+    logger.info(f"  带角色: {role_count}题 | 纯自然语言: {plain_count}题")
+    logger.info(f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    logger.info(f"{'='*70}\n")
 
     for i, q in enumerate(QUESTIONS, 1):
-        print(f"[{i}/{total}] [{q['domain'][:6]}] [{q['difficulty']}] {q['query']}")
+        logger.info(f"[{i}/{total}] [{q['domain'][:6]}] [{q['difficulty']}] {q['query']}")
         t0 = time.time()
         try:
             result = agent.ask(q["query"])
@@ -144,13 +151,14 @@ def run_evaluation(agent, output_file):
             }
 
             status_ok = entry['auto_status'] != '运行错误'
-            print(f"  {'[OK]' if status_ok else '[ERR]'} {elapsed:.1f}s | 来源: {len(result.get('sources', []))}条")
+            logger.info(
+                f"  {'[OK]' if status_ok else '[ERR]'} {elapsed:.1f}s | 来源: {len(result.get('sources', []))}条")
 
             # 打印top-3来源
             for j, s in enumerate(result.get('sources', [])[:3], 1):
-                print(f"    [{j}] {s['file_name'][:35]} | {s['section'][:30]}")
+                logger.info(f"    [{j}] {s['file_name'][:35]} | {s['section'][:30]}")
             if len(result.get('sources', [])) > 3:
-                print(f"    ... 还有 {len(result.get('sources', [])) - 3} 条")
+                logger.info(f"    ... 还有 {len(result.get('sources', [])) - 3} 条")
 
         except Exception as e:
             elapsed = time.time() - t0
@@ -168,7 +176,7 @@ def run_evaluation(agent, output_file):
                 "note": str(e),
                 "auto_status": "运行错误",
             }
-            print(f"  [ERR] {elapsed:.1f}s | 错误: {str(e)[:60]}")
+            logger.info(f"  [ERR] {elapsed:.1f}s | 错误: {str(e)[:60]}")
 
         results.append(entry)
 
@@ -176,25 +184,25 @@ def run_evaluation(agent, output_file):
             json.dump(results, f, ensure_ascii=False, indent=2)
 
     # 摘要
-    print(f"\n{'='*70}")
-    print(f"  30题评估v3 摘要")
-    print(f"{'='*70}")
+    logger.info(f"\n{'='*70}")
+    logger.info(f"  30题评估v3 摘要")
+    logger.info(f"{'='*70}")
     has_src = sum(1 for r in results if r["sources"])
     errors = sum(1 for r in results if r["auto_status"] == "运行错误")
     total_src = sum(len(r["sources"]) for r in results)
-    print(f"  总题数: {len(results)}")
-    print(f"  有来源: {has_src}/{len(results)}")
-    print(f"  总来源数: {total_src}")
-    print(f"  错误:   {errors}")
+    logger.info(f"  总题数: {len(results)}")
+    logger.info(f"  有来源: {has_src}/{len(results)}")
+    logger.info(f"  总来源数: {total_src}")
+    logger.info(f"  错误:   {errors}")
 
     from collections import Counter
     domain_stats = Counter(r["domain"] for r in results)
     domain_ok = Counter(r["domain"] for r in results if r["sources"])
-    print(f"\n  按领域：")
+    logger.info(f"\n  按领域：")
     for d in sorted(domain_stats):
-        print(f"    {d}: {domain_stats[d]}题 | 有来源 {domain_ok[d]}")
+        logger.info(f"    {d}: {domain_stats[d]}题 | 有来源 {domain_ok[d]}")
 
-    print(f"\n  ✅ 已保存: {output_file}")
+    logger.info(f"\n  ✅ 已保存: {output_file}")
     return results
 
 
@@ -214,7 +222,8 @@ def generate_html(results, output_file):
     high_ratio = round(high_total / total_sources * 100) if total_sources else 0
 
     rows_html = ""
-    opts = '<option value=""></option>' + ''.join(f'<option value="{v}">{v}</option>' for v in [5,4,3,2,1])
+    opts = '<option value=""></option>' + \
+        ''.join(f'<option value="{v}">{v}</option>' for v in [5, 4, 3, 2, 1])
 
     for i, r in enumerate(results):
         answer = (r.get("answer") or "").strip()
@@ -262,7 +271,7 @@ def generate_html(results, output_file):
         for s in sources:
             conf_label = s.get("label", "中")
             conf_val = s.get("confidence", 0)
-            src_items.append(f"{s.get('file_name','?')}({conf_label}{conf_val})")
+            src_items.append(f"{s.get('file_name', '?')}({conf_label}{conf_val})")
         source_str = "; ".join(src_items) if src_items else "无"
         source_str_safe = html_lib.escape(source_str)
 
@@ -271,7 +280,7 @@ def generate_html(results, output_file):
       <div class="q-hdr">
         <span class="q-id">{qid_safe}</span>
         <span class="q-dmn">{domain_safe}</span>
-        <span class="q-dff {'h' if r['difficulty']=='困难' else 'm' if r['difficulty']=='中等' else 'e'}">{diff_safe}</span>
+        <span class="q-dff {'h' if r['difficulty'] == '困难' else 'm' if r['difficulty'] == '中等' else 'e'}">{diff_safe}</span>
         <span class="q-st">{status_safe}</span>
       </div>
       <div class="q-txt">{query_safe}</div>
@@ -370,10 +379,11 @@ rs();
 
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"  ✅ HTML: {output_file}")
+    logger.info(f"  ✅ HTML: {output_file}")
 
 
 def main():
+    from agent import CyberAgent
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-run", action="store_true", help="仅生成HTML")
     parser.add_argument("--serve", action="store_true", help="启动HTTP服务")
@@ -387,18 +397,19 @@ def main():
         else:
             jsons = sorted(EVAL_DIR.glob("eval30_v3_results_*.json"))
             if not jsons:
-                print("没有找到结果文件")
+                logger.info("没有找到结果文件")
                 return
             input_path = jsons[-1]
 
-        print(f"加载: {input_path.name}")
+        logger.info(f"加载: {input_path.name}")
         with open(input_path, encoding="utf-8") as f:
             results = json.load(f)
 
         failed = [r for r in results if r.get("auto_status") == "运行错误"]
-        print(f"失败题数: {len(failed)}")
+        logger.info(f"失败题数: {len(failed)}")
         if not failed:
-            html_path = EVAL_DIR / f"scorecard_30_{VERSION}_{datetime.now().strftime('%Y%m%d_%H%M')}.html"
+            html_path = EVAL_DIR / \
+                f"scorecard_30_{VERSION}_{datetime.now().strftime('%Y%m%d_%H%M')}.html"
             generate_html(results, html_path)
             if args.serve:
                 port = 8762
@@ -407,14 +418,14 @@ def main():
                 socketserver.TCPServer.allow_reuse_address = True
                 httpd = socketserver.TCPServer(("", port), handler)
                 url = f"http://localhost:{port}/{html_path.name}"
-                print(f"\n  🌐 http://localhost:{port}/{html_path.name}")
+                logger.info(f"\n  🌐 http://localhost:{port}/{html_path.name}")
                 webbrowser.open(url)
                 httpd.serve_forever()
             return
 
         agent = CyberAgent(include_example=True)
         for r in failed:
-            print(f"\n重跑: {r.get('id')} | {r.get('query')}")
+            logger.info(f"\n重跑: {r.get('id')} | {r.get('query')}")
             t0 = time.time()
             try:
                 res = agent.ask(r["query"])
@@ -425,13 +436,13 @@ def main():
                 r["timestamp"] = datetime.now().isoformat()
                 r["note"] = "重跑成功"
                 r["auto_status"] = f"有来源({len(r['sources'])}条)" if r["sources"] else "无来源"
-                print(f"  ✓ {elapsed:.1f}s | 来源: {len(r['sources'])}条")
+                logger.info(f"  ✓ {elapsed:.1f}s | 来源: {len(r['sources'])}条")
             except Exception as e:
                 elapsed = time.time() - t0
                 r["timestamp"] = datetime.now().isoformat()
                 r["note"] = f"重跑失败: {str(e)}"
                 r["auto_status"] = "运行错误"
-                print(f"  ✗ {elapsed:.1f}s | 错误: {str(e)[:80]}")
+                logger.info(f"  ✗ {elapsed:.1f}s | 错误: {str(e)[:80]}")
 
         out_ts = datetime.now().strftime("%Y%m%d_%H%M")
         out_json = EVAL_DIR / f"eval30_v3_results_{out_ts}_rerun.json"
@@ -440,8 +451,8 @@ def main():
 
         html_path = EVAL_DIR / f"scorecard_30_{VERSION}_{out_ts}_rerun.html"
         generate_html(results, html_path)
-        print(f"\n  ✅ 已保存: {out_json}")
-        print(f"  ✅ HTML:  {html_path}")
+        logger.info(f"\n  ✅ 已保存: {out_json}")
+        logger.info(f"  ✅ HTML:  {html_path}")
 
         if args.serve:
             port = 8762
@@ -450,7 +461,7 @@ def main():
             socketserver.TCPServer.allow_reuse_address = True
             httpd = socketserver.TCPServer(("", port), handler)
             url = f"http://localhost:{port}/{html_path.name}"
-            print(f"\n  🌐 http://localhost:{port}/{html_path.name}")
+            logger.info(f"\n  🌐 http://localhost:{port}/{html_path.name}")
             webbrowser.open(url)
             httpd.serve_forever()
         return
@@ -465,10 +476,10 @@ def main():
     else:
         jsons = sorted(EVAL_DIR.glob("eval30_v3_results_*.json"))
         if not jsons:
-            print("没有找到结果文件")
+            logger.info("没有找到结果文件")
             return
         latest = jsons[-1]
-        print(f"加载: {latest.name}")
+        logger.info(f"加载: {latest.name}")
         with open(latest, encoding="utf-8") as f:
             results = json.load(f)
 
@@ -482,7 +493,7 @@ def main():
         socketserver.TCPServer.allow_reuse_address = True
         httpd = socketserver.TCPServer(("", port), handler)
         url = f"http://localhost:{port}/{html_path.name}"
-        print(f"\n  🌐 http://localhost:{port}/{html_path.name}")
+        logger.info(f"\n  🌐 http://localhost:{port}/{html_path.name}")
         webbrowser.open(url)
         httpd.serve_forever()
 

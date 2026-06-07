@@ -11,7 +11,11 @@
   memory.add_message(conv["id"], "user", "你好")
   history = memory.get_compressed_history(conv["id"], llm_provider=None)
 """
-import sqlite3, json, uuid, logging, os
+import sqlite3
+import json
+import uuid
+import logging
+import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -29,6 +33,7 @@ def _to_utc_iso(dt_str):
     if "T" not in s:
         s = s.replace(" ", "T")
     return s + "Z"
+
 
 # ---- 项目根目录：优先使用环境变量，回退到相对路径 ----
 # memory.py 在 packages/agent/src/，向上4层到项目根目录
@@ -50,6 +55,7 @@ try:
 except ImportError:
     _CRYPTO_AVAILABLE = False
 
+
 def _load_encryption_key() -> str:
     key = os.environ.get("LLM_KEY_ENCRYPTION_KEY")
     if key:
@@ -58,6 +64,7 @@ def _load_encryption_key() -> str:
     if key_file.exists():
         return key_file.read_text(encoding="utf-8").strip()
     return ""
+
 
 _ENCRYPTION_KEY = _load_encryption_key()
 _fernet = Fernet(_ENCRYPTION_KEY.encode()) if (_CRYPTO_AVAILABLE and _ENCRYPTION_KEY) else None
@@ -140,6 +147,8 @@ class ConversationMemory:
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_conv
                     ON messages(conversation_id, id);
+                CREATE INDEX IF NOT EXISTS idx_messages_created_at
+                    ON messages(created_at);
                 CREATE TABLE IF NOT EXISTS usage_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     conversation_id TEXT NOT NULL,
@@ -197,7 +206,8 @@ class ConversationMemory:
             except sqlite3.OperationalError:
                 pass
             try:
-                conn.execute("ALTER TABLE conversations ADD COLUMN jailbreak_message_id INTEGER DEFAULT NULL")
+                conn.execute(
+                    "ALTER TABLE conversations ADD COLUMN jailbreak_message_id INTEGER DEFAULT NULL")
             except sqlite3.OperationalError:
                 pass
             try:
@@ -576,7 +586,8 @@ class ConversationMemory:
             if jailbreak == "pending":
                 conditions.append("jailbreak_status = 'pending'")
             elif jailbreak == "clean":
-                conditions.append("(jailbreak_status IS NULL OR jailbreak_status NOT IN ('pending'))")
+                conditions.append(
+                    "(jailbreak_status IS NULL OR jailbreak_status NOT IN ('pending'))")
             if conditions:
                 sql += " WHERE " + " AND ".join(conditions)
             sql += " ORDER BY updated_at DESC, id DESC"
@@ -739,7 +750,8 @@ class ConversationMemory:
     def update_rating(self, message_id: int, rating: int, semantic: bool = False):
         field = "semantic_rating" if semantic else "user_rating"
         with sqlite3.connect(self._db_path) as conn:
-            conn.execute(f"UPDATE usage_logs SET {field} = ? WHERE message_id = ?", (rating, message_id))
+            conn.execute(
+                f"UPDATE usage_logs SET {field} = ? WHERE message_id = ?", (rating, message_id))
 
     def update_jailbreak_status(self, conversation_id: str, status: str, reason: str = None, message_id: int = None):
         with sqlite3.connect(self._db_path) as conn:
@@ -861,8 +873,8 @@ class ConversationMemory:
         return True
 
     def create_prompt_version(self, name: str, description: str, system_prompt: str,
-                               changed_by: str = "管理员", change_log: str = "",
-                               prompt_diff: str = "") -> dict:
+                              changed_by: str = "管理员", change_log: str = "",
+                              prompt_diff: str = "") -> dict:
         """创建新版本（带扩展字段）"""
         from datetime import datetime
         with sqlite3.connect(self._db_path) as conn:
@@ -1029,7 +1041,8 @@ class ConversationMemory:
                 for d in docs:
                     fn = d.get("file_name", "未知")
                     if fn not in doc_stats:
-                        doc_stats[fn] = {"count": 0, "confidences": [], "category": d.get("category", "")}
+                        doc_stats[fn] = {"count": 0, "confidences": [],
+                                         "category": d.get("category", "")}
                     doc_stats[fn]["count"] += 1
                     c = d.get("confidence", 0.5)
                     if isinstance(c, (int, float)):
@@ -1040,7 +1053,8 @@ class ConversationMemory:
         doc_hotness = []
         for fn, st in hotness:
             avg_c = sum(st["confidences"]) / len(st["confidences"]) if st["confidences"] else 0
-            doc_hotness.append({"file_name": fn, "count": st["count"], "avg_confidence": round(avg_c, 3), "category": st["category"]})
+            doc_hotness.append({"file_name": fn, "count": st["count"], "avg_confidence": round(
+                avg_c, 3), "category": st["category"]})
 
         with sqlite3.connect(self._db_path) as conn:
             ratings = _cat_exec(
@@ -1135,7 +1149,8 @@ class ConversationMemory:
                 " GROUP BY d ORDER BY d",
                 conn,
             )
-        truncation = [{"date": r[0], "truncation_count": r[1] or 0, "total": r[2]} for r in trunc_rows]
+        truncation = [{"date": r[0], "truncation_count": r[1] or 0, "total": r[2]}
+                      for r in trunc_rows]
 
         with sqlite3.connect(self._db_path) as conn:
             conf_rows = _cat_exec(
@@ -1150,7 +1165,8 @@ class ConversationMemory:
         for docs_json, rating, q in conf_rows:
             try:
                 docs = json.loads(docs_json)
-                confs = [d.get("confidence", 0) for d in docs if isinstance(d.get("confidence"), (int, float))]
+                confs = [d.get("confidence", 0)
+                         for d in docs if isinstance(d.get("confidence"), (int, float))]
                 avg_c = sum(confs) / len(confs) if confs else 0
                 confidence_scatter.append({
                     "avg_confidence": round(avg_c, 3), "rating": rating,
@@ -1220,7 +1236,8 @@ class ConversationMemory:
                 if 0 <= idx < len(rows):
                     r = rows[idx]
                     docs = json.loads(r[2]) if r[2] else []
-                    confs = [d.get("confidence", 0) for d in docs if isinstance(d.get("confidence"), (int, float))]
+                    confs = [d.get("confidence", 0)
+                             for d in docs if isinstance(d.get("confidence"), (int, float))]
                     avg_c = sum(confs) / len(confs) if confs else 0
                     return [{"conversation_id": r[0], "query": r[1], "detail": {"avg_confidence": round(avg_c, 3), "doc_count": len(docs), "created_at": r[3]}}]
                 return []
@@ -1228,7 +1245,8 @@ class ConversationMemory:
                 return []
 
         return [
-            {"conversation_id": r[0], "query": r[1][:100] if r[1] else "", "detail": dict(zip(fields, [r[i] for i in range(2, len(r))]))}
+            {"conversation_id": r[0], "query": r[1][:100] if r[1] else "",
+                "detail": dict(zip(fields, [r[i] for i in range(2, len(r))]))}
             for r in rows
         ]
 
@@ -1242,7 +1260,7 @@ class ConversationMemory:
                     dedup_l1, dedup_l2, dedup_l3, faiss_after, chroma_after)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (task_id, total_files, success_count, fail_count,
-                   dedup_l1, dedup_l2, dedup_l3, faiss_after, chroma_after))
+                  dedup_l1, dedup_l2, dedup_l3, faiss_after, chroma_after))
 
     def get_pipeline_stats(self, limit: int = 30) -> list[dict]:
         """获取最近 pipeline 处理统计，按时间倒序"""
@@ -1287,12 +1305,13 @@ class ConversationMemory:
                     faiss_count, chroma_count, rerank_top1_match)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (query, expected_source, recall_5, recall_10, mrr,
-                   faiss_count, chroma_count, rerank_top1_match))
+                  faiss_count, chroma_count, rerank_top1_match))
 
     def get_retrieval_eval(self, limit: int = 100) -> dict:
         """获取检索质量评估的汇总统计"""
         with sqlite3.connect(self._db_path) as conn:
-            rows = conn.execute("SELECT * FROM retrieval_eval ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM retrieval_eval ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         cols = ["id", "query", "expected_source", "recall_5", "recall_10", "mrr",
                 "faiss_count", "chroma_count", "rerank_top1_match", "eval_at"]
         items = [dict(zip(cols, r)) for r in rows]
@@ -1315,10 +1334,10 @@ class ConversationMemory:
         }
 
     def save_eval_comparison(self, query: str, expected_source: str,
-                              faiss_only_recall_5: int, faiss_only_mrr: float,
-                              bm25_only_recall_5: int, bm25_only_mrr: float,
-                              hybrid_no_rerank_recall_5: int, hybrid_no_rerank_mrr: float,
-                              hybrid_rerank_recall_5: int, hybrid_rerank_mrr: float):
+                             faiss_only_recall_5: int, faiss_only_mrr: float,
+                             bm25_only_recall_5: int, bm25_only_mrr: float,
+                             hybrid_no_rerank_recall_5: int, hybrid_no_rerank_mrr: float,
+                             hybrid_rerank_recall_5: int, hybrid_rerank_mrr: float):
         """保存一次检索模式对比结果"""
         with sqlite3.connect(self._db_path) as conn:
             conn.execute("""
@@ -1338,7 +1357,8 @@ class ConversationMemory:
     def get_eval_comparison(self, limit: int = 100) -> dict:
         """获取检索模式对比的汇总统计"""
         with sqlite3.connect(self._db_path) as conn:
-            rows = conn.execute("SELECT * FROM eval_comparison ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM eval_comparison ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         cols = ["id", "query", "expected_source",
                 "faiss_only_recall_5", "faiss_only_mrr",
                 "bm25_only_recall_5", "bm25_only_mrr",
@@ -1351,6 +1371,7 @@ class ConversationMemory:
         total = len(items)
         if total == 0:
             return {"items": [], "summary": {"count": 0}}
+
         def _avg(key): return round(sum(i[key] for i in items) / total, 3)
         return {
             "items": items,
@@ -1377,10 +1398,12 @@ class ConversationMemory:
     def get_retrieval_eval_items(self, include_inactive: bool = False) -> list:
         with sqlite3.connect(self._db_path) as conn:
             if include_inactive:
-                rows = conn.execute("SELECT * FROM retrieval_eval_items ORDER BY id DESC").fetchall()
+                rows = conn.execute(
+                    "SELECT * FROM retrieval_eval_items ORDER BY id DESC").fetchall()
             else:
-                rows = conn.execute("SELECT * FROM retrieval_eval_items WHERE is_active=1 ORDER BY id DESC").fetchall()
-        cols = ["id","query","expected","category","difficulty","is_active","created_at"]
+                rows = conn.execute(
+                    "SELECT * FROM retrieval_eval_items WHERE is_active=1 ORDER BY id DESC").fetchall()
+        cols = ["id", "query", "expected", "category", "difficulty", "is_active", "created_at"]
         items = [dict(zip(cols, r)) for r in rows]
         for i in items:
             i["created_at"] = self._utc_to_local(i.get("created_at", ""))
@@ -1424,7 +1447,8 @@ class ConversationMemory:
                 try:
                     conn.execute(
                         "INSERT INTO retrieval_eval_items (query, expected, category, difficulty) VALUES (?, ?, ?, ?)",
-                        (row[0], row[1], row[2] if len(row) > 2 else "", row[3] if len(row) > 3 else "medium")
+                        (row[0], row[1], row[2] if len(row) > 2 else "",
+                         row[3] if len(row) > 3 else "medium")
                     )
                     count += 1
                 except Exception:
@@ -1438,7 +1462,8 @@ class ConversationMemory:
             if include_inactive:
                 rows = conn.execute("SELECT * FROM e2e_eval_items ORDER BY id ASC").fetchall()
             else:
-                rows = conn.execute("SELECT * FROM e2e_eval_items WHERE is_active=1 ORDER BY id ASC").fetchall()
+                rows = conn.execute(
+                    "SELECT * FROM e2e_eval_items WHERE is_active=1 ORDER BY id ASC").fetchall()
         cols = ["id", "query", "domain", "difficulty", "style", "is_active", "created_at"]
         items = [dict(zip(cols, r)) for r in rows]
         for i in items:

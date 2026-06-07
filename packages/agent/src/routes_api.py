@@ -13,6 +13,7 @@ from fastapi import APIRouter, Request, Body, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 import asyncio
 import sqlite3
+import html
 
 from app_state import (
     logger, _START_TIME, _EXCLUDE_MODEL_KEYWORDS,
@@ -103,7 +104,7 @@ async def jailbreak_report(conv_id: str):
 
     for m in trigger_msgs:
         role_label = "👤 用户" if m["role"] == "user" else "🤖 助手"
-        content = m.get("content", "")[:500]
+        content = html.escape(m.get("content", "")[:500])
         rating_html = ""
         if m.get("user_rating") is not None:
             rating_html = f'<span style="color:#0071e3;font-weight:600">用户评分: {"⭐" * m["user_rating"]}</span>'

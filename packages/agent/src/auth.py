@@ -3,13 +3,16 @@
 用法：
   from auth import verify_admin_token, is_admin_route, validate_llm_url
 """
-import os, json, logging
+import os
+import json
+import logging
 from fastapi import Request, HTTPException
 
 logger = logging.getLogger(__name__)
 
 # ---- 管理 Token ----
 _ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "change-me-in-production")
+
 
 async def verify_admin_token(request: Request) -> None:
     """验证管理端点 Token"""
@@ -31,9 +34,8 @@ _ALLOWED_LLM_DOMAINS = {
     "api.anthropic.com",
     "api.googleapis.com",
     "generativelanguage.googleapis.com",
-    "localhost",
-    "127.0.0.1",
 }
+
 
 def validate_llm_url(url: str) -> bool:
     """校验 LLM API URL 是否在白名单内，防止 SSRF"""
@@ -60,8 +62,6 @@ _ADMIN_PREFIXES = {
 }
 
 _ADMIN_ROUTES = [
-    "/api/stats/drill-down",
-    "/api/stats/dashboard",
     "/api/conversations/detail",
     "/api/conversations/stats",
     "/api/conversations/{conv_id}/hard",
@@ -75,7 +75,6 @@ PUBLIC_ROUTES = {
     "/api/llm/config",
     "/api/llm/presets",
     "/api/llm/test",
-    "/api/llm/refresh-models",
     "/admin/model-config",
     "/api/admin/stream",
 }
@@ -97,11 +96,11 @@ def is_admin_route(path: str) -> bool:
             suffix = route.split("}")[-1]
             if suffix:
                 if path.startswith(base + "/") and path.endswith(suffix):
-                    middle = path[len(base) + 1 : -len(suffix)] if suffix else path[len(base) + 1 :]
+                    middle = path[len(base) + 1: -len(suffix)] if suffix else path[len(base) + 1:]
                     if middle and "/" not in middle:
                         return True
             else:
-                if path.startswith(base + "/") and "/" not in path[len(base) + 1 :]:
+                if path.startswith(base + "/") and "/" not in path[len(base) + 1:]:
                     return True
 
     if path in PUBLIC_ROUTES:

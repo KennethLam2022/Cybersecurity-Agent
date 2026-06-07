@@ -221,6 +221,17 @@ function onProviderChange() {
     }
 }
 
+function getAdminToken() {
+    // 管理员 Token 优先从 URL 参数读取，其次从 localStorage
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('token');
+    if (urlToken) {
+        localStorage.setItem('admin_token', urlToken);
+        return urlToken;
+    }
+    return localStorage.getItem('admin_token') || '';
+}
+
 async function refreshModels() {
     const btn = document.getElementById('refreshModelsBtn');
     const status = document.getElementById('refreshStatus');
@@ -235,10 +246,14 @@ async function refreshModels() {
     status.textContent = '';
     status.style.color = '#888';
 
+    const headers = {'Content-Type': 'application/json'};
+    const token = getAdminToken();
+    if (token) headers['X-Admin-Token'] = token;
+
     try {
         const resp = await fetch('/api/llm/refresh-models', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: headers,
             body: JSON.stringify({api_key: apiKey, provider: provider}),
         });
         const data = await resp.json();
