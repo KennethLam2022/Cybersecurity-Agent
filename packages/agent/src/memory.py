@@ -1047,7 +1047,8 @@ class ConversationMemory:
                     c = d.get("confidence", 0.5)
                     if isinstance(c, (int, float)):
                         doc_stats[fn]["confidences"].append(c)
-            except:
+            except Exception:
+                logger.warning("解析舆情统计时异常", exc_info=True)
                 pass
         hotness = sorted(doc_stats.items(), key=lambda x: x[1]["count"], reverse=True)[:20]
         doc_hotness = []
@@ -1172,7 +1173,8 @@ class ConversationMemory:
                     "avg_confidence": round(avg_c, 3), "rating": rating,
                     "query_short": (q or "")[:20],
                 })
-            except:
+            except Exception:
+                logger.warning("雷达图数据异常", exc_info=True)
                 pass
 
         return {

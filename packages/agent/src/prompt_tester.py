@@ -15,6 +15,12 @@ import re
 import time
 import os
 import sqlite3
+
+def _db(db_path: str):
+    c = sqlite3.connect(db_path)
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA busy_timeout=5000")
+    return c
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -522,7 +528,7 @@ def run_all_tests(agent_instance) -> dict:
 
 def save_result(report: dict, db_path: str) -> str:
     """保存测试结果到 SQLite"""
-    conn = sqlite3.connect(db_path)
+    conn = _db(db_path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS prompt_test_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -563,7 +569,7 @@ def save_result(report: dict, db_path: str) -> str:
 
 def get_test_history(db_path: str, limit: int = 20) -> list:
     """获取历史测试结果"""
-    conn = sqlite3.connect(db_path)
+    conn = _db(db_path)
     rows = conn.execute(
         "SELECT id, timestamp, total, passed, failed, pass_rate, weighted_score, overall_score, version FROM prompt_test_results ORDER BY id DESC LIMIT ?",
         (limit,),
@@ -574,7 +580,7 @@ def get_test_history(db_path: str, limit: int = 20) -> list:
 
 def get_latest_full_result(db_path: str) -> Optional[dict]:
     """获取最新一次完整测试报告（含维度得分和测试详情）"""
-    conn = sqlite3.connect(db_path)
+    conn = _db(db_path)
     row = conn.execute(
         "SELECT id, timestamp, total, passed, failed, pass_rate, weighted_score, overall_score, version, dimension_scores, difficulty_scores, results FROM prompt_test_results ORDER BY id DESC LIMIT 1"
     ).fetchone()

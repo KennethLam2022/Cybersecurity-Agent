@@ -86,29 +86,3 @@ def get_dimension_breakdown(scores: dict, weights: Optional[dict] = None) -> dic
             "contribution_pct": round(contribution / total_weighted * 100, 1) if total_weighted > 0 else 0,
         }
     return breakdown
-
-
-def generate_report(scores: dict, weights: Optional[dict] = None) -> str:
-    """生成评估报告"""
-    w = weights or DEFAULT_WEIGHTS
-    weighted_score = evaluate_with_weights(scores, w)
-    breakdown = get_dimension_breakdown(scores, w)
-
-    lines = [
-        f"=== Prompt 评估报告 ===",
-        f"加权总分: {weighted_score}/100",
-        f"",
-        f"维度详情:",
-    ]
-    for dim, info in breakdown.items():
-        status = "✅" if info["score"] >= 0.8 else "⚠️" if info["score"] >= 0.5 else "❌"
-        lines.append(
-            f"  {status} {dim}: {info['score']*100:.0f}% (权重 {info['weight']*100:.0f}%, 贡献 {info['contribution_pct']:.1f}%)")
-
-    # 找出短板
-    weak_dims = [dim for dim, info in breakdown.items() if info["score"] < 0.5]
-    if weak_dims:
-        lines.append(f"")
-        lines.append(f"⚠️ 需要改进的维度: {', '.join(weak_dims)}")
-
-    return "\n".join(lines)

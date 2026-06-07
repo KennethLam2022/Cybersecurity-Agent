@@ -995,12 +995,22 @@ def _render_trace_report(trace: dict) -> str:
 # ============================================================
 # 启动初始化
 # ============================================================
+import sqlite3 as _sqlite3
+
+
+def _wal(db_path: str):
+    c = _sqlite3.connect(db_path)
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA busy_timeout=5000")
+    return c
+
+
 def _init_on_startup():
     """启动时执行：数据迁移 + 加载 LLM 配置 + 清理脏数据"""
-    import sqlite3 as _sqlite3
+
     _db_path = _get_db_path()
     try:
-        with _sqlite3.connect(_db_path) as _conn:
+        with _wal(_db_path) as _conn:
             _conn.execute("""
                 CREATE TABLE IF NOT EXISTS llm_configs (
                     module_id TEXT PRIMARY KEY,
@@ -1081,6 +1091,16 @@ def _init_on_startup():
 
     _cleanup_provider_models()
 
+    # 加密密钥一致性校验（防密钥丢失导致数据不可读）
+    try:
+        from llm_config_manager import validate_encryption_consistency
+        db_path = _get_db_path()
+        validate_encryption_consistency(db_path)
+    except RuntimeError:
+        raise
+    except Exception:
+        pass
+
     migrated = agent.memory.migrate_builtin_suite()
     if migrated:
         logger.info(f"已迁移内置测试集: {migrated} 条")
@@ -1095,7 +1115,7 @@ def _init_on_startup():
         active_v = get_active_version_name(db_path)
         if active_v:
             rows = None
-            with sqlite3.connect(db_path) as conn:
+            with _wal(db_path) as conn:
                 rows = conn.execute(
                     "SELECT id, system_prompt FROM prompt_versions WHERE version_name = ? AND is_active = 1 LIMIT 1",
                     (active_v,)

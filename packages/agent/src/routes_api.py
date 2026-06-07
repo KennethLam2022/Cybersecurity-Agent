@@ -15,6 +15,13 @@ import asyncio
 import sqlite3
 import html
 
+# ---- WAL 连接辅助 (防并发锁) ----
+def _db():
+    c = sqlite3.connect(agent.memory._db_path)
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA busy_timeout=5000")
+    return c
+
 from app_state import (
     logger, _START_TIME, _EXCLUDE_MODEL_KEYWORDS,
     agent, event_bus, _ACTIVE_CONVERSATIONS, jinja_env,
@@ -695,7 +702,7 @@ async def prompt_version_results(version_id: int, limit: int = 50):
 @router.put("/api/prompt/versions/{version_id}/activate")
 async def prompt_version_activate(version_id: int):
     """按 ID 激活版本"""
-    conn = sqlite3.connect(agent.memory._db_path)
+    conn = _db()
     conn.execute("UPDATE prompt_versions SET is_active = 0")
     conn.execute("UPDATE prompt_versions SET is_active = 1 WHERE id = ?", (version_id,))
     row = conn.execute(
@@ -747,8 +754,7 @@ async def prompt_test_items(set_id: str = "builtin"):
     items = agent.memory.get_test_items(set_id)
     if not items and set_id == "builtin":
         # builtin 为空，直接查 DB 找第一个有数据的 set_id
-        import sqlite3
-        conn = sqlite3.connect(agent.memory._db_path)
+        conn = _db()
         sid_row = conn.execute(
             "SELECT set_id FROM prompt_test_items WHERE is_active=1 GROUP BY set_id ORDER BY MAX(id) DESC LIMIT 1"
         ).fetchone()
@@ -826,7 +832,7 @@ async def prompt_test_run_single(item_id: int):
     passed = 1 if result.get("passed") else 0
 
     import sqlite3
-    conn = sqlite3.connect(agent.memory._db_path)
+    conn = _db()
     conn.execute(
         "INSERT INTO prompt_test_results (timestamp, total, passed, failed, pass_rate, weighted_score, overall_score, version, dimension_scores, difficulty_scores, results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
@@ -860,9 +866,8 @@ async def prompt_test_run_all(data: dict = Body(...)):
     from prompt_versions import get_active_version_name
     import json
 
-    # 获取当前版本名
     active_v = get_active_version_name(agent.memory._db_path) or "unknown"
-    conn = sqlite3.connect(agent.memory._db_path)
+    conn = _db()
 
     results = []
     for item in items:
@@ -955,8 +960,7 @@ async def prompt_test_run_elastic(data: dict = Body(...)):
     from prompt_tester import _eval_annotation, _eval_brand, _eval_rejection, _eval_contain, _eval_efficiency
 
     active_v = get_active_version_name(agent.memory._db_path) or "unknown"
-    conn = sqlite3.connect(agent.memory._db_path)
-
+    conn = _db()
     # 1. 跑基线
     start = time.time()
     base_result = agent.ask(query=base_query, conversation_id=None, temperature=0.1, category="prompt_test")
@@ -1089,7 +1093,7 @@ async def prompt_test_suggest_fix(item_id: int):
 def _get_test_item_by_id(item_id: int) -> dict | None:
     """跨所有测试集按 id 查找测试题"""
     import json
-    conn = sqlite3.connect(agent.memory._db_path)
+    conn = _db()
     row = conn.execute(
         "SELECT id, set_id, seq, query, category, difficulty, expected FROM prompt_test_items WHERE id = ? AND is_active = 1",
         (item_id,),

@@ -709,8 +709,17 @@ def load_questions_from_db(db_path: Optional[str] = None) -> list[dict]:
         logger.info("  [WARN] DB 不存在，回退硬编码测试集")
         return QUESTIONS
     import sqlite3
+
+
+def _db(db_path: str):
+    c = sqlite3.connect(db_path)
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA busy_timeout=5000")
+    return c
+
+
     try:
-        with sqlite3.connect(db_path) as conn:
+        with _db(db_path) as conn:
             rows = conn.execute(
                 "SELECT query, domain, difficulty, style FROM e2e_eval_items WHERE is_active=1 ORDER BY id ASC"
             ).fetchall()

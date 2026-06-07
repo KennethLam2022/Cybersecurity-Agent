@@ -12,6 +12,7 @@ import json
 import logging
 import hashlib
 import base64
+import sqlite3
 from pathlib import Path
 from typing import Optional
 
@@ -57,6 +58,33 @@ def get_fernet():
 
 def is_crypto_available():
     return _CRYPTO_AVAILABLE
+
+
+def validate_encryption_consistency(db_path: str):
+    """启动时校验：若 DB 中存在加密密钥但密钥文件丢失，直接报错"""
+    if not _CRYPTO_AVAILABLE:
+        return
+    if os.environ.get("LLM_KEY_ENCRYPTION_KEY"):
+        return  # 环境变量优先，无需校验文件
+    _key_file = Path(_SRC).parent / "agent_data" / ".encryption_key"
+    if _key_file.exists():
+        return  # 密钥文件存在，正常
+    # 密钥文件不存在，检查 DB 是否有已加密的密钥
+    try:
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM llm_provider_keys WHERE api_key_enc IS NOT NULL AND api_key_enc != '' LIMIT 1"
+            ).fetchone()
+            if row:
+                raise RuntimeError(
+                    "❌ 数据库中存在加密的 API Key，但加密密钥文件 (.encryption_key) 不存在或已丢失！\n"
+                    "   请恢复 .encryption_key 文件，或设置环境变量 LLM_KEY_ENCRYPTION_KEY。\n"
+                    "   如果确认数据可丢失，请手动删除 agent_data/ 下的数据库文件后重试。"
+                )
+    except RuntimeError:
+        raise
+    except Exception:
+        pass  # DB 未初始化或不存在，忽略
 
 
 # ---- 项目根目录 ----
@@ -105,7 +133,8 @@ def _load_llm_config() -> dict:
     if _CONFIG_PATH.exists():
         try:
             return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-        except:
+        except Exception:
+            logger.warning(f"读取 LLM 配置 JSON 异常", exc_info=True)
             pass
     return {"current": None, "providers": {}}
 
@@ -116,6 +145,14 @@ def _save_llm_config(data: dict):
 
 
 # ---- SQLite 密钥管理 ----
+# ---- WAL 连接辅助 ----
+def _db():
+    c = sqlite3.connect(_DB_PATH)
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA busy_timeout=5000")
+    return c
+
+
 def _get_db_path() -> str:
     return _DB_PATH
 
@@ -125,7 +162,7 @@ def _save_llm_key(provider: str, api_key: str):
     api_key_hash = _hash_api_key(api_key)
     api_key_enc = _encrypt_api_key(api_key) if _CRYPTO_AVAILABLE else api_key
     api_key_mask = _make_key_mask(api_key)
-    with sqlite3.connect(_DB_PATH) as conn:
+    with _db() as conn:
         conn.execute(
             """INSERT OR REPLACE INTO llm_provider_keys 
                (provider, api_key_hash, api_key_enc, api_key_mask, updated_at)
@@ -137,7 +174,7 @@ def _save_llm_key(provider: str, api_key: str):
 
 def _get_llm_key(provider: str) -> Optional[str]:
     import sqlite3
-    with sqlite3.connect(_DB_PATH) as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT api_key_enc, api_key_hash FROM llm_provider_keys WHERE provider = ?",
             (provider,),
@@ -160,7 +197,7 @@ def _get_llm_key(provider: str) -> Optional[str]:
 
 def _get_llm_key_mask(provider: str) -> Optional[str]:
     import sqlite3
-    with sqlite3.connect(_DB_PATH) as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT api_key_mask FROM llm_provider_keys WHERE provider = ?",
             (provider,),
@@ -174,7 +211,7 @@ def _has_llm_key(provider: str) -> bool:
 
 def _delete_llm_key(provider: str):
     import sqlite3
-    with sqlite3.connect(_DB_PATH) as conn:
+    with _db() as conn:
         conn.execute("DELETE FROM llm_provider_keys WHERE provider = ?", (provider,))
     logger.info(f"🗑️ {provider} API Key 已从 SQLite 删除")
 
@@ -195,7 +232,7 @@ def _save_llm_config_card(module_id: str, provider: str, model: str, base_url: s
     api_key_hash = _hash_api_key(api_key) if api_key else ""
     api_key_enc = _encrypt_api_key(api_key) if (api_key and _CRYPTO_AVAILABLE) else (api_key or "")
     api_key_mask = _make_key_mask(api_key) if api_key else ""
-    with sqlite3.connect(_DB_PATH) as conn:
+    with _db() as conn:
         conn.execute(
             """INSERT OR REPLACE INTO llm_configs
                (module_id, provider, model, base_url, api_key_enc, api_key_hash, api_key_mask, updated_at)
@@ -210,7 +247,7 @@ def _get_all_llm_configs() -> dict:
     import sqlite3
     result = {}
     try:
-        with sqlite3.connect(_DB_PATH) as conn:
+        with _db() as conn:
             rows = conn.execute(
                 "SELECT module_id, provider, model, base_url, api_key_mask, updated_at FROM llm_configs"
             ).fetchall()
@@ -231,7 +268,7 @@ def _get_all_llm_configs() -> dict:
 def _get_llm_config_card(module_id: str) -> dict:
     import sqlite3
     try:
-        with sqlite3.connect(_DB_PATH) as conn:
+        with _db() as conn:
             row = conn.execute(
                 "SELECT provider, model, base_url, api_key_enc, api_key_hash FROM llm_configs WHERE module_id = ?",
                 (module_id,),
