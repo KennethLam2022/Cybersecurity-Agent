@@ -26,7 +26,6 @@ from app_state import (
     _UPLOAD_STAGING, _MAX_FILE_SIZE, _doc_tasks, _doc_tasks_lock,
     _run_processing_task, _cleanup_staging,
     _build_report_doc, _render_trace_report,
-    validate_llm_url,
 )
 from agent import SystemPromptLoader
 
