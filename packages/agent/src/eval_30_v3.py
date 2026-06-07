@@ -8,7 +8,7 @@
   - 不带角色（💬）：纯自然语言提问
   每个领域两种类型各占一半。
 """
-from _eval_common import compute_avg_stats, render_html_page
+from _eval_common import compute_avg_stats
 import os
 import sys
 import json

@@ -8,7 +8,16 @@ Prompt 架构设计（参考知识库 三层架构 E.5）：
   第二层 Context        → 结构化参考资料 + 来源标注
   第三层 CoT + 示例     → 思维链引导 + one-shot 示例
 """
-import os, sys, logging, json, time, asyncio, httpx, re
+from memory import ConversationMemory, get_llm_config_card
+from llm_provider import LLMProvider
+import os
+import sys
+import logging
+import json
+import time
+import asyncio
+import httpx
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -71,6 +80,7 @@ _OUTPUT_FORBIDDEN_PATTERNS = [
     r"(iptables|sed -i|vim |nano |chmod |chown |logrotate|syslog)",
 ]
 
+
 def _detect_prompt_injection(text: str) -> tuple[bool, str]:
     """检测检索到的文档中是否包含提示注入攻击
 
@@ -82,6 +92,7 @@ def _detect_prompt_injection(text: str) -> tuple[bool, str]:
             return True, pat
     return False, ""
 
+
 def _filter_docs_for_injection(docs: list[dict]) -> list[dict]:
     """过滤掉包含提示注入攻击的文档"""
     filtered = []
@@ -89,11 +100,13 @@ def _filter_docs_for_injection(docs: list[dict]) -> list[dict]:
         content = doc.get("content", "")
         is_injection, pattern = _detect_prompt_injection(content)
         if is_injection:
-            logger.warning(f"⚠️ 检测到提示注入攻击，已过滤该文档: pattern={pattern}, doc={doc.get('file_name', 'unknown')}")
+            logger.warning(
+                f"⚠️ 检测到提示注入攻击，已过滤该文档: pattern={pattern}, doc={doc.get('file_name', 'unknown')}")
             continue
         filtered.append(doc)
     if len(filtered) < len(docs):
-        logger.info(f"提示注入防护: {len(docs)} → {len(filtered)} (过滤了 {len(docs) - len(filtered)} 个可疑文档)")
+        logger.info(
+            f"提示注入防护: {len(docs)} → {len(filtered)} (过滤了 {len(docs) - len(filtered)} 个可疑文档)")
     return filtered
 
 
@@ -140,7 +153,7 @@ def _detect_user_jailbreak(text: str, conv_history: list[dict]) -> tuple[bool, s
     # 第3层：单轮越界 — 不问任何安全内容，直接要价格/命令/品牌
     if matches_jailbreak and user_turn <= 1:
         has_any_safe = any(sk in lower for sk in ["等保", "等级保护", "合规", "安全",
-                                                   "防护", "防火墙", "漏洞", "加密"])
+                                                  "防护", "防火墙", "漏洞", "加密"])
         if not has_any_safe:
             return True, "检测到单轮越界: 未提及任何安全内容，直接追问越界话题"
 
@@ -188,7 +201,8 @@ def _validate_annotations(answer: str) -> str:
         if "[来源" not in line and "[注：" not in line:
             unannotated.append(line[:60])
     if len(unannotated) > len(content_lines) * 0.3:  # 超过30%的行无标注
-        logger.warning(f"⚠️ 回答中 {len(unannotated)}/{len(content_lines)} 行缺少来源标注，这可能导致 faithfulness 评分偏低")
+        logger.warning(
+            f"⚠️ 回答中 {len(unannotated)}/{len(content_lines)} 行缺少来源标注，这可能导致 faithfulness 评分偏低")
     return answer
 
 
@@ -198,10 +212,6 @@ _PREPROCESSOR = os.path.join(_SRC, "..", "..", "preprocessor", "src")
 for p in [_SRC, _PREPROCESSOR]:
     if p not in sys.path:
         sys.path.insert(0, p)
-
-from retriever import CyberRetriever
-from llm_provider import LLMProvider
-from memory import ConversationMemory, get_llm_config_card
 
 
 # ============================================================
@@ -239,6 +249,7 @@ class SystemPromptLoader:
 
     @classmethod
     def get_raw_path(cls) -> Path:
+        """获取 system prompt 文件路径"""
         cls.ensure_initialized()
         return cls._path
 
@@ -258,6 +269,7 @@ SYSTEM_PROMPT_SOURCE = """你是一位**网络安全管理体系专家**。
 红线一：每条知识必须来自参考资料并标注来源
 - 只引用【参考资料】中的内容，用 `[来源N: 文档名称]` 标注
 - 参考资料没有的内容，一律不说
+
 - 这条规则不允许违反
 
 红线二：禁止提及任何品牌名称
@@ -663,6 +675,7 @@ class CyberAgent:
         use_query_rewrite: bool = True,
         use_verification: bool = True,
     ):
+        from retriever import CyberRetriever
         self.retriever = CyberRetriever()
         # 从 DB 读取生成对话 LLM 配置，覆盖默认值
         chat_cfg = get_llm_config_card('chat')
@@ -711,7 +724,7 @@ class CyberAgent:
             return answer
         try:
             src_text = "\n---\n".join(
-                f"[来源 {i+1}] {s['file_name']} | {s['section']}\n{s.get('content','')[:500]}"
+                f"[来源 {i+1}] {s['file_name']} | {s['section']}\n{s.get('content', '')[:500]}"
                 for i, s in enumerate(sources)  # 使用全部来源，不再限制前5条
             )
             prompt = SELF_VERIFY_PROMPT.format(sources=src_text, answer=answer)
@@ -988,6 +1001,7 @@ class CyberAgent:
         removed_count = 0
         for fake_ref in replacements:
             fake_count = 0
+
             def _replace_fake(m):
                 nonlocal fake_count
                 fake_count += 1
@@ -1023,7 +1037,8 @@ class CyberAgent:
                 timeout=30,
             )
             elapsed = time.time() - t0
-            rewritten = (rewritten.get("content", "") if isinstance(rewritten, dict) else rewritten).strip().strip('"').strip("'")
+            rewritten = (rewritten.get("content", "") if isinstance(
+                rewritten, dict) else rewritten).strip().strip('"').strip("'")
             if rewritten and rewritten != query and len(rewritten) < 200:
                 logger.info(f"Query 改写: 「{query[:40]}」→「{rewritten[:60]}」 ({elapsed:.1f}s)")
                 return rewritten
@@ -1068,7 +1083,8 @@ class CyberAgent:
             if len([m for m in first_msg if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
             self.memory.log_usage(conversation_id, 0, query, off_topic=True, total_time=0)
-            self.memory.update_jailbreak_status(conversation_id, "pending", "用户诱导越狱", message_id=user_msg_id)
+            self.memory.update_jailbreak_status(
+                conversation_id, "pending", "用户诱导越狱", message_id=user_msg_id)
             return {"answer": answer, "sources": sources, "conversation_id": conversation_id, "skipped": True, "jailbreak_reason": jb_reason}
 
         # ---- 非安全话题检测：跳过检索/LLM，快速引导 ----
@@ -1282,18 +1298,22 @@ class CyberAgent:
         is_jailbreak, jb_reason = _detect_user_jailbreak(query, conv_history)
         if is_jailbreak:
             logger.warning(f"⚠️ 检测到越狱尝试: {jb_reason}")
-            td = {"original_query": query, "rewrite_enabled": self.use_query_rewrite, "steps": [{"step": "jailbreak_detection", "triggered": True, "reason": jb_reason, "user_query": query[:80]}]}
+            td = {"original_query": query, "rewrite_enabled": self.use_query_rewrite, "steps": [
+                {"step": "jailbreak_detection", "triggered": True, "reason": jb_reason, "user_query": query[:80]}]}
             jailbreak_reply = (
                 "我是专注于网络安全的智能助手，主要提供等保测评、数据安全、"
                 "合规检查、安全管理体系等方面的知识。关于设备选型、价格、"
                 "具体技术操作等问题，建议您咨询相关领域的专业人员获取更准确的信息。"
             )
-            msg_id = self.memory.add_message(conversation_id, "assistant", jailbreak_reply, sources=[])
+            msg_id = self.memory.add_message(
+                conversation_id, "assistant", jailbreak_reply, sources=[])
             first_msgs = self.memory.get_history(conversation_id)
             if len([m for m in first_msgs if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
-            self.memory.log_usage(conversation_id, msg_id, query, off_topic=True, total_time=round(time.time()-t_start, 3), trace_data=td, answer_jailbreak=1)
-            self.memory.update_jailbreak_status(conversation_id, "pending", "用户诱导越狱", message_id=user_msg_id)
+            self.memory.log_usage(conversation_id, msg_id, query, off_topic=True, total_time=round(
+                time.time()-t_start, 3), trace_data=td, answer_jailbreak=1)
+            self.memory.update_jailbreak_status(
+                conversation_id, "pending", "用户诱导越狱", message_id=user_msg_id)
             self.memory.flag_jailbreak_message(msg_id)  # 永久标记回复消息
             yield {"type": "token", "content": jailbreak_reply}
             yield {"type": "done", "sources": [], "conversation_id": conversation_id, "message_id": msg_id}
@@ -1302,13 +1322,17 @@ class CyberAgent:
         # ---- 非安全话题检测（流式路径） ----
         offtopic_reply = self._check_offtopic(query)
         if offtopic_reply:
-            td = {"original_query": query, "rewrite_enabled": self.use_query_rewrite, "steps": [{"step": "jailbreak_detection", "triggered": True, "reason": "offtopic", "user_query": query[:80]}]}
-            msg_id = self.memory.add_message(conversation_id, "assistant", offtopic_reply, sources=[])
+            td = {"original_query": query, "rewrite_enabled": self.use_query_rewrite, "steps": [
+                {"step": "jailbreak_detection", "triggered": True, "reason": "offtopic", "user_query": query[:80]}]}
+            msg_id = self.memory.add_message(
+                conversation_id, "assistant", offtopic_reply, sources=[])
             first_msgs = self.memory.get_history(conversation_id)
             if len([m for m in first_msgs if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
-            self.memory.log_usage(conversation_id, msg_id, query, off_topic=True, total_time=round(time.time()-t_start, 3), trace_data=td, answer_jailbreak=1)
-            self.memory.update_jailbreak_status(conversation_id, "pending", "用户诱导越狱", message_id=user_msg_id)
+            self.memory.log_usage(conversation_id, msg_id, query, off_topic=True, total_time=round(
+                time.time()-t_start, 3), trace_data=td, answer_jailbreak=1)
+            self.memory.update_jailbreak_status(
+                conversation_id, "pending", "用户诱导越狱", message_id=user_msg_id)
             self.memory.flag_jailbreak_message(msg_id)
             yield {"type": "token", "content": offtopic_reply}
             yield {"type": "done", "sources": [], "conversation_id": conversation_id, "message_id": msg_id}
@@ -1317,12 +1341,15 @@ class CyberAgent:
         # ---- 社交寒暄检测（流式路径） ----
         greeting_reply = self._check_greeting(query)
         if greeting_reply:
-            td = {"original_query": query, "rewrite_enabled": self.use_query_rewrite, "steps": [{"step": "greeting_detection", "triggered": True}]}
-            msg_id = self.memory.add_message(conversation_id, "assistant", greeting_reply, sources=[])
+            td = {"original_query": query, "rewrite_enabled": self.use_query_rewrite,
+                  "steps": [{"step": "greeting_detection", "triggered": True}]}
+            msg_id = self.memory.add_message(
+                conversation_id, "assistant", greeting_reply, sources=[])
             first_msgs = self.memory.get_history(conversation_id)
             if len([m for m in first_msgs if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
-            self.memory.log_usage(conversation_id, msg_id, query, off_topic=True, total_time=round(time.time()-t_start, 3), trace_data=td, answer_jailbreak=1)
+            self.memory.log_usage(conversation_id, msg_id, query, off_topic=True, total_time=round(
+                time.time()-t_start, 3), trace_data=td, answer_jailbreak=1)
             self.memory.flag_jailbreak_message(user_msg_id)
             self.memory.flag_jailbreak_message(msg_id)
             yield {"type": "token", "content": greeting_reply}
@@ -1372,7 +1399,8 @@ class CyberAgent:
             first_msgs = self.memory.get_history(conversation_id)
             if len([m for m in first_msgs if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
-            self.memory.log_usage(conversation_id, msg_id, query, rewrite_time=round(t_rewrite, 3), total_time=total_time, returned_count=0)
+            self.memory.log_usage(conversation_id, msg_id, query, rewrite_time=round(
+                t_rewrite, 3), total_time=total_time, returned_count=0)
             yield {"type": "token", "content": answer}
             yield {"type": "done", "sources": sources, "conversation_id": conversation_id, "message_id": msg_id}
             return
@@ -1423,7 +1451,8 @@ class CyberAgent:
             }
             for d in docs
         ]
-        msg_id = self.memory.add_message(conversation_id, "assistant", full_content, sources=sources)
+        msg_id = self.memory.add_message(
+            conversation_id, "assistant", full_content, sources=sources)
 
         # ---- 来源核验：流式路径同样做后处理 ----
         corrected = self._check_sources_origin(full_content, sources)
@@ -1513,7 +1542,8 @@ class CyberAgent:
 
         # 从 DB 读取语义评分卡片配置
         scoring_cfg = get_llm_config_card('scoring')
-        scoring_url = (scoring_cfg.get('base_url') or '').rstrip('/') + '/chat/completions' if scoring_cfg.get('base_url') else ''
+        scoring_url = (scoring_cfg.get('base_url') or '').rstrip('/') + \
+            '/chat/completions' if scoring_cfg.get('base_url') else ''
         scoring_key = scoring_cfg.get('api_key', '')
         scoring_model = scoring_cfg.get('model', '')
 
@@ -1525,7 +1555,8 @@ class CyberAgent:
                 resp = httpx.post(
                     scoring_url,
                     headers=headers,
-                    json={"model": scoring_model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 5},
+                    json={"model": scoring_model, "messages": [
+                        {"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 5},
                     timeout=15,
                 )
                 if resp.status_code == 200:
@@ -1538,12 +1569,14 @@ class CyberAgent:
         if rating is None:
             used_fallback = True
             fallback_cfg = get_llm_config_card('fallback')
-            fb_url = (fallback_cfg.get('base_url') or 'http://localhost:11434/v1').rstrip('/') + '/chat/completions'
+            fb_url = (fallback_cfg.get('base_url')
+                      or 'http://localhost:11434/v1').rstrip('/') + '/chat/completions'
             fb_model = fallback_cfg.get('model') or 'qwen2.5:7b'
             try:
                 resp = httpx.post(
                     fb_url,
-                    json={"model": fb_model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 5},
+                    json={"model": fb_model, "messages": [
+                        {"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 5},
                     timeout=15,
                 )
                 if resp.status_code == 200:
@@ -1554,7 +1587,8 @@ class CyberAgent:
 
         if rating and 1 <= rating <= 5:
             self.memory.update_rating(prev["id"], rating, semantic=True)
-            logger.info(f"语义评分: msg_id={prev['id']} rating={rating} (source={'fallback' if used_fallback else 'scoring_card'})")
+            logger.info(
+                f"语义评分: msg_id={prev['id']} rating={rating} (source={'fallback' if used_fallback else 'scoring_card'})")
 
         # ---- 越狱检测：模型回答是否违规 ----
         try:
@@ -1574,7 +1608,8 @@ AI助手回答：
 
             jb_detected = False
             jb_cfg = get_llm_config_card('jailbreak')
-            jb_url = (jb_cfg.get('base_url') or '').rstrip('/') + '/chat/completions' if jb_cfg.get('base_url') else ''
+            jb_url = (jb_cfg.get('base_url') or '').rstrip('/') + \
+                '/chat/completions' if jb_cfg.get('base_url') else ''
             jb_key = jb_cfg.get('api_key', '')
             jb_model = jb_cfg.get('model', '')
 
@@ -1585,7 +1620,8 @@ AI助手回答：
                 resp = httpx.post(
                     jb_url,
                     headers=headers,
-                    json={"model": jb_model, "messages": [{"role": "user", "content": jailbreak_prompt}], "temperature": 0.1, "max_tokens": 10},
+                    json={"model": jb_model, "messages": [
+                        {"role": "user", "content": jailbreak_prompt}], "temperature": 0.1, "max_tokens": 10},
                     timeout=15,
                 )
                 if resp.status_code == 200:
@@ -1594,7 +1630,8 @@ AI助手回答：
 
             if jb_detected:
                 self.memory.update_rating(prev["id"], 1, semantic=True)  # 越狱回答强制最低分
-                self.memory.update_jailbreak_status(conversation_id, "pending", "模型回答含违规内容", message_id=prev["id"])
+                self.memory.update_jailbreak_status(
+                    conversation_id, "pending", "模型回答含违规内容", message_id=prev["id"])
                 logger.warning(f"越狱检测: msg_id={prev['id']} conv={conversation_id} 模型回答违规")
             else:
                 # 如已有用户越狱(off_topic)标记，也显示
@@ -1625,6 +1662,9 @@ AI助手回答：
             "cleaned_docs": cleaned_docs,
         }
 
+    def refresh_retriever(self):
+        """刷新retriever"""
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -1646,6 +1686,7 @@ if __name__ == "__main__":
         print(f"\nA:\n{result['answer'][:500]}")
         print(f"\n来源 ({len(result['sources'])} 条):")
         for s in result['sources']:
-            cat_icon = {"01-国家法律": "📜", "02-等保国标": "🛡️", "03-CII关基": "🔐", "04-通信行业": "📡"}.get(s['category'], "📄")
+            cat_icon = {"01-国家法律": "📜", "02-等保国标": "🛡️",
+                        "03-CII关基": "🔐", "04-通信行业": "📡"}.get(s['category'], "📄")
             print(f"  {cat_icon} {s['file_name']} / {s['section']} ({s['score']})")
         print(f"\n⏱ {result['stats']}")
