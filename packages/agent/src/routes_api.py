@@ -341,7 +341,29 @@ async def admin_event_stream():
 async def documents_scan(files: list[UploadFile] = File(...)):
     dedup = _get_dedup()
     results = []
+    # 文件扩展名白名单
+    _ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.xlsx', '.xls', '.txt', '.md', '.pptx', '.ppt', '.csv'}
     for f in files:
+        # 校验文件扩展名
+        if f.filename:
+            ext = os.path.splitext(f.filename)[1].lower()
+            if ext not in _ALLOWED_EXTENSIONS:
+                results.append({
+                    "name": f.filename,
+                    "size": 0,
+                    "checksum": "",
+                    "duplicate": True,
+                    "reason": f"不支持的文件类型（{ext}），仅支持 {', '.join(sorted(_ALLOWED_EXTENSIONS))}",
+                    "dedup_layer": 0,
+                    "standard_id": None,
+                    "incoming_year": None,
+                    "existing_year": None,
+                    "matched_files": [],
+                    "in_source": False,
+                    "in_cleaned": False,
+                })
+                continue
+
         file_bytes = await f.read()
         checksum = hashlib.md5(file_bytes).hexdigest()
 

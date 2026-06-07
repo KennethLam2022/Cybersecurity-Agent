@@ -65,6 +65,7 @@ _ADMIN_ROUTES = [
     "/api/conversations/detail",
     "/api/conversations/stats",
     "/api/conversations/{conv_id}/hard",
+    "/api/llm/refresh-models",
 ]
 
 PUBLIC_ROUTES = {

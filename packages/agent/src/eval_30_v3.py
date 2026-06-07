@@ -20,12 +20,15 @@ import webbrowser
 import threading
 import argparse
 import html as html_lib
+import logging
 from pathlib import Path
 from datetime import datetime
 
 _SRC = os.path.dirname(os.path.abspath(__file__))
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
+
+logger = logging.getLogger(__name__)
 
 
 EVAL_DIR = Path(_SRC).parent.parent.parent / "eval_results"
