@@ -41,7 +41,7 @@ router = APIRouter()
 
 # ==================== 首页 ====================
 @router.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+def index(request: Request):
     template = jinja_env.get_template("index.html")
     content = template.render({"request": request})
     return HTMLResponse(content)
@@ -49,20 +49,20 @@ async def index(request: Request):
 
 # ==================== 对话管理 ====================
 @router.get("/api/conversations")
-async def list_conversations(include_deleted: bool = False, include_test: bool = False, jailbreak: str = "all"):
+def list_conversations(include_deleted: bool = False, include_test: bool = False, jailbreak: str = "all"):
     convs = agent.memory.get_conversations(
         include_deleted=include_deleted, include_test=include_test, jailbreak=jailbreak)
     return JSONResponse(convs)
 
 
 @router.post("/api/conversations")
-async def new_conversation():
+def new_conversation():
     conv = agent.memory.create_conversation()
     return JSONResponse(conv)
 
 
 @router.put("/api/conversations/{conv_id}")
-async def rename_conversation(conv_id: str, data: dict = Body(...)):
+def rename_conversation(conv_id: str, data: dict = Body(...)):
     title = (data.get("title") or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="标题不能为空")
@@ -71,7 +71,7 @@ async def rename_conversation(conv_id: str, data: dict = Body(...)):
 
 
 @router.put("/api/conversations/{conv_id}/jailbreak-status")
-async def set_jailbreak_status(conv_id: str, data: dict = Body(...)):
+def set_jailbreak_status(conv_id: str, data: dict = Body(...)):
     status = data.get("status", "").strip()
     if status not in ("false_alarm", "handled"):
         raise HTTPException(status_code=400, detail="无效状态，仅支持 false_alarm 或 handled")
@@ -80,7 +80,7 @@ async def set_jailbreak_status(conv_id: str, data: dict = Body(...)):
 
 
 @router.get("/api/conversations/{conv_id}/jailbreak-report")
-async def jailbreak_report(conv_id: str):
+def jailbreak_report(conv_id: str):
     data = agent.memory.get_jailbreak_report_data(conv_id)
     if not data:
         raise HTTPException(status_code=404, detail="对话不存在")
@@ -232,24 +232,24 @@ async def jailbreak_report(conv_id: str):
 
 
 @router.delete("/api/conversations/{conv_id}")
-async def delete_conversation(conv_id: str):
+def delete_conversation(conv_id: str):
     agent.memory.delete_conversation(conv_id)
     return JSONResponse({"ok": True, "soft_delete": True})
 
 
 @router.delete("/api/conversations/{conv_id}/hard")
-async def hard_delete_conversation(conv_id: str):
+def hard_delete_conversation(conv_id: str):
     agent.memory.hard_delete_conversation(conv_id)
     return JSONResponse({"ok": True})
 
 
 @router.get("/api/conversations/{conv_id}/messages")
-async def get_messages(conv_id: str):
+def get_messages(conv_id: str):
     return JSONResponse(agent.memory.get_history(conv_id))
 
 
 @router.get("/api/conversations/detail")
-async def get_conversation_detail(conv_id: str):
+def get_conversation_detail(conv_id: str):
     """删除conversation记录"""
     detail = agent.memory.get_conversation_detail(conv_id)
     if detail is None:
@@ -258,7 +258,7 @@ async def get_conversation_detail(conv_id: str):
 
 
 @router.get("/api/conversations/stats")
-async def get_conversation_stats(conv_id: str):
+def get_conversation_stats(conv_id: str):
     detail = agent.memory.get_conversation_detail(conv_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="对话不存在")
@@ -293,7 +293,7 @@ async def get_conversation_stats(conv_id: str):
 
 # ==================== Admin ====================
 @router.post("/api/admin/cleanup")
-async def admin_cleanup():
+def admin_cleanup():
     _cleanup_staging()
     return JSONResponse({"status": "ok", "message": "环境已清理"})
 
@@ -344,7 +344,7 @@ async def admin_event_stream():
 
 # ==================== 文档处理 ====================
 @router.post("/api/documents/scan")
-async def documents_scan(files: list[UploadFile] = File(...)):
+def documents_scan(files: list[UploadFile] = File(...)):
     dedup = _get_dedup()
     results = []
     # 文件扩展名白名单
@@ -370,7 +370,7 @@ async def documents_scan(files: list[UploadFile] = File(...)):
                 })
                 continue
 
-        file_bytes = await f.read()
+        file_bytes = f.read()
         checksum = hashlib.md5(file_bytes).hexdigest()
 
         if len(file_bytes) > _MAX_FILE_SIZE:
@@ -441,7 +441,7 @@ async def documents_scan(files: list[UploadFile] = File(...)):
 
 
 @router.post("/api/documents/start-processing")
-async def documents_start(data: dict = Body(...)):
+def documents_start(data: dict = Body(...)):
     files = data.get("files", [])
     category = data.get("category", "通用")
     conflict_actions = data.get("conflict_actions", {})
@@ -493,7 +493,7 @@ async def documents_start(data: dict = Body(...)):
 
 
 @router.get("/api/documents/status/{task_id}")
-async def documents_status(task_id: str):
+def documents_status(task_id: str):
     with _doc_tasks_lock:
         task = _doc_tasks.get(task_id)
     if not task:
@@ -502,7 +502,7 @@ async def documents_status(task_id: str):
 
 
 @router.get("/api/documents/debug-dedup")
-async def debug_dedup():
+def debug_dedup():
     import traceback
     info = {}
     try:
@@ -539,14 +539,13 @@ async def debug_dedup():
 
 # ==================== 对话/聊天 ====================
 @router.post("/api/chat")
-async def chat(data: dict = Body(...)):
+def chat(data: dict = Body(...)):
     query = data.get("query", "").strip()
     conv_id = data.get("conversation_id")
     if not query:
         return JSONResponse({"error": "query is required"}, status_code=400)
     # 在线程池中运行同步 agent.ask()，避免阻塞事件循环
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, agent.ask, query, conv_id, 0.1, "user")
+    result = agent.ask(query, conv_id, 0.1, "user")
     asyncio.create_task(event_bus.publish("conversation_updated", {
         "conv_id": conv_id or result.get("conversation_id", ""),
         "action": "chat",
@@ -555,7 +554,7 @@ async def chat(data: dict = Body(...)):
 
 
 @router.post("/api/chat/stream")
-async def chat_stream(data: dict = Body(...)):
+def chat_stream(data: dict = Body(...)):
     """LLM 聊天接口"""
     query = data.get("query", "").strip()
     conv_id = data.get("conversation_id")
@@ -624,12 +623,12 @@ async def chat_stream(data: dict = Body(...)):
 
 # ==================== 统计 & 评分 ====================
 @router.get("/api/stats")
-async def stats():
+def stats():
     return JSONResponse(agent.stats())
 
 
 @router.post("/api/rating")
-async def submit_rating(data: dict = Body(...)):
+def submit_rating(data: dict = Body(...)):
     message_id = data.get("message_id")
     rating = data.get("rating")
     if not message_id or not rating:
@@ -645,7 +644,7 @@ async def submit_rating(data: dict = Body(...)):
 
 
 @router.get("/api/stats/drill-down")
-async def drill_down(type: str, key: str, limit: int = 50, category: str = "all"):
+def drill_down(type: str, key: str, limit: int = 50, category: str = "all"):
     try:
         results = agent.memory.drill_down(type, key, limit, category=category)
         return JSONResponse(results)
@@ -658,7 +657,7 @@ async def drill_down(type: str, key: str, limit: int = 50, category: str = "all"
 
 
 @router.get("/api/prompt/versions")
-async def prompt_versions_list():
+def prompt_versions_list():
     """列出所有 Prompt 版本"""
     from prompt_versions import list_versions
     versions = list_versions(agent.memory._db_path)
@@ -666,7 +665,7 @@ async def prompt_versions_list():
 
 
 @router.post("/api/prompt/versions")
-async def prompt_version_create(data: dict = Body(...)):
+def prompt_version_create(data: dict = Body(...)):
     """创建新版本"""
     name = data.get("name", "")
     description = data.get("description", "")
@@ -682,7 +681,7 @@ async def prompt_version_create(data: dict = Body(...)):
 
 
 @router.get("/api/prompt/versions/{version_id}")
-async def prompt_version_detail(version_id: int):
+def prompt_version_detail(version_id: int):
     """获取版本详情"""
     from prompt_versions import get_version_prompt
     detail = get_version_prompt(version_id, agent.memory._db_path)
@@ -692,7 +691,7 @@ async def prompt_version_detail(version_id: int):
 
 
 @router.get("/api/prompt/versions/{version_id}/results")
-async def prompt_version_results(version_id: int, limit: int = 50):
+def prompt_version_results(version_id: int, limit: int = 50):
     """获取版本跑分结果"""
     from prompt_versions import get_version_results
     results = get_version_results(version_id, agent.memory._db_path, limit)
@@ -700,7 +699,7 @@ async def prompt_version_results(version_id: int, limit: int = 50):
 
 
 @router.put("/api/prompt/versions/{version_id}/activate")
-async def prompt_version_activate(version_id: int):
+def prompt_version_activate(version_id: int):
     """按 ID 激活版本"""
     conn = _db()
     conn.execute("UPDATE prompt_versions SET is_active = 0")
@@ -716,7 +715,7 @@ async def prompt_version_activate(version_id: int):
 
 
 @router.post("/api/prompt/versions/switch")
-async def prompt_version_switch(data: dict = Body(...)):
+def prompt_version_switch(data: dict = Body(...)):
     """按名称切换激活版本"""
     from prompt_versions import switch_version
     version_name = data.get("version_name", "")
@@ -727,7 +726,7 @@ async def prompt_version_switch(data: dict = Body(...)):
 
 
 @router.post("/api/prompt/versions/restore")
-async def prompt_version_restore(data: dict = Body(...)):
+def prompt_version_restore(data: dict = Body(...)):
     """还原版本并更新 active_prompt.txt"""
     version_name = data.get("version_name", "")
     if not version_name:
@@ -739,7 +738,7 @@ async def prompt_version_restore(data: dict = Body(...)):
 
 
 @router.get("/api/prompt/system-prompt")
-async def prompt_system_prompt():
+def prompt_system_prompt():
     """获取当前 active_prompt.txt 内容"""
     prompt = SystemPromptLoader.get()
     return {"system_prompt": prompt}
@@ -749,7 +748,7 @@ async def prompt_system_prompt():
 
 
 @router.get("/api/prompt/test/items")
-async def prompt_test_items(set_id: str = "builtin"):
+def prompt_test_items(set_id: str = "builtin"):
     """获取测试集题目（builtin 为空时自动降级到第一个有数据的集）"""
     items = agent.memory.get_test_items(set_id)
     if not items and set_id == "builtin":
@@ -765,14 +764,14 @@ async def prompt_test_items(set_id: str = "builtin"):
 
 
 @router.get("/api/prompt/test/suite")
-async def prompt_test_suite():
+def prompt_test_suite():
     """获取所有测试集"""
     sets = agent.memory.get_all_test_sets()
     return {"suites": sets}
 
 
 @router.post("/api/prompt/test/generate")
-async def prompt_test_generate(data: dict = Body(...)):
+def prompt_test_generate(data: dict = Body(...)):
     """AI 生成测试集"""
     keywords = data.get("keywords", "")
     if not keywords:
@@ -787,7 +786,7 @@ async def prompt_test_generate(data: dict = Body(...)):
 
 
 @router.get("/api/prompt/test/latest")
-async def prompt_test_latest():
+def prompt_test_latest():
     """获取最新测试结果"""
     try:
         from prompt_tester import get_latest_full_result
@@ -798,7 +797,7 @@ async def prompt_test_latest():
 
 
 @router.get("/api/prompt/test/history")
-async def prompt_test_history(limit: int = 20):
+def prompt_test_history(limit: int = 20):
     """获取历史测试记录"""
     try:
         from prompt_tester import get_test_history
@@ -809,7 +808,7 @@ async def prompt_test_history(limit: int = 20):
 
 
 @router.post("/api/prompt/test/run-single/{item_id}")
-async def prompt_test_run_single(item_id: int):
+def prompt_test_run_single(item_id: int):
     """单条 Prompt 测试（仅域A规则评分），结果持久化到 DB"""
     item = _get_test_item_by_id(item_id)
     if not item:
@@ -854,7 +853,7 @@ async def prompt_test_run_single(item_id: int):
 
 
 @router.post("/api/prompt/test/run-all")
-async def prompt_test_run_all(data: dict = Body(...)):
+def prompt_test_run_all(data: dict = Body(...)):
     """运行全部 Prompt 测试（批量），聚合分数，保存结果到 DB（仅域A规则评分）"""
     set_id = data.get("set_id", "builtin")
     items = agent.memory.get_test_items(set_id)
@@ -947,7 +946,7 @@ async def prompt_test_run_all(data: dict = Body(...)):
 
 
 @router.post("/api/prompt/test/run-elastic")
-async def prompt_test_run_elastic(data: dict = Body(...)):
+def prompt_test_run_elastic(data: dict = Body(...)):
     """运行弹性测试：基线 + 5 种变体 + 4 种噪声，评分一致性/鲁棒性"""
     base_query = data.get("query", "")
     if not base_query:
@@ -1069,7 +1068,7 @@ async def prompt_test_run_elastic(data: dict = Body(...)):
 
 
 @router.put("/api/prompt/test/items/{item_id}")
-async def prompt_test_update_item(item_id: int, data: dict = Body(...)):
+def prompt_test_update_item(item_id: int, data: dict = Body(...)):
     """更新测试题"""
     ok = agent.memory.update_test_item(
         item_id, query=data.get("query"), category=data.get("category")
@@ -1078,7 +1077,7 @@ async def prompt_test_update_item(item_id: int, data: dict = Body(...)):
 
 
 @router.post("/api/prompt/test/suggest-fix/{item_id}")
-async def prompt_test_suggest_fix(item_id: int):
+def prompt_test_suggest_fix(item_id: int):
     """AI 建议修复"""
     item = _get_test_item_by_id(item_id)
     if not item:
@@ -1109,7 +1108,7 @@ def _get_test_item_by_id(item_id: int) -> dict | None:
 
 
 @router.get("/api/stats/dashboard")
-async def dashboard_stats(category: str = "all"):
+def dashboard_stats(category: str = "all"):
     try:
         data = agent.memory.get_dashboard_stats(category=category)
         return JSONResponse(data)
@@ -1119,7 +1118,7 @@ async def dashboard_stats(category: str = "all"):
 
 
 @router.get("/api/stats/health")
-async def health():
+def health():
     llm_info = agent.llm.get_current_provider() if hasattr(agent.llm, "get_current_provider") else {}
     today_count = 0
     try:
@@ -1146,7 +1145,7 @@ async def health():
 
 # ==================== Pipeline / 检索质量 ====================
 @router.get("/api/stats/pipeline")
-async def pipeline_stats(limit: int = 30):
+def pipeline_stats(limit: int = 30):
     try:
         data = agent.memory.get_pipeline_stats(limit=limit)
         return JSONResponse(data)
@@ -1156,7 +1155,7 @@ async def pipeline_stats(limit: int = 30):
 
 
 @router.get("/api/stats/retrieval-eval")
-async def retrieval_eval(limit: int = 100):
+def retrieval_eval(limit: int = 100):
     try:
         data = agent.memory.get_retrieval_eval(limit=limit)
         data["eval_summary"] = _load_eval_summary("retrieval_quality")
@@ -1168,7 +1167,7 @@ async def retrieval_eval(limit: int = 100):
 
 # ==================== Retrieval Eval CRUD ====================
 @router.get("/api/stats/retrieval-eval/items")
-async def get_retrieval_eval_items():
+def get_retrieval_eval_items():
     try:
         items = agent.memory.get_retrieval_eval_items()
         return JSONResponse({"items": items, "total": len(items)})
@@ -1178,7 +1177,7 @@ async def get_retrieval_eval_items():
 
 
 @router.post("/api/stats/retrieval-eval/items")
-async def add_retrieval_eval_item(data: dict):
+def add_retrieval_eval_item(data: dict):
     try:
         query = data.get("query", "").strip()
         expected = data.get("expected", "").strip()
@@ -1193,7 +1192,7 @@ async def add_retrieval_eval_item(data: dict):
 
 
 @router.put("/api/stats/retrieval-eval/items")
-async def update_retrieval_eval_item(data: dict):
+def update_retrieval_eval_item(data: dict):
     try:
         item_id = data.get("id")
         if not item_id:
@@ -1212,7 +1211,7 @@ async def update_retrieval_eval_item(data: dict):
 
 
 @router.delete("/api/stats/retrieval-eval/items/{item_id}")
-async def delete_retrieval_eval_item(item_id: int):
+def delete_retrieval_eval_item(item_id: int):
     try:
         ok = agent.memory.delete_retrieval_eval_item(item_id)
         return JSONResponse({"success": ok})
@@ -1221,7 +1220,7 @@ async def delete_retrieval_eval_item(item_id: int):
 
 
 @router.post("/api/stats/retrieval-eval/items/batch-import")
-async def batch_import_retrieval_eval_items(data: dict):
+def batch_import_retrieval_eval_items(data: dict):
     try:
         raw = data.get("items", [])
         count = agent.memory.batch_import_retrieval_eval_items(raw)
@@ -1231,7 +1230,7 @@ async def batch_import_retrieval_eval_items(data: dict):
 
 
 @router.post("/api/stats/retrieval-eval/run-single")
-async def retrieval_eval_run_single(data: dict):
+def retrieval_eval_run_single(data: dict):
     try:
         query = data.get("query", "").strip()
         expected = data.get("expected", "").strip()
@@ -1246,7 +1245,7 @@ async def retrieval_eval_run_single(data: dict):
 
 
 @router.post("/api/stats/retrieval-eval/generate")
-async def retrieval_eval_generate(data: dict):
+def retrieval_eval_generate(data: dict):
     keywords = data.get("keywords", "网络安全")
     from _eval_retrieval import generate_test_set_from_keywords, evaluate_with_items
     items = generate_test_set_from_keywords(keywords, llm=_get_backend_eval_llm())
@@ -1278,7 +1277,7 @@ async def retrieval_eval_generate(data: dict):
 
 
 @router.get("/api/stats/retrieval-eval/report")
-async def retrieval_eval_report(limit: int = 60):
+def retrieval_eval_report(limit: int = 60):
     try:
         data = agent.memory.get_retrieval_eval(limit)
         items = data.get("items", [])
@@ -1317,7 +1316,7 @@ async def retrieval_eval_report(limit: int = 60):
 
 # ==================== 检索模式对比 ====================
 @router.get("/api/stats/retrieval-eval/compare")
-async def retrieval_eval_compare(limit: int = 100):
+def retrieval_eval_compare(limit: int = 100):
     try:
         data = agent.memory.get_eval_comparison(limit=limit)
         data["eval_summary"] = _load_eval_summary("retrieval_compare")
@@ -1328,7 +1327,7 @@ async def retrieval_eval_compare(limit: int = 100):
 
 
 @router.post("/api/stats/retrieval-eval/compare")
-async def retrieval_eval_compare_run(data: dict):
+def retrieval_eval_compare_run(data: dict):
     keywords = data.get("keywords", "网络安全")
     from _eval_retrieval import generate_test_set_from_keywords, evaluate_with_items_compare
     items = generate_test_set_from_keywords(keywords, llm=_get_backend_eval_llm())
@@ -1346,17 +1345,17 @@ async def retrieval_eval_compare_run(data: dict):
 
 
 @router.get("/api/stats/eval-summary/retrieval-quality")
-async def get_retrieval_quality_summary():
+def get_retrieval_quality_summary():
     return _load_eval_summary("retrieval_quality")
 
 
 @router.get("/api/stats/eval-summary/retrieval-compare")
-async def get_retrieval_compare_summary():
+def get_retrieval_compare_summary():
     return _load_eval_summary("retrieval_compare")
 
 
 @router.get("/api/stats/retrieval-eval/compare/report")
-async def retrieval_eval_compare_report(limit: int = 60):
+def retrieval_eval_compare_report(limit: int = 60):
     try:
         data = agent.memory.get_eval_comparison(limit=limit)
         items = data.get("items", [])
@@ -1419,7 +1418,7 @@ async def retrieval_eval_compare_report(limit: int = 60):
 
 
 @router.post("/api/stats/retrieval-eval/generate-items")
-async def retrieval_eval_generate_items(data: dict):
+def retrieval_eval_generate_items(data: dict):
     keywords = data.get("keywords", "网络安全")
     from _eval_retrieval import generate_test_set_from_keywords
     items = generate_test_set_from_keywords(keywords, llm=_get_backend_eval_llm())

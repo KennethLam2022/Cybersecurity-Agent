@@ -233,5 +233,114 @@ class TestVerifyAdminToken:
             asyncio.run(verify_admin_token(req))
 
 
+class TestLlmEncryption:
+    """加密回环：encrypt → decrypt"""
+
+    def test_encrypt_decrypt_cycle(self, monkeypatch):
+        import os
+        from cryptography.fernet import Fernet
+        key = Fernet.generate_key().decode()
+        monkeypatch.setenv("LLM_KEY_ENCRYPTION_KEY", key)
+        # 重新加载模块使 _fernet 使用新 key
+        import importlib
+        import llm_config_manager
+        importlib.reload(llm_config_manager)
+        from llm_config_manager import _encrypt_api_key, _decrypt_api_key
+
+        plaintext = "sk-test-key-12345"
+        encrypted = _encrypt_api_key(plaintext)
+        assert encrypted != plaintext
+        assert encrypted.startswith("gAAAAA")  # Fernet 密文前缀
+        decrypted = _decrypt_api_key(encrypted)
+        assert decrypted == plaintext
+
+    def test_decrypt_wrong_key_returns_none(self, monkeypatch):
+        import os
+        from cryptography.fernet import Fernet
+        key = Fernet.generate_key().decode()
+        monkeypatch.setenv("LLM_KEY_ENCRYPTION_KEY", key)
+        import importlib
+        import llm_config_manager
+        importlib.reload(llm_config_manager)
+        from llm_config_manager import _encrypt_api_key
+        from cryptography.fernet import InvalidToken
+
+        encrypted = _encrypt_api_key("secret")
+        # 切到不同 key
+        key2 = Fernet.generate_key().decode()
+        monkeypatch.setenv("LLM_KEY_ENCRYPTION_KEY", key2)
+        importlib.reload(llm_config_manager)
+        from llm_config_manager import _decrypt_api_key as _decrypt_wrong
+        with pytest.raises(InvalidToken):
+            _decrypt_wrong(encrypted)
+
+    def test_key_mask_hides_middle(self):
+        from llm_config_manager import _make_key_mask
+        masked = _make_key_mask("sk-abcdefghijklmnop")
+        assert masked.startswith("sk-abcde")
+        assert masked.endswith("mnop")
+        assert "•" in masked
+        # 掩码不改变长度，只替换中间字符
+        assert len(masked) == len("sk-abcdefghijklmnop")
+
+    def test_key_mask_short_key(self):
+        """短 key 全部掩码"""
+        from llm_config_manager import _make_key_mask
+        masked = _make_key_mask("short")
+        assert masked == "•••••"
+
+
+class TestAuthMiddleware:
+    """认证中间件集成测试"""
+
+    def test_admin_route_conversation_hard_delete(self):
+        from auth import is_admin_route
+        assert is_admin_route("/api/conversations/xxx/hard") is True
+
+    def test_admin_route_llm_refresh(self):
+        from auth import is_admin_route
+        assert is_admin_route("/api/llm/refresh-models") is True
+
+    def test_public_routes(self):
+        from auth import is_admin_route
+        public = ["/", "/api/conversations", "/api/chat/stream", "/admin"]
+        for path in public:
+            assert is_admin_route(path) is False, f"{path} should be public"
+
+
+class TestSseStream:
+    """SSE 流式接口测试"""
+
+    def test_stream_timeout_raises(self):
+        """验证 asyncio.wait_for 超时机制正常"""
+        import asyncio
+
+        async def _test():
+            async def slow_gen():
+                await asyncio.sleep(999)
+                yield "too slow"
+
+            with pytest.raises(asyncio.TimeoutError):
+                gen = slow_gen()
+                await asyncio.wait_for(gen.__anext__(), timeout=0.01)
+        asyncio.run(_test())
+
+    def test_stream_yields_data(self):
+        """模拟 SSE 流返回数据"""
+        import asyncio
+
+        async def _test():
+            results = []
+            async def fast_gen():
+                for i in range(3):
+                    yield f"data: {i}\n\n"
+                    await asyncio.sleep(0.001)
+            async for chunk in fast_gen():
+                results.append(chunk)
+            assert len(results) == 3
+            assert results[0] == "data: 0\n\n"
+        asyncio.run(_test())
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

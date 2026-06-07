@@ -20,7 +20,7 @@ router = APIRouter()
 
 # ==================== E2E Eval ====================
 @router.get("/api/stats/e2e-eval/items")
-async def get_e2e_eval_items():
+def get_e2e_eval_items():
     try:
         items = agent.memory.get_e2e_eval_items()
         return {"items": items, "total": len(items)}
@@ -30,7 +30,7 @@ async def get_e2e_eval_items():
 
 
 @router.post("/api/stats/e2e-eval/items")
-async def add_e2e_eval_item(data: dict):
+def add_e2e_eval_item(data: dict):
     try:
         query = data.get("query", "").strip()
         if not query:
@@ -47,7 +47,7 @@ async def add_e2e_eval_item(data: dict):
 
 
 @router.put("/api/stats/e2e-eval/items")
-async def update_e2e_eval_item(data: dict):
+def update_e2e_eval_item(data: dict):
     try:
         item_id = data.get("id")
         if not item_id:
@@ -66,7 +66,7 @@ async def update_e2e_eval_item(data: dict):
 
 
 @router.delete("/api/stats/e2e-eval/items/{item_id}")
-async def delete_e2e_eval_item(item_id: int):
+def delete_e2e_eval_item(item_id: int):
     try:
         ok = agent.memory.delete_e2e_eval_item(item_id)
         return JSONResponse({"success": ok})
@@ -75,7 +75,7 @@ async def delete_e2e_eval_item(item_id: int):
 
 
 @router.post("/api/stats/e2e-eval/items/seed")
-async def seed_e2e_eval_items():
+def seed_e2e_eval_items():
     try:
         from eval_e2e import QUESTIONS
         items = [(q["query"], q["domain"], q["difficulty"], q.get("style", "plain"))
@@ -87,7 +87,7 @@ async def seed_e2e_eval_items():
 
 
 @router.post("/api/stats/e2e-eval/generate-items")
-async def e2e_eval_generate_items(data: dict = None):
+def e2e_eval_generate_items(data: dict = None):
     keywords = (data or {}).get("keywords", "网络安全 等保 数据安全")
     eval_llm = _get_backend_eval_llm()
 
@@ -150,7 +150,7 @@ async def e2e_eval_generate_items(data: dict = None):
 
 
 @router.post("/api/stats/e2e-eval/run")
-async def e2e_eval_run(data: dict = None):
+def e2e_eval_run(data: dict = None):
     try:
         from pathlib import Path as _Path
         from datetime import datetime as _datetime
@@ -256,7 +256,7 @@ async def e2e_eval_run(data: dict = None):
 
 
 @router.get("/api/stats/e2e-eval/report")
-async def e2e_eval_report():
+def e2e_eval_report():
     from eval_e2e import find_latest_results
     _, latest_html = find_latest_results()
     if not latest_html or not latest_html.exists():
@@ -265,13 +265,13 @@ async def e2e_eval_report():
 
 
 @router.get("/api/stats/e2e-eval/versions")
-async def e2e_eval_versions():
+def e2e_eval_versions():
     from eval_e2e import _load_versions
     return {"versions": _load_versions()}
 
 
 @router.get("/api/stats/e2e-eval/latest")
-async def e2e_eval_latest():
+def e2e_eval_latest():
     from eval_e2e import find_latest_results
     latest_json, _ = find_latest_results()
     if not latest_json or not latest_json.exists():
@@ -280,12 +280,12 @@ async def e2e_eval_latest():
 
 
 @router.get("/api/stats/eval-summary/e2e-quality")
-async def get_e2e_quality_summary():
+def get_e2e_quality_summary():
     return _load_eval_summary("e2e_quality")
 
 
 @router.get("/api/stats/e2e-eval/analysis")
-async def get_e2e_eval_analysis():
+def get_e2e_eval_analysis():
     from eval_e2e import _load_versions
 
     versions = _load_versions()
@@ -340,8 +340,7 @@ async def get_e2e_eval_analysis():
         return JSONResponse({"summary": "", "time": latest.get('timestamp', '')[:19] if latest.get('timestamp') else "", "error": "后端评测 LLM 未配置"}, status_code=200)
 
     try:
-        loop = asyncio.get_event_loop()
-        resp = await loop.run_in_executor(None, lambda: eval_llm.chat([{"role": "user", "content": prompt}]))
+        resp = eval_llm.chat([{"role": "user", "content": prompt}])
         text = resp.get("content", "") if isinstance(resp, dict) else str(resp)
         text = text.strip()
         ts = latest.get("timestamp", "")[:19] if latest.get("timestamp") else ""
@@ -353,12 +352,12 @@ async def get_e2e_eval_analysis():
 
 # ==================== LLM 配置 ====================
 @router.get("/api/llm/presets")
-async def llm_presets():
+def llm_presets():
     return {"presets": LLM_PRESETS}
 
 
 @router.get("/api/llm/config")
-async def llm_get_config():
+def llm_get_config():
     full = _load_llm_config_legacy()
     cur = full.get("current")
     providers = full.get("providers", {})
@@ -399,7 +398,7 @@ async def llm_get_config():
 
 
 @router.post("/api/llm/config")
-async def llm_save_config(data: dict = Body(...)):
+def llm_save_config(data: dict = Body(...)):
     provider = data.get("provider", "自定义")
     base_url = data.get("base_url", "").rstrip("/")
     api_key = data.get("api_key", "")
@@ -450,7 +449,7 @@ async def llm_save_config(data: dict = Body(...)):
 
 
 @router.get("/api/llm/config/current")
-async def llm_get_current_config():
+def llm_get_current_config():
     info = agent.llm.get_current_provider() if hasattr(agent.llm, "get_current_provider") else {}
     return {
         "provider": info.get("name", ""),
@@ -460,7 +459,7 @@ async def llm_get_current_config():
 
 
 @router.post("/api/llm/test")
-async def llm_test_connection(data: dict = Body(...)):
+def llm_test_connection(data: dict = Body(...)):
     from llm_provider import LLMProvider
 
     base_url = data.get("base_url", "")
@@ -493,7 +492,7 @@ async def llm_test_connection(data: dict = Body(...)):
 
 
 @router.post("/api/llm/refresh-models")
-async def llm_refresh_models(data: dict = Body(...)):
+def llm_refresh_models(data: dict = Body(...)):
     provider = data.get("provider", "硅基流动")
     api_key = data.get("api_key", "")
 
@@ -547,13 +546,13 @@ async def llm_refresh_models(data: dict = Body(...)):
 
 # ==================== LLM 配置卡片 API ====================
 @router.get("/api/llm/configs")
-async def llm_configs_get_all():
+def llm_configs_get_all():
     configs = _get_all_llm_configs()
     return {"configs": configs}
 
 
 @router.post("/api/llm/configs/save")
-async def llm_configs_save_one(data: dict = Body(...)):
+def llm_configs_save_one(data: dict = Body(...)):
     module_id = data.get("module_id", "").strip()
     provider = data.get("provider", "").strip()
     model = data.get("model", "").strip()
@@ -593,7 +592,7 @@ async def llm_configs_save_one(data: dict = Body(...)):
 
 
 @router.post("/api/llm/configs/test")
-async def llm_configs_test(data: dict = Body(...)):
+def llm_configs_test(data: dict = Body(...)):
     module_id = data.get("module_id", "").strip()
     base_url = data.get("base_url", "").strip()
     api_key = data.get("api_key", "").strip()

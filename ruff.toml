@@ -1,0 +1,41 @@
+[tool.ruff]
+# 目标 Python 版本
+target-version = "py312"
+
+# 包含的文件
+include = ["*.py", "*.pyi"]
+
+# 排除的目录
+exclude = [
+    ".git",
+    "__pycache__",
+    "node_modules",
+    "archive",
+    ".pytest_cache",
+]
+
+# 行长度（项目中已有 440 处超长，先放宽）
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle 错误
+    "F",      # pyflakes
+    "ASYNC",  # flake8-async — 可检出 H-2 类的 async def 无 await
+    "I",      # isort — 导入排序
+    "W",      # pycodestyle 警告
+    "UP",     # pyupgrade — Python 新语法
+]
+ignore = [
+    "E501",   # 行过长（已有 440+ 处，后续分批修）
+    "E731",   # lambda 赋值
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # __init__.py 中未使用的导入
+
+[tool.ruff.format]
+# 使用标准格式化
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
