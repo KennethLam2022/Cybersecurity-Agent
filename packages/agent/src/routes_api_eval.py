@@ -439,11 +439,19 @@ def llm_save_config(data: dict = Body(...)):
 
     _save_llm_config_card("chat", provider, model, base_url, api_key)
 
-    asyncio.create_task(event_bus.publish("config_update", {
-        "source": "frontend",
-        "provider": provider,
-        "model": model,
-    }))
+    try:
+        asyncio.get_running_loop()
+        asyncio.create_task(event_bus.publish("config_update", {
+            "source": "frontend",
+            "provider": provider,
+            "model": model,
+        }))
+    except RuntimeError:
+        asyncio.run(event_bus.publish("config_update", {
+            "source": "frontend",
+            "provider": provider,
+            "model": model,
+        }))
 
     return {"status": "saved", "message": f"{provider} 配置已保存并生效"}
 
@@ -577,11 +585,19 @@ def llm_configs_save_one(data: dict = Body(...)):
         )
         logger.info(f"♻️ chat 配置热更新: {provider} / {model}")
 
-        asyncio.create_task(event_bus.publish("config_update", {
-            "source": "backend",
-            "provider": provider,
-            "model": model,
-        }))
+        try:
+            asyncio.get_running_loop()
+            asyncio.create_task(event_bus.publish("config_update", {
+                "source": "backend",
+                "provider": provider,
+                "model": model,
+            }))
+        except RuntimeError:
+            asyncio.run(event_bus.publish("config_update", {
+                "source": "backend",
+                "provider": provider,
+                "model": model,
+            }))
 
     return {
         "ok": True,

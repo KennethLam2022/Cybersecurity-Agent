@@ -1662,8 +1662,13 @@ AI助手回答：
             "cleaned_docs": cleaned_docs,
         }
 
-    def refresh_retriever(self):
-        """刷新retriever"""
+    def _count_cleaned_docs(self) -> int:
+        try:
+            from pathlib import Path
+            cleaned_dir = Path(__file__).resolve().parent.parent.parent.parent / "RAG_DATA" / "03_cleaned"
+            return sum(1 for f in cleaned_dir.rglob("*.md") if f.is_file())
+        except Exception:
+            return 0
 
 
 if __name__ == "__main__":

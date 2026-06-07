@@ -89,7 +89,7 @@ def get_llm_config_card(module_id: str) -> dict:
         if api_key_enc and _fernet is not None:
             try:
                 decrypted = _fernet.decrypt(api_key_enc.encode("utf-8")).decode()
-                if hashlib.sha256(decrypted.encode()).hexdigest() == stored_hash:
+                if hashlib.sha256(decrypted.encode()).hexdigest()[:16] == stored_hash:
                     api_key = decrypted
             except Exception:
                 pass

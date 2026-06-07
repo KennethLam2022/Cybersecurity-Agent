@@ -34,6 +34,8 @@ _ALLOWED_LLM_DOMAINS = {
     "api.anthropic.com",
     "api.googleapis.com",
     "generativelanguage.googleapis.com",
+    "token.sensenova.cn",
+    "api.sensenova.com.cn",
 }
 
 

@@ -22,6 +22,15 @@ def _db():
     c.execute("PRAGMA busy_timeout=5000")
     return c
 
+
+def _publish_event(bus, event_type: str, data: dict) -> None:
+    """在线程池/同步上下文中安全发布事件"""
+    try:
+        asyncio.get_running_loop()
+        asyncio.create_task(bus.publish(event_type, data))
+    except RuntimeError:
+        asyncio.run(bus.publish(event_type, data))
+
 from app_state import (
     logger, _START_TIME, _EXCLUDE_MODEL_KEYWORDS,
     agent, event_bus, _ACTIVE_CONVERSATIONS, jinja_env,
@@ -370,7 +379,7 @@ def documents_scan(files: list[UploadFile] = File(...)):
                 })
                 continue
 
-        file_bytes = f.read()
+        file_bytes = f.file.read()
         checksum = hashlib.md5(file_bytes).hexdigest()
 
         if len(file_bytes) > _MAX_FILE_SIZE:
@@ -546,10 +555,10 @@ def chat(data: dict = Body(...)):
         return JSONResponse({"error": "query is required"}, status_code=400)
     # 在线程池中运行同步 agent.ask()，避免阻塞事件循环
     result = agent.ask(query, conv_id, 0.1, "user")
-    asyncio.create_task(event_bus.publish("conversation_updated", {
+    _publish_event(event_bus, "conversation_updated", {
         "conv_id": conv_id or result.get("conversation_id", ""),
         "action": "chat",
-    }))
+    })
     return JSONResponse(result)
 
 
@@ -574,11 +583,11 @@ def chat_stream(data: dict = Body(...)):
         "stage": "retrieving",
         "started_at": time.strftime("%H:%M:%S"),
         }
-    asyncio.create_task(event_bus.publish("active_updated", {
+    _publish_event(event_bus, "active_updated", {
         "conv_id": conv_id,
         "title": title,
         "stage": "retrieving",
-    }))
+    })
 
     async def event_generator() -> AsyncGenerator[bytes, None]:
         try:
@@ -588,22 +597,22 @@ def chat_stream(data: dict = Body(...)):
                     stage = event.get("stage", "")
                     if conv_id and conv_id in _ACTIVE_CONVERSATIONS:
                         _ACTIVE_CONVERSATIONS[conv_id]["stage"] = stage
-                        asyncio.create_task(event_bus.publish("active_updated", {
+                        _publish_event(event_bus, "active_updated", {
                             "conv_id": conv_id,
                             "stage": stage,
-                        }))
+                        })
                 elif etype == "done":
                     real_conv_id = event.get("conversation_id", conv_id)
                     if real_conv_id:
                         if real_conv_id in _ACTIVE_CONVERSATIONS:
                             del _ACTIVE_CONVERSATIONS[real_conv_id]
-                            asyncio.create_task(event_bus.publish("active_removed", {
+                            _publish_event(event_bus, "active_removed", {
                                 "conv_id": real_conv_id,
-                            }))
-                        asyncio.create_task(event_bus.publish("conversation_updated", {
+                            })
+                        _publish_event(event_bus, "conversation_updated", {
                             "conv_id": real_conv_id,
                             "action": "done",
-                        }))
+                        })
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8")
         except Exception as e:
             logger.error(f"流式生成异常: {e}", exc_info=True)
