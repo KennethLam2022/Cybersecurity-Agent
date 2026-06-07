@@ -2,17 +2,26 @@
 
 运行：python -m pytest tests/ -v
 """
-import sys, os, json
+from fastapi import HTTPException, Request
+from unittest.mock import Mock
+import os
+from auth import validate_llm_url, is_admin_route, verify_admin_token
+from llm_provider import CircuitBreaker
+from _eval_generation import _extract_json, _clean_answer
+from _eval_common import compute_avg_stats
+import pytest
+import sys
+import os
+import json
 _SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-import pytest
 
 # ============================================================
 # 1. _eval_common: compute_avg_stats
 # ============================================================
-from _eval_common import compute_avg_stats
+
 
 class TestComputeAvgStats:
     def test_empty_results(self):
@@ -33,8 +42,10 @@ class TestComputeAvgStats:
 
     def test_multiple_results(self):
         r = [
-            {"faithfulness": 1.0, "relevancy": 1.0, "hallucination": 1.0, "context_precision": 1.0, "context_recall": 1.0},
-            {"faithfulness": 0.0, "relevancy": 0.0, "hallucination": 0.0, "context_precision": 0.0, "context_recall": 0.0},
+            {"faithfulness": 1.0, "relevancy": 1.0, "hallucination": 1.0,
+                "context_precision": 1.0, "context_recall": 1.0},
+            {"faithfulness": 0.0, "relevancy": 0.0, "hallucination": 0.0,
+                "context_precision": 0.0, "context_recall": 0.0},
         ]
         avg = compute_avg_stats(r)
         assert avg["faithfulness"] == 0.5
@@ -58,7 +69,7 @@ class TestComputeAvgStats:
 # ============================================================
 # 2. _eval_generation: _extract_json and _clean_answer
 # ============================================================
-from _eval_generation import _extract_json, _clean_answer
+
 
 class TestExtractJson:
     def test_pure_json(self):
@@ -99,7 +110,7 @@ class TestCleanAnswer:
 # ============================================================
 # 3. llm_provider: CircuitBreaker
 # ============================================================
-from llm_provider import CircuitBreaker
+
 
 class TestCircuitBreaker:
     def test_initial_state(self):
@@ -162,7 +173,7 @@ class TestCircuitBreaker:
 # ============================================================
 # 4. auth: validate_llm_url, is_admin_route
 # ============================================================
-from auth import validate_llm_url, is_admin_route, verify_admin_token
+
 
 class TestValidateLlmUrl:
     def test_allowed_domain(self):
@@ -202,9 +213,7 @@ class TestIsAdminRoute:
 # ============================================================
 # 5. auth: verify_admin_token
 # ============================================================
-import os
-from unittest.mock import Mock
-from fastapi import HTTPException, Request
+
 
 class TestVerifyAdminToken:
     def test_invalid_token(self):

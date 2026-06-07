@@ -13,9 +13,14 @@
 
   # 流式调用
   async for token in provider.chat_stream(messages):
-      print(token, end="")
+      logger.info(token, end="")
 """
-import os, json, logging, time, random, asyncio
+import os
+import json
+import logging
+import time
+import random
+import asyncio
 from typing import Optional
 from datetime import datetime, timedelta
 
@@ -32,8 +37,11 @@ _OLLAMA_BASE_URL = "http://localhost:11434/v1"
 _OLLAMA_MODEL = "qwen2.5:7b"
 
 # ---- 令牌桶（限流） ----
+
+
 class TokenBucket:
     """简单令牌桶限流器，线程安全（用锁）"""
+
     def __init__(self, capacity: int = 10, fill_rate: float = 2.0):
         self.capacity = capacity
         self.fill_rate = fill_rate
@@ -59,13 +67,17 @@ class TokenBucket:
             return wait
 
 # ---- 熔断器 ----
+
+
 class CircuitBreakerState:
     CLOSED = "CLOSED"       # 正常
     OPEN = "OPEN"           # 熔断开启，请求直接失败
-    HALF_OPEN = "HALF_OPEN" # 半开，允许探测请求
+    HALF_OPEN = "HALF_OPEN"  # 半开，允许探测请求
+
 
 class CircuitBreaker:
     """熔断器：连续 failure_threshold 次失败 → OPEN → open_timeout 秒 → HALF_OPEN → 成功则恢复"""
+
     def __init__(self, failure_threshold: int = 3, open_timeout: float = 60.0):
         self.failure_threshold = failure_threshold
         self.open_timeout = open_timeout
@@ -82,7 +94,8 @@ class CircuitBreaker:
                     self.state = CircuitBreakerState.HALF_OPEN
                     logger.info("熔断器: OPEN → HALF_OPEN，允许探测请求")
                 else:
-                    logger.warning(f"熔断器: OPEN，拒绝请求（剩余 {self.open_timeout - (time.monotonic() - self.last_failure_time):.0f}s）")
+                    logger.warning(
+                        f"熔断器: OPEN，拒绝请求（剩余 {self.open_timeout - (time.monotonic() - self.last_failure_time):.0f}s）")
                     raise RuntimeError(f"熔断器 OPEN，服务暂不可用")
 
         try:
@@ -135,6 +148,8 @@ class CircuitBreaker:
         return result
 
 # ---- 重试工具 ----
+
+
 def _should_retry(e: Exception) -> bool:
     """判断是否值得重试：仅对 timeout/429/5xx"""
     if isinstance(e, (requests.Timeout, httpx.TimeoutException)):
@@ -151,11 +166,13 @@ def _should_retry(e: Exception) -> bool:
             return True
     return False
 
+
 def _backoff(attempt: int, base: float = 2.0, max_wait: float = 30.0) -> float:
     """指数退避 + jitter"""
     sleep = min(base * (2 ** attempt), max_wait)
     jitter = random.uniform(0, sleep * 0.5)
     return sleep + jitter
+
 
 # ---- 兜底回答 ----
 _FALLBACK_MESSAGE = "抱歉，当前 AI 服务暂不可用，请稍后再试。如果问题持续，请联系技术支持。"
@@ -182,7 +199,8 @@ class LLMProvider:
 
         # 从 DB 读取熔断兜底配置
         fallback_cfg = get_llm_config_card('fallback')
-        self.ollama_base_url = (ollama_base_url or fallback_cfg.get('base_url') or _OLLAMA_BASE_URL).rstrip("/")
+        self.ollama_base_url = (ollama_base_url or fallback_cfg.get(
+            'base_url') or _OLLAMA_BASE_URL).rstrip("/")
         self.ollama_model = ollama_model or fallback_cfg.get('model') or _OLLAMA_MODEL
         self.use_ollama_fallback = use_ollama_fallback
 
@@ -477,7 +495,8 @@ class LLMProvider:
                                     except json.JSONDecodeError:
                                         continue
                     elapsed = time.time() - t0
-                    logger.info(f"LLM 流式完成 ({elapsed:.1f}s, {token_count} tokens, {reasoning_count} reasoning)")
+                    logger.info(
+                        f"LLM 流式完成 ({elapsed:.1f}s, {token_count} tokens, {reasoning_count} reasoning)")
                     self.circuit_breaker.state = CircuitBreakerState.CLOSED
                     self.circuit_breaker.failure_count = 0
                     return
@@ -487,7 +506,8 @@ class LLMProvider:
                     self.circuit_breaker.last_failure_time = time.monotonic()
                     if self.circuit_breaker.failure_count >= self.circuit_breaker.failure_threshold:
                         self.circuit_breaker.state = CircuitBreakerState.OPEN
-                        logger.warning(f"熔断器: CLOSED → OPEN（流式，连续 {self.circuit_breaker.failure_count} 次失败）")
+                        logger.warning(
+                            f"熔断器: CLOSED → OPEN（流式，连续 {self.circuit_breaker.failure_count} 次失败）")
                     if attempt < self.max_retries and self._is_timeout_or_server_error(e):
                         wait = _backoff(attempt)
                         logger.warning(f"流式重试 {attempt+1}/{self.max_retries}: {e}，{wait:.1f}s 后重试")
@@ -518,3 +538,27 @@ class LLMProvider:
             "ollama_fallback": self.ollama_model if self.use_ollama_fallback else False,
             "max_retries": self.max_retries,
         }
+
+
+# ---- 评测专用 LLM 工厂 ----
+
+def get_llm():
+    """创建后端评测 LLM 实例（读取 promptEval 配置卡片）
+
+    供 prompt_tester.py 等评测模块使用，确保所有评测调用
+    统一跟随 ⑥ promptEval 后端评测 LLM 的模型配置：
+      - Prompt 全量测试域B/域C评分
+      - 综合质量评测
+      - 检索质量分析建议
+
+    当 promptEval 卡片未配置时，返回默认 LLMProvider 实例。
+    """
+    cfg = get_llm_config_card("promptEval")
+    if cfg and cfg.get("model") and cfg.get("base_url"):
+        return LLMProvider(
+            base_url=cfg["base_url"],
+            api_key=cfg.get("api_key", ""),
+            model=cfg["model"],
+            use_ollama_fallback=False,
+        )
+    return LLMProvider()

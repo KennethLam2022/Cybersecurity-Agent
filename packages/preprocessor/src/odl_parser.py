@@ -109,7 +109,7 @@ def _parse_pdf_odl(path: Path) -> str:
 
 def _is_garbled(text: str) -> bool:
     """检测 pypdf 提取的文本是否因编码错误出现大量乱码。
-    
+
     当 UTF-8 字节被错误解码为 Latin-1 时，会产生私有区字符、
     拉丁扩展字符、欧元符号等典型乱码信号。
     """
@@ -413,20 +413,20 @@ def quick_test(file_path: str, output_dir: Optional[str] = None):
     parser = OdlParser()
     data = parser.parse(file_path)
 
-    print(f"\n{'='*60}")
-    print(f"文件: {Path(file_path).name}")
-    print(f"格式: {data['format']}")
-    print(f"页数: {data['total_pages']}")
-    print(f"耗时: {data['parse_time_seconds']}s")
-    print(f"内容长度: {len(data['full_markdown'])} 字符")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"文件: {Path(file_path).name}")
+    logger.info(f"格式: {data['format']}")
+    logger.info(f"页数: {data['total_pages']}")
+    logger.info(f"耗时: {data['parse_time_seconds']}s")
+    logger.info(f"内容长度: {len(data['full_markdown'])} 字符")
     if data["full_markdown"]:
-        print(f"\n--- 前 2000 字符预览 ---")
-        print(data["full_markdown"][:2000])
-        print(f"\n--- 后 500 字符预览 ---")
-        print(data["full_markdown"][-500:])
+        logger.info(f"\n--- 前 2000 字符预览 ---")
+        logger.info(data["full_markdown"][:2000])
+        logger.info(f"\n--- 后 500 字符预览 ---")
+        logger.info(data["full_markdown"][-500:])
     else:
-        print("⚠️  内容为空！")
-    print(f"{'='*60}\n")
+        logger.info("⚠️  内容为空！")
+    logger.info(f"{'='*60}\n")
 
     if output_dir:
         parser.parse_and_save(file_path, output_dir)
@@ -437,6 +437,6 @@ def quick_test(file_path: str, output_dir: Optional[str] = None):
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
-        print("用法: python odl_parser.py <文件路径> [输出目录]")
+        logger.info("用法: python odl_parser.py <文件路径> [输出目录]")
         sys.exit(1)
     quick_test(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)

@@ -12,7 +12,13 @@
 与 build_parent_index.py / rebuild_faiss_only.py / rebuild_chroma.py 的区别：
   这些是全量重建脚本，incremental_index.py 只处理新增文件。
 """
-import os, sys, json, time, logging, shutil, tempfile
+import os
+import sys
+import json
+import time
+import logging
+import shutil
+import tempfile
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -237,7 +243,8 @@ def _add_to_chroma(chunks: list[dict]):
     embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_URL)
 
     t0 = time.time()
-    client = chromadb.PersistentClient(path=_CHROMA_DIR, settings=Settings(anonymized_telemetry=False))
+    client = chromadb.PersistentClient(
+        path=_CHROMA_DIR, settings=Settings(anonymized_telemetry=False))
 
     try:
         collection = client.get_collection("cyber_security")
@@ -265,7 +272,8 @@ def _add_to_chroma(chunks: list[dict]):
     if new_ids:
         # 预计算 embeddings（与 FAISS 同一模型，保证 512 维一致）
         emb_list = embeddings.embed_documents(new_texts)
-        collection.add(ids=new_ids, documents=new_texts, metadatas=new_metadatas, embeddings=emb_list)
+        collection.add(ids=new_ids, documents=new_texts,
+                       metadatas=new_metadatas, embeddings=emb_list)
 
     new_count = collection.count()
     logger.info(f"Chroma: {old_count} → {new_count} (新加 {len(new_ids)}, {time.time()-t0:.2f}s)")
@@ -301,7 +309,8 @@ def _validate_consistency():
         shutil.rmtree(_tmp, ignore_errors=True)
 
     # 加载 Chroma
-    client = chromadb.PersistentClient(path=_CHROMA_DIR, settings=Settings(anonymized_telemetry=False))
+    client = chromadb.PersistentClient(
+        path=_CHROMA_DIR, settings=Settings(anonymized_telemetry=False))
     try:
         collection = client.get_collection("cyber_security")
         chroma_count = collection.count()
@@ -327,7 +336,8 @@ def _validate_consistency():
                 missing_metadatas.append(doc.metadata)
                 missing_embs.append(emb.tolist())
         if missing_ids:
-            collection.add(ids=missing_ids, documents=missing_texts, metadatas=missing_metadatas, embeddings=missing_embs)
+            collection.add(ids=missing_ids, documents=missing_texts,
+                           metadatas=missing_metadatas, embeddings=missing_embs)
             logger.info(f"  自动补全 Chroma: +{len(missing_ids)} 条 (从 FAISS 复制向量)")
 
     else:
@@ -344,7 +354,8 @@ def _validate_consistency():
                 missing_embs.append(chroma_all["embeddings"][i])
         if missing_ids:
             text_embeddings = list(zip(missing_docs, missing_embs))
-            db.add_embeddings(text_embeddings=text_embeddings, metadatas=missing_metadatas, ids=missing_ids)
+            db.add_embeddings(text_embeddings=text_embeddings,
+                              metadatas=missing_metadatas, ids=missing_ids)
             _tmp_save = os.path.join(tempfile.gettempdir(), "_cyber_faiss_tmp")
             if os.path.exists(_tmp_save):
                 shutil.rmtree(_tmp_save)
@@ -424,7 +435,8 @@ def _remove_from_chroma(stems: list[str]):
     import chromadb
     from chromadb.config import Settings
     t0 = time.time()
-    client = chromadb.PersistentClient(path=_CHROMA_DIR, settings=Settings(anonymized_telemetry=False))
+    client = chromadb.PersistentClient(
+        path=_CHROMA_DIR, settings=Settings(anonymized_telemetry=False))
     try:
         collection = client.get_collection("cyber_security")
     except Exception:
@@ -441,7 +453,8 @@ def _rebuild_faiss_from_parents():
     """从 parent_texts.json 全量重建 FAISS 索引（用于删除旧 stem 后的重建）"""
     from langchain_community.vectorstores import FAISS
     from langchain_ollama import OllamaEmbeddings
-    import tempfile, shutil
+    import tempfile
+    import shutil
 
     if not _PARENT_FILE.exists():
         logger.warning("parent_texts.json 不存在，跳过 FAISS 重建")
@@ -456,7 +469,8 @@ def _rebuild_faiss_from_parents():
     ids = list(parent_data.keys())
 
     from langchain_text_splitters import RecursiveCharacterTextSplitter
-    splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50, separators=["\n\n", "\n", "。", "，", " ", ""])
+    splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50, separators=[
+                                              "\n\n", "\n", "。", "，", " ", ""])
     all_texts, all_metadatas, all_ids = [], [], []
     for i, t in enumerate(texts):
         if len(t) > 256:
@@ -472,7 +486,8 @@ def _rebuild_faiss_from_parents():
 
     t0 = time.time()
     embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_URL)
-    db = FAISS.from_texts(texts=all_texts, metadatas=all_metadatas, ids=all_ids, embedding=embeddings)
+    db = FAISS.from_texts(texts=all_texts, metadatas=all_metadatas,
+                          ids=all_ids, embedding=embeddings)
     _tmp = os.path.join(tempfile.gettempdir(), "_cyber_faiss_tmp")
     if os.path.exists(_tmp):
         shutil.rmtree(_tmp)
@@ -495,9 +510,9 @@ def remove_stems(stems: list[str]):
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
-        print("用法:")
-        print("  python incremental_index.py path/to/file1.md [file2.md ...]")
-        print("  python incremental_index.py --remove-stems stem1 stem2 ...")
+        logger.info("用法:")
+        logger.info("  python incremental_index.py path/to/file1.md [file2.md ...]")
+        logger.info("  python incremental_index.py --remove-stems stem1 stem2 ...")
         sys.exit(1)
 
     if args[0] == "--remove-stems":

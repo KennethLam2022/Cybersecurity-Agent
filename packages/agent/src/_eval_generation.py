@@ -11,7 +11,11 @@
 
     python _eval_generation.py    # 独立运行演示
 """
-import os, sys, json, logging, re
+import os
+import sys
+import json
+import logging
+import re
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -239,9 +243,11 @@ def _heuristic_relevancy(query: str, answer: str) -> dict:
         return {"score": 0.0, "explanation": "回答中无可匹配的字符", "details": {"method": "heuristic"}}
 
     # 中文字符覆盖率
-    char_coverage = len(query_chars & answer_chars) / max(len(query_chars), 1) if query_chars else 1.0
+    char_coverage = len(query_chars & answer_chars) / \
+        max(len(query_chars), 1) if query_chars else 1.0
     # 英文词覆盖率
-    word_coverage = len(query_words_en & answer_words_en) / max(len(query_words_en), 1) if query_words_en else 1.0
+    word_coverage = len(query_words_en & answer_words_en) / \
+        max(len(query_words_en), 1) if query_words_en else 1.0
 
     # 综合：中文占主导，英文作为补充
     if query_chars and query_words_en:
@@ -453,7 +459,7 @@ def _get_ngrams(text: str, n: int = 3) -> set:
 
     ngrams = set()
     for i in range(len(all_tokens) - n + 1):
-        ngrams.add(" ".join(all_tokens[i : i + n]))
+        ngrams.add(" ".join(all_tokens[i: i + n]))
     return ngrams
 
 
@@ -474,7 +480,7 @@ def _extract_json(text: str) -> str:
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
-        text = text[start : end + 1]
+        text = text[start: end + 1]
     return text
 
 
@@ -592,60 +598,60 @@ def main():
 
     query, docs, answer_faithful, answer_hallucinated = _demo()
 
-    print("=" * 60)
-    print("域C：生成质量评估（回退模式 — 无 LLM）")
-    print("=" * 60)
-    print(f"问题: {query}\n")
+    logger.info("=" * 60)
+    logger.info("域C：生成质量评估（回退模式 — 无 LLM）")
+    logger.info("=" * 60)
+    logger.info(f"问题: {query}\n")
 
     # ── Faithfulness（忠实回答）──
-    print("-" * 40)
-    print("测试1：忠实回答 → Faithfulness 应该高分")
+    logger.info("-" * 40)
+    logger.info("测试1：忠实回答 → Faithfulness 应该高分")
     result = eval_faithfulness(query, docs, answer_faithful, llm=None)
-    print(f"  Score: {result['score']:.4f}")
-    print(f"  说明: {result['explanation'][:80]}")
-    print(f"  详情: {result['details']}\n")
+    logger.info(f"  Score: {result['score']:.4f}")
+    logger.info(f"  说明: {result['explanation'][:80]}")
+    logger.info(f"  详情: {result['details']}\n")
 
     # ── Faithfulness（幻觉回答）──
-    print("-" * 40)
-    print("测试2：含幻觉回答 → Faithfulness 应该低分")
+    logger.info("-" * 40)
+    logger.info("测试2：含幻觉回答 → Faithfulness 应该低分")
     result = eval_faithfulness(query, docs, answer_hallucinated, llm=None)
-    print(f"  Score: {result['score']:.4f}")
-    print(f"  说明: {result['explanation'][:80]}")
-    print(f"  详情: {result['details']}\n")
+    logger.info(f"  Score: {result['score']:.4f}")
+    logger.info(f"  说明: {result['explanation'][:80]}")
+    logger.info(f"  详情: {result['details']}\n")
 
     # ── Relevancy（相关回答）──
-    print("-" * 40)
-    print("测试3：回答相关性 → Relevancy 应该高分")
+    logger.info("-" * 40)
+    logger.info("测试3：回答相关性 → Relevancy 应该高分")
     result = eval_relevancy(query, answer_faithful, docs, llm=None)
-    print(f"  Score: {result['score']:.4f}")
-    print(f"  说明: {result['explanation'][:80]}\n")
+    logger.info(f"  Score: {result['score']:.4f}")
+    logger.info(f"  说明: {result['explanation'][:80]}\n")
 
     # ── Relevancy（无关回答）──
-    print("-" * 40)
+    logger.info("-" * 40)
     irrelevant_answer = "今天天气不错，适合出去走走。"
-    print("测试4：无关回答 → Relevancy 应该低分")
+    logger.info("测试4：无关回答 → Relevancy 应该低分")
     result = eval_relevancy(query, irrelevant_answer, docs, llm=None)
-    print(f"  Score: {result['score']:.4f}")
-    print(f"  说明: {result['explanation'][:80]}\n")
+    logger.info(f"  Score: {result['score']:.4f}")
+    logger.info(f"  说明: {result['explanation'][:80]}\n")
 
     # ── Hallucination（忠实回答）──
-    print("-" * 40)
-    print("测试5：忠实回答 → Hallucination 应该高分（幻觉少）")
+    logger.info("-" * 40)
+    logger.info("测试5：忠实回答 → Hallucination 应该高分（幻觉少）")
     result = eval_hallucination(query, docs, answer_faithful, llm=None)
-    print(f"  Score: {result['score']:.4f}（越高越无幻觉）")
-    print(f"  说明: {result['explanation'][:80]}")
-    print(f"  详情: {result['details']}\n")
+    logger.info(f"  Score: {result['score']:.4f}（越高越无幻觉）")
+    logger.info(f"  说明: {result['explanation'][:80]}")
+    logger.info(f"  详情: {result['details']}\n")
 
     # ── Hallucination（幻觉回答）──
-    print("-" * 40)
-    print("测试6：含幻觉回答 → Hallucination 应该低分（幻觉多）")
+    logger.info("-" * 40)
+    logger.info("测试6：含幻觉回答 → Hallucination 应该低分（幻觉多）")
     result = eval_hallucination(query, docs, answer_hallucinated, llm=None)
-    print(f"  Score: {result['score']:.4f}（越高越无幻觉）")
-    print(f"  说明: {result['explanation'][:80]}")
-    print(f"  详情: {result['details']}\n")
+    logger.info(f"  Score: {result['score']:.4f}（越高越无幻觉）")
+    logger.info(f"  说明: {result['explanation'][:80]}")
+    logger.info(f"  详情: {result['details']}\n")
 
-    print("=" * 60)
-    print("[OK] 域C评估完成")
+    logger.info("=" * 60)
+    logger.info("[OK] 域C评估完成")
 
 
 if __name__ == "__main__":

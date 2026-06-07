@@ -5,7 +5,8 @@
 
 无需重建 FAISS/Chroma，索引端完全不动。
 """
-import json, logging
+import json
+import logging
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")

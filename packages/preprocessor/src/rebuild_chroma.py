@@ -6,7 +6,12 @@
   - 用 ollama.embed() 批量 API 替代 LangChain 逐条 embedding（快 10x+）
   - FAISS 和 Chroma 复用同一批预计算 embedding
 """
-import os, shutil, logging, json, time
+import tempfile
+import os
+import shutil
+import logging
+import json
+import time
 from pathlib import Path
 import chromadb
 from chromadb.config import Settings
@@ -38,6 +43,8 @@ for cat_dir in sorted(BASE.iterdir()):
 logger.info(f"共 {len(files)} 份文档")
 
 # 2. 切片
+
+
 def chunk_document(file_path, cat, stem):
     text = Path(file_path).read_text(encoding="utf-8")
     version_warning = ""
@@ -81,16 +88,17 @@ def chunk_document(file_path, cat, stem):
                 if version_warning:
                     content = f"{version_warning}\n\n{sub}"
                 chunks.append({"content": content, "file_name": stem, "category": cat,
-                                "section": sec_title, "chunk_id": f"{stem}__s{idx}__{i}",
-                                "parent_id": f"{stem}__s{idx}"})
+                               "section": sec_title, "chunk_id": f"{stem}__s{idx}__{i}",
+                               "parent_id": f"{stem}__s{idx}"})
         else:
             content = sec_text
             if version_warning:
                 content = f"{version_warning}\n\n{sec_text}"
             chunks.append({"content": content, "file_name": stem, "category": cat,
-                            "section": sec_title, "chunk_id": f"{stem}__s{idx}",
-                            "parent_id": f"{stem}__s{idx}"})
+                           "section": sec_title, "chunk_id": f"{stem}__s{idx}",
+                           "parent_id": f"{stem}__s{idx}"})
     return chunks
+
 
 all_chunks = []
 for fp, cat, stem in files:
@@ -156,7 +164,6 @@ if os.path.exists(faiss_dir):
     shutil.rmtree(faiss_dir)
 
 # faiss C 层不支持中文路径，先保存到临时目录再复制
-import tempfile
 _tmp_faiss = os.path.join(tempfile.gettempdir(), "_cyber_faiss_tmp")
 if os.path.exists(_tmp_faiss):
     shutil.rmtree(_tmp_faiss)
@@ -174,23 +181,23 @@ shutil.rmtree(_tmp_faiss)
 logger.info(f"FAISS 重建完成：{faiss_db.index.ntotal} vectors")
 
 # 6. 验证
-print(f"\n{'='*60}")
-print(f"  重建完成")
-print(f"{'='*60}")
-print(f"  文档: {len(files)} 份")
-print(f"  Chunks: {len(all_chunks)}")
-print(f"  Chroma: {chroma_dir}")
-print(f"  FAISS:  {faiss_dir}")
+logger.info(f"\n{'='*60}")
+logger.info(f"  重建完成")
+logger.info(f"{'='*60}")
+logger.info(f"  文档: {len(files)} 份")
+logger.info(f"  Chunks: {len(all_chunks)}")
+logger.info(f"  Chroma: {chroma_dir}")
+logger.info(f"  FAISS:  {faiss_dir}")
 
 try:
     c = chromadb.PersistentClient(path=chroma_dir, settings=Settings(anonymized_telemetry=False))
     col = c.get_collection("cyber_security")
-    print(f"  Chroma 验证: {col.count()} chunks ✅")
+    logger.info(f"  Chroma 验证: {col.count()} chunks ✅")
 except Exception as e:
-    print(f"  Chroma 验证失败: {e}")
+    logger.info(f"  Chroma 验证失败: {e}")
 
 try:
     db = FAISS.load_local(faiss_dir, lc_embeddings, allow_dangerous_deserialization=True)
-    print(f"  FAISS 验证: {db.index.ntotal} vectors ✅")
+    logger.info(f"  FAISS 验证: {db.index.ntotal} vectors ✅")
 except Exception as e:
-    print(f"  FAISS 验证失败: {e}")
+    logger.info(f"  FAISS 验证失败: {e}")

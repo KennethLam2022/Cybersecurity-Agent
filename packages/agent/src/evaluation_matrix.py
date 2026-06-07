@@ -102,7 +102,8 @@ def generate_report(scores: dict, weights: Optional[dict] = None) -> str:
     ]
     for dim, info in breakdown.items():
         status = "✅" if info["score"] >= 0.8 else "⚠️" if info["score"] >= 0.5 else "❌"
-        lines.append(f"  {status} {dim}: {info['score']*100:.0f}% (权重 {info['weight']*100:.0f}%, 贡献 {info['contribution_pct']:.1f}%)")
+        lines.append(
+            f"  {status} {dim}: {info['score']*100:.0f}% (权重 {info['weight']*100:.0f}%, 贡献 {info['contribution_pct']:.1f}%)")
 
     # 找出短板
     weak_dims = [dim for dim, info in breakdown.items() if info["score"] < 0.5]

@@ -1,5 +1,9 @@
-"""全流程测试: 解析 → 清洗 → 保存 .md → 增量索引 (FAISS + Chroma)"""
-import os, sys, time
+from incremental_index import incremental_index
+from llm_cleaner import LlmCleaner
+from odl_parser import OdlParser
+import os
+import sys
+import time
 
 # 添加路径
 _SRC = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +22,6 @@ print("=" * 60)
 print("STEP 1/4: 解析文档...")
 print("=" * 60)
 
-from odl_parser import OdlParser
 
 parser = OdlParser()
 t0 = time.time()
@@ -32,7 +35,6 @@ print("\n" + "=" * 60)
 print("STEP 2/4: LLM 清洗...")
 print("=" * 60)
 
-from llm_cleaner import LlmCleaner
 
 cleaner = LlmCleaner()
 t0 = time.time()
@@ -59,7 +61,6 @@ print("\n" + "=" * 60)
 print("STEP 4/4: 增量索引 (父文档 + FAISS + Chroma)...")
 print("=" * 60)
 
-from incremental_index import incremental_index
 
 result = incremental_index([md_path])
 print(f"[PASS] 父文档索引: 新加 {result['parent_added']} 节")

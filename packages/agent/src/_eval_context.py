@@ -13,7 +13,11 @@
     # 独立运行
     python _eval_context.py
 """
-import os, sys, json, logging, re
+import os
+import sys
+import json
+import logging
+import re
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -118,9 +122,11 @@ def _heuristic_context_precision(answer: str, context_text: str) -> dict:
             continue
 
         # 中文字符重叠率
-        char_overlap = len(sent_chars & context_chars) / max(len(sent_chars), 1) if sent_chars else 1.0
+        char_overlap = len(sent_chars & context_chars) / \
+            max(len(sent_chars), 1) if sent_chars else 1.0
         # 英文词重叠率
-        word_overlap = len(sent_words_en & context_words_en) / max(len(sent_words_en), 1) if sent_words_en else 1.0
+        word_overlap = len(sent_words_en & context_words_en) / \
+            max(len(sent_words_en), 1) if sent_words_en else 1.0
 
         if char_overlap >= 0.3 or word_overlap >= 0.3:
             supported += 1
@@ -288,7 +294,7 @@ def _extract_json(text: str) -> str:
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
-        text = text[start : end + 1]
+        text = text[start: end + 1]
     return text
 
 
@@ -401,27 +407,27 @@ def main():
 
     query, docs, answer = _demo()
 
-    print("=" * 60)
-    print("域B：上下文质量评估（回退模式 — 无 LLM）")
-    print("=" * 60)
-    print(f"问题: {query}\n")
+    logger.info("=" * 60)
+    logger.info("域B：上下文质量评估（回退模式 — 无 LLM）")
+    logger.info("=" * 60)
+    logger.info(f"问题: {query}\n")
 
     # Context Precision
     result_p = eval_context_precision(query, docs, answer, llm=None)
-    print(f"[Context Precision]  {result_p['score']:.4f}")
-    print(f"  说明: {result_p['explanation'][:80]}")
-    print(f"  详情: {result_p['details']}\n")
+    logger.info(f"[Context Precision]  {result_p['score']:.4f}")
+    logger.info(f"  说明: {result_p['explanation'][:80]}")
+    logger.info(f"  详情: {result_p['details']}\n")
 
     # Context Recall
     result_r = eval_context_recall(query, docs, answer, llm=None)
-    print(f"[Context Recall]     {result_r['score']:.4f}")
-    print(f"  说明: {result_r['explanation'][:80]}")
-    print(f"  详情: {result_r['details']}\n")
+    logger.info(f"[Context Recall]     {result_r['score']:.4f}")
+    logger.info(f"  说明: {result_r['explanation'][:80]}")
+    logger.info(f"  详情: {result_r['details']}\n")
 
     # 汇总
-    print(f"\n[OK] 域B评估完成")
-    print(f"  Context Precision: {result_p['score']:.4f}")
-    print(f"  Context Recall:    {result_r['score']:.4f}")
+    logger.info(f"\n[OK] 域B评估完成")
+    logger.info(f"  Context Precision: {result_p['score']:.4f}")
+    logger.info(f"  Context Recall:    {result_r['score']:.4f}")
 
 
 if __name__ == "__main__":

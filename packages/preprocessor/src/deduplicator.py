@@ -9,7 +9,12 @@
 标准号提取覆盖 GB/GB-T/YD/YD-T/JR-T/GM-T 等运营商常用标准。
 """
 
-import os, re, json, hashlib, struct, threading
+import os
+import re
+import json
+import hashlib
+import struct
+import threading
 from pathlib import Path
 from collections import Counter
 from typing import Optional
@@ -43,6 +48,7 @@ YEAR_ANY = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 # ────────────────────────────────────────────────────────────
 # Layer 1: 文件级硬去重
 # ────────────────────────────────────────────────────────────
+
 
 def normalize_stem(name: str) -> str:
     """标准化文件名主干：去副本标记、去标准号、去版本号、去特殊字符、转小写"""
@@ -540,7 +546,8 @@ class Deduplicator:
             if sid:
                 result.existing_standard = sid["full"]
                 # 找同标准号的条目
-                same_std = [e for e in entries if e[3] and e[3].get("number") == sid["number"] and e[3].get("prefix") == sid["prefix"]]
+                same_std = [e for e in entries if e[3] and e[3].get(
+                    "number") == sid["number"] and e[3].get("prefix") == sid["prefix"]]
                 if same_std:
                     existing_years = [e[0] for e in same_std if e[0]]
                     if existing_years:
@@ -568,7 +575,8 @@ class Deduplicator:
             # 无标准号 + 无年份：模糊名称匹配即判重
             if not year:
                 # 检查是否有同名文件（非副本）
-                exact_match = [e for e in entries if normalize_stem(e[1]) == stem and not COPY_MARKERS.search(e[1])]
+                exact_match = [e for e in entries if normalize_stem(
+                    e[1]) == stem and not COPY_MARKERS.search(e[1])]
                 if exact_match:
                     result.is_duplicate = True
                     result.reason = f"库中已有相似文件: {exact_match[0][1]}"
@@ -578,7 +586,8 @@ class Deduplicator:
         # 1c. 标准号交叉匹配：文件名不同但标准号相同（如 GB_T 20984-2007 → 2.1《...》GB_T_20984_2007）
         if sid and not result.is_duplicate:
             for key, entries in existing.items():
-                same_std = [e for e in entries if e[3] and e[3].get("number") == sid["number"] and e[3].get("prefix").replace("_", "/") == sid["prefix"].replace("_", "/")]
+                same_std = [e for e in entries if e[3] and e[3].get("number") == sid["number"] and e[3].get(
+                    "prefix").replace("_", "/") == sid["prefix"].replace("_", "/")]
                 if same_std:
                     result.fuzzy_match = key
                     result.matched_files = [e[1] for e in same_std]

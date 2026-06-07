@@ -100,7 +100,8 @@ class LlmCleaner:
                 break
             except Exception as e:
                 last_error = e
-                status = getattr(e, 'status_code', 0) or (e.http_status if hasattr(e, 'http_status') else 0)
+                status = getattr(e, 'status_code', 0) or (
+                    e.http_status if hasattr(e, 'http_status') else 0)
                 if status in (429, 500, 503) and attempt < max_retries - 1:
                     wait = 2 ** attempt + (hash(file_id) % 100) / 100.0
                     logger.warning(f"  LLM API {status} 错误 (第{attempt+1}次重试，等待{wait:.1f}s): {e}")
@@ -113,7 +114,8 @@ class LlmCleaner:
         elapsed = time.time() - start
 
         logger.info(f"LLM 清洗完成: {file_id} ({elapsed:.1f}s, {len(cleaned_text)} 字符)")
-        logger.info(f"  Token 使用: 输入={response.usage.prompt_tokens}, 输出={response.usage.completion_tokens}")
+        logger.info(
+            f"  Token 使用: 输入={response.usage.prompt_tokens}, 输出={response.usage.completion_tokens}")
 
         return {
             "file_id": file_id,
@@ -147,13 +149,13 @@ def quick_clean(raw_text: str, file_id: str = "test"):
     cleaner = LlmCleaner()
     data = cleaner.clean_document(raw_text, file_id)
 
-    print(f"\n{'='*60}")
-    print(f"文件: {file_id}")
-    print(f"耗时: {data['clean_time_seconds']}s")
-    print(f"Token: {data['token_usage']}")
-    print(f"\n--- 清洗结果 ---")
-    print(data["cleaned_markdown"][:3000])
-    print(f"{'='*60}\n")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"文件: {file_id}")
+    logger.info(f"耗时: {data['clean_time_seconds']}s")
+    logger.info(f"Token: {data['token_usage']}")
+    logger.info(f"\n--- 清洗结果 ---")
+    logger.info(data["cleaned_markdown"][:3000])
+    logger.info(f"{'='*60}\n")
     return data
 
 

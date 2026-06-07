@@ -6,7 +6,14 @@
   python run_eval.py --compare          # 跑完对比上次
   python run_eval.py --open             # 跑完自动打开浏览器
 """
-import os, sys, json, shutil, subprocess, webbrowser, logging, argparse
+import os
+import sys
+import json
+import shutil
+import subprocess
+import webbrowser
+import logging
+import argparse
 from pathlib import Path
 from datetime import datetime
 
@@ -63,30 +70,30 @@ def _compute_stats(results: list) -> dict:
 def _show_comparison(current_stats: dict):
     versions = _load_versions()
     if len(versions) < 2:
-        print("  ℹ️  只有一次记录，无法对比")
+        logger.info("  ℹ️  只有一次记录，无法对比")
         return
 
     prev = versions[-2]
     prev_path = _EVAL_DIR / prev["results_file"]
     if not prev_path.exists():
-        print(f"  ⚠️  上次结果文件不存在: {prev_path}")
+        logger.info(f"  ⚠️  上次结果文件不存在: {prev_path}")
         return
 
     prev_results = json.loads(prev_path.read_text(encoding="utf-8"))
     prev_stats = _compute_stats(prev_results)
 
-    print(f"\n  📊 版本对比：当前 vs {prev['version']}")
-    print(f"  {'指标':<20} {'当前':>8} {'上次':>8} {'变化':>8}")
-    print(f"  {'-'*48}")
+    logger.info(f"\n  📊 版本对比：当前 vs {prev['version']}")
+    logger.info(f"  {'指标':<20} {'当前':>8} {'上次':>8} {'变化':>8}")
+    logger.info(f"  {'-'*48}")
     for key, label in [("total", "总题数"), ("with_sources", "有来源"),
-                        ("errors", "错误数"), ("total_sources", "来源总数"),
-                        ("high_ratio", "高置信率(%)")]:
+                       ("errors", "错误数"), ("total_sources", "来源总数"),
+                       ("high_ratio", "高置信率(%)")]:
         curr_val = current_stats.get(key, 0)
         prev_val = prev_stats.get(key, 0)
         if isinstance(curr_val, (int, float)) and isinstance(prev_val, (int, float)):
             diff = curr_val - prev_val
             diff_str = f"+{diff}" if diff > 0 else str(diff)
-            print(f"  {label:<20} {curr_val:>8} {prev_val:>8} {diff_str:>8}")
+            logger.info(f"  {label:<20} {curr_val:>8} {prev_val:>8} {diff_str:>8}")
 
 
 def main():
@@ -100,7 +107,7 @@ def main():
     eval_script = _SRC / "eval_30_v3.py"
 
     if not args.no_run:
-        print(f"\n  🚀 开始评估 v{version_tag} ...")
+        logger.info(f"\n  🚀 开始评估 v{version_tag} ...")
         t0 = datetime.now()
 
         result = subprocess.run(
@@ -111,34 +118,39 @@ def main():
         )
 
         elapsed = (datetime.now() - t0).total_seconds()
-        print(result.stdout)
+        logger.info(result.stdout)
         if result.returncode != 0:
-            print(f"  ❌ 评估脚本报错 (exit={result.returncode})")
-            print(result.stderr[-2000:] if result.stderr else "")
+            logger.info(f"  ❌ 评估脚本报错 (exit={result.returncode})")
+            logger.info(result.stderr[-2000:] if result.stderr else "")
             sys.exit(1)
-        print(f"  ✅ 评估完成 ({elapsed:.0f}s)")
+        logger.info(f"  ✅ 评估完成 ({elapsed:.0f}s)")
     else:
-        print("  ℹ️  跳过评估，仅生成HTML")
+        logger.info("  ℹ️  跳过评估，仅生成HTML")
 
     # 查找最新的结果JSON和HTML
-    json_files = sorted(_EVAL_DIR.glob("eval30_v3_results_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-    html_files = sorted(_EVAL_DIR.glob("scorecard_30_v3_human_tone_*.html"), key=lambda p: p.stat().st_mtime, reverse=True)
+    json_files = sorted(_EVAL_DIR.glob("eval30_v3_results_*.json"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)
+    html_files = sorted(_EVAL_DIR.glob("scorecard_30_v3_human_tone_*.html"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)
 
     if not json_files:
         logger.error("未找到结果JSON文件")
         sys.exit(1)
 
     latest_json = json_files[0]
-    latest_html = html_files[0] if html_files else _EVAL_DIR / f"scorecard_30_v3_human_tone_{version_tag}.html"
+    latest_html = html_files[0] if html_files else _EVAL_DIR / \
+        f"scorecard_30_v3_human_tone_{version_tag}.html"
 
     results = json.loads(latest_json.read_text(encoding="utf-8"))
     stats = _compute_stats(results)
 
-    print(f"\n  📈 本轮指标：")
-    print(f"    总题数: {stats['total']}  |  有来源: {stats['with_sources']}  |  错误: {stats['errors']}")
-    print(f"    来源总数: {stats['total_sources']}  |  高置信: {stats['high_confidence']} ({stats['high_ratio']}%)")
-    print(f"    JSON: {latest_json.name}")
-    print(f"    HTML: {latest_html.name}")
+    logger.info(f"\n  📈 本轮指标：")
+    logger.info(
+        f"    总题数: {stats['total']}  |  有来源: {stats['with_sources']}  |  错误: {stats['errors']}")
+    logger.info(
+        f"    来源总数: {stats['total_sources']}  |  高置信: {stats['high_confidence']} ({stats['high_ratio']}%)")
+    logger.info(f"    JSON: {latest_json.name}")
+    logger.info(f"    HTML: {latest_html.name}")
 
     # ---- 版本记录 ----
     _save_version(latest_json, latest_html, version_tag)
@@ -151,9 +163,9 @@ def main():
     if args.open and html_files:
         html_path = html_files[0]
         webbrowser.open(f"file:///{html_path.resolve().as_posix()}")
-        print(f"  🌐 已打开浏览器: {html_path.name}")
+        logger.info(f"  🌐 已打开浏览器: {html_path.name}")
 
-    print(f"\n  ✅ 完成。查看结果: {latest_html}")
+    logger.info(f"\n  ✅ 完成。查看结果: {latest_html}")
 
 
 if __name__ == "__main__":

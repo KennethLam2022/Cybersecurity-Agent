@@ -300,7 +300,8 @@ def run_elastic_test(agent_instance, base_query: str) -> dict:
     for name, transform in ELASTIC_VARIATIONS.items():
         query = transform(base_query)
         start = time.time()
-        r = agent_instance.ask(query=query, conversation_id=None, temperature=0.1, category="prompt_test")
+        r = agent_instance.ask(query=query, conversation_id=None,
+                               temperature=0.1, category="prompt_test")
         duration = time.time() - start
         answer = r.get("answer", "")
 
@@ -328,7 +329,8 @@ def run_single_test(agent_instance, test_case: dict, retrieved_docs: list = None
 
     # 调用 agent.ask() 获取回答（category="prompt_test" 标记为 Prompt 测试对话）
     start = time.time()
-    result = agent_instance.ask(query=query, conversation_id=None, temperature=0.1, category="prompt_test")
+    result = agent_instance.ask(query=query, conversation_id=None,
+                                temperature=0.1, category="prompt_test")
     duration = time.time() - start
     answer = result.get("answer", "")
 
@@ -392,9 +394,9 @@ def run_single_test(agent_instance, test_case: dict, retrieved_docs: list = None
     scores["context_precision"] = context_precision
     scores["context_recall"] = context_recall
     details["context_precision"] = {"score": context_precision, "detail": cp_detail,
-                                     "label": "✅" if context_precision >= 0.8 else "⚠️" if context_precision >= 0.5 else "❌"}
+                                    "label": "✅" if context_precision >= 0.8 else "⚠️" if context_precision >= 0.5 else "❌"}
     details["context_recall"] = {"score": context_recall, "detail": cr_detail,
-                                  "label": "✅" if context_recall >= 0.8 else "⚠️" if context_recall >= 0.5 else "❌"}
+                                 "label": "✅" if context_recall >= 0.8 else "⚠️" if context_recall >= 0.5 else "❌"}
 
     # ---- 域C: 生成质量 ----
     try:
@@ -408,11 +410,11 @@ def run_single_test(agent_instance, test_case: dict, retrieved_docs: list = None
     scores["relevancy"] = relevancy
     scores["hallucination"] = hallucination
     details["faithfulness"] = {"score": faithfulness, "detail": f_detail,
-                                "label": "✅" if faithfulness >= 0.8 else "⚠️" if faithfulness >= 0.5 else "❌"}
+                               "label": "✅" if faithfulness >= 0.8 else "⚠️" if faithfulness >= 0.5 else "❌"}
     details["relevancy"] = {"score": relevancy, "detail": r_detail,
-                             "label": "✅" if relevancy >= 0.8 else "⚠️" if relevancy >= 0.5 else "❌"}
+                            "label": "✅" if relevancy >= 0.8 else "⚠️" if relevancy >= 0.5 else "❌"}
     details["hallucination"] = {"score": hallucination, "detail": h_detail,
-                                 "label": "✅" if hallucination >= 0.8 else "⚠️" if hallucination >= 0.5 else "❌"}
+                                "label": "✅" if hallucination >= 0.8 else "⚠️" if hallucination >= 0.5 else "❌"}
 
     # 加权得分（13维度：域A 8 + 域B 2 + 域C 3）
     from evaluation_matrix import evaluate_with_weights, get_dimension_breakdown
@@ -462,8 +464,9 @@ def run_all_tests(agent_instance) -> dict:
     for case in cases:
         # 为域B/C 获取检索文档
         try:
-            retrieved = agent_instance.memory.search(query=case["query"], limit=10) if hasattr(agent_instance, 'memory') else []
-        except:
+            retrieved = agent_instance.memory.search(
+                query=case["query"], limit=10) if hasattr(agent_instance, 'memory') else []
+        except Exception:
             retrieved = []
         res = run_single_test(agent_instance, case, retrieved_docs=retrieved)
         results.append(res)

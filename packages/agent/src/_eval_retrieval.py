@@ -5,7 +5,13 @@
 
 运行结果存入 retrieval_eval 表，通过 GET /api/stats/retrieval-eval 查询。
 """
-import sys, os, json, time, logging
+from memory import ConversationMemory
+from retriever import CyberRetriever
+import sys
+import os
+import json
+import time
+import logging
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "preprocessor" / "src"))
@@ -13,9 +19,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("eval_retrieval")
-
-from retriever import CyberRetriever
-from memory import ConversationMemory
 
 
 TEST_SET = [
@@ -74,7 +77,7 @@ def evaluate():
         for rank, d in enumerate(docs[:10], 1):
             content = (d.get("file_name", "") + " " + d.get("content", "")).lower()
             expected_lower = expected.lower()
-            matched = any( kw.strip().lower() in content for kw in expected_lower.split("|") )
+            matched = any(kw.strip().lower() in content for kw in expected_lower.split("|"))
 
             if matched:
                 if rank <= 5:
@@ -99,7 +102,8 @@ def evaluate():
             recall_10=recall_10,
             mrr=mrr,
             faiss_count=len(retriever._faiss_db.index_to_docstore_id) if retriever._faiss_db else 0,
-            chroma_count=len(retriever._chroma_collection.get(include=[])["ids"]) if retriever._chroma_collection else 0,
+            chroma_count=len(retriever._chroma_collection.get(include=[])[
+                             "ids"]) if retriever._chroma_collection else 0,
             rerank_top1_match=top1_match_after_rerank,
         )
 
@@ -109,7 +113,7 @@ def evaluate():
             "recall_5": recall_5,
             "recall_10": recall_10,
             "mrr": round(mrr, 3),
-            "top5_files": [d.get("file_name","") for d in docs[:5]],
+            "top5_files": [d.get("file_name", "") for d in docs[:5]],
         })
         status = "PASS" if recall_5 == 1 else "FAIL"
         if status == "PASS":
@@ -127,7 +131,8 @@ def evaluate():
     logger.info("=" * 50)
     logger.info(f"检索质量跑分完成")
     logger.info(f"  测试集: {len(TEST_SET)} 条")
-    logger.info(f"  通过率: {results_summary['pass']}/{results_summary['total']} ({results_summary['pass']/results_summary['total']*100:.0f}%)")
+    logger.info(
+        f"  通过率: {results_summary['pass']}/{results_summary['total']} ({results_summary['pass']/results_summary['total']*100:.0f}%)")
     logger.info(f"  平均 Recall@5:  {avg_recall_5:.1f}%")
     logger.info(f"  平均 Recall@10: {avg_recall_10:.1f}%")
     logger.info(f"  平均 MRR:       {avg_mrr:.3f}")
@@ -159,8 +164,10 @@ def generate_test_set_from_keywords(keywords: str, llm=None) -> list:
             resp = llm.chat([{"role": "user", "content": prompt}])
             text = resp.get("content", "")
             text = text.strip()
-            if text.startswith("```"): text = text.split("\n", 1)[1]
-            if text.endswith("```"): text = text.rsplit("```", 1)[0]
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1]
+            if text.endswith("```"):
+                text = text.rsplit("```", 1)[0]
             text = text.strip()
             items = json.loads(text)
             if isinstance(items, list) and len(items) > 0:
@@ -192,12 +199,15 @@ def evaluate_with_items(items: list, memory) -> dict:
             content = (d.get("file_name", "") + " " + d.get("content", "")).lower()
             matched = any(kw.strip().lower() in content for kw in expected.lower().split("|"))
             if matched:
-                if rank <= 5: recall_5 = 1
-                if rank <= 10: recall_10 = 1
+                if rank <= 5:
+                    recall_5 = 1
+                if rank <= 10:
+                    recall_10 = 1
                 if first_rank is None:
                     first_rank = rank
                     mrr = 1.0 / rank
-                if rank == 1: top1_match = 1
+                if rank == 1:
+                    top1_match = 1
 
         all_recall_5.append(recall_5)
         all_recall_10.append(recall_10)
@@ -207,13 +217,16 @@ def evaluate_with_items(items: list, memory) -> dict:
             query=query, expected_source=expected,
             recall_5=recall_5, recall_10=recall_10, mrr=mrr,
             faiss_count=len(retriever._faiss_db.index_to_docstore_id) if retriever._faiss_db else 0,
-            chroma_count=len(retriever._chroma_collection.get(include=[])["ids"]) if retriever._chroma_collection else 0,
+            chroma_count=len(retriever._chroma_collection.get(include=[])[
+                             "ids"]) if retriever._chroma_collection else 0,
             rerank_top1_match=top1_match,
         )
 
         status = "PASS" if recall_5 == 1 else "FAIL"
-        if status == "PASS": results_summary["pass"] += 1
-        else: results_summary["fail"] += 1
+        if status == "PASS":
+            results_summary["pass"] += 1
+        else:
+            results_summary["fail"] += 1
 
         results_summary["items"].append({
             "query": query,
@@ -230,7 +243,8 @@ def evaluate_with_items(items: list, memory) -> dict:
     results_summary["avg_recall_5"] = round(avg_recall_5, 1)
     results_summary["avg_recall_10"] = round(avg_recall_10, 1)
     results_summary["avg_mrr"] = round(avg_mrr, 3)
-    logger.info(f"evaluate_with_items: {results_summary['pass']}/{results_summary['total']} R@5={avg_recall_5:.0f}% MRR={avg_mrr:.3f}")
+    logger.info(
+        f"evaluate_with_items: {results_summary['pass']}/{results_summary['total']} R@5={avg_recall_5:.0f}% MRR={avg_mrr:.3f}")
     return results_summary
 
 
@@ -249,15 +263,19 @@ def evaluate_single_query(agent, query: str, expected: str) -> dict:
         content = (d.get("file_name", "") + " " + d.get("content", "")).lower()
         matched = any(kw.strip().lower() in content for kw in expected.lower().split("|"))
         if matched:
-            if rank <= 5: recall_5 = 1
-            if rank <= 10: recall_10 = 1
+            if rank <= 5:
+                recall_5 = 1
+            if rank <= 10:
+                recall_10 = 1
             if first_rank is None:
                 first_rank = rank
                 mrr = 1.0 / rank
-            if rank == 1: top1_match = 1
+            if rank == 1:
+                top1_match = 1
 
     faiss_count = len(retriever._faiss_db.index_to_docstore_id) if retriever._faiss_db else 0
-    chroma_count = len(retriever._chroma_collection.get(include=[])["ids"]) if retriever._chroma_collection else 0
+    chroma_count = len(retriever._chroma_collection.get(include=[])[
+                       "ids"]) if retriever._chroma_collection else 0
 
     agent.memory.save_retrieval_eval(
         query=query, expected_source=expected,
@@ -420,8 +438,10 @@ def evaluate_with_items_compare(items: list, memory) -> dict:
     logger.info(f"  BM25-only:         R@5={bm25_r5*100:.0f}%  MRR={bm25_mrr:.3f}")
     logger.info(f"  Hybrid no rerank:  R@5={hybrid_r5*100:.0f}%  MRR={hybrid_mrr:.3f}")
     logger.info(f"  Hybrid+rerank:     R@5={rerank_r5*100:.0f}%  MRR={rerank_mrr:.3f}")
-    logger.info(f"  ── Hybrid增益:     R@5={summary['hybrid_gain_recall_5']*100:+.0f}pp  MRR={summary['hybrid_gain_mrr']:+.3f}")
-    logger.info(f"  ── Rerank增益:     R@5={summary['rerank_gain_recall_5']*100:+.0f}pp  MRR={summary['rerank_gain_mrr']:+.3f}")
+    logger.info(
+        f"  ── Hybrid增益:     R@5={summary['hybrid_gain_recall_5']*100:+.0f}pp  MRR={summary['hybrid_gain_mrr']:+.3f}")
+    logger.info(
+        f"  ── Rerank增益:     R@5={summary['rerank_gain_recall_5']*100:+.0f}pp  MRR={summary['rerank_gain_mrr']:+.3f}")
     logger.info("=" * 60)
 
     return summary

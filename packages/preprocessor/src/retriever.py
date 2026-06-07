@@ -8,7 +8,14 @@
   # [{"content": "...", "file_name": "...", "category": "...", "section": "...",
   #   "rerank_score": 0.98, "score": 0.42, "source": "chroma|faiss"}, ...]
 """
-import os, time, logging, requests, json, re, random, threading
+import os
+import time
+import logging
+import requests
+import json
+import re
+import random
+import threading
 from pathlib import Path
 from typing import Optional
 import chromadb
@@ -31,6 +38,8 @@ _CHROMA_DIR = os.path.join(str(_RAG / "04_vector_store" / "chroma_db"))
 _RETRIEVE_MULTIPLIER = 5
 
 # ---- 熔断器（简单版，专给Reranker用） ----
+
+
 class _RerankCircuitBreaker:
     def __init__(self, failure_threshold=3, open_timeout=60.0):
         self.failure_threshold = failure_threshold
@@ -66,6 +75,8 @@ class _RerankCircuitBreaker:
                 logger.warning(f"Rerank熔断器: CLOSED → OPEN（连续{self.failure_count}次失败）")
 
 # ---- 重试工具 ----
+
+
 def _should_retry_rerank(e: Exception) -> bool:
     if isinstance(e, requests.Timeout):
         return True
@@ -75,9 +86,11 @@ def _should_retry_rerank(e: Exception) -> bool:
             return True
     return False
 
+
 def _backoff_rerank(attempt: int, base: float = 2.0) -> float:
     sleep = min(base * (2 ** attempt), 30.0)
     return sleep + random.uniform(0, sleep * 0.5)
+
 
 # 全局共享熔断器
 _rerank_circuit_breaker = _RerankCircuitBreaker()
@@ -97,9 +110,11 @@ class CyberRetriever:
         )
         # 从 DB 读取 Reranker 配置
         rerank_cfg = get_llm_config_card('reranker')
-        self._rerank_url = ((rerank_cfg.get('base_url') or '').rstrip('/') + '/rerank') if rerank_cfg.get('base_url') else "https://api.siliconflow.cn/v1/rerank"
+        self._rerank_url = ((rerank_cfg.get('base_url') or '').rstrip(
+            '/') + '/rerank') if rerank_cfg.get('base_url') else "https://api.siliconflow.cn/v1/rerank"
         self._rerank_model = rerank_cfg.get('model') or "BAAI/bge-reranker-v2-m3"
-        self._rerank_api_key = rerank_cfg.get('api_key', '') or os.environ.get("SILICONFLOW_API_KEY", "")
+        self._rerank_api_key = rerank_cfg.get(
+            'api_key', '') or os.environ.get("SILICONFLOW_API_KEY", "")
         self._faiss_db: Optional[FAISS] = None
         self._chroma_client: Optional[chromadb.PersistentClient] = None
         self._chroma_collection = None
@@ -182,7 +197,7 @@ class CyberRetriever:
         """如果查询中含有文档编号或类型，优先保留匹配的片段"""
         if not doc_ids:
             return docs
-        
+
         # 将 doc_ids 分为数字类和字母类
         num_ids = [did for did in doc_ids if did.isdigit()]
         letter_ids = [did for did in doc_ids if not did.isdigit()]
@@ -190,19 +205,19 @@ class CyberRetriever:
         filtered = []
         for d in docs:
             file_name = d.get("file_name", "").upper()
-            
+
             # 逻辑：
             # 1. 如果有数字 ID (如 2692)，文件名必须包含该数字
             # 2. 如果只有字母 ID (如 YDT)，文件名必须包含该缩写
             # 3. 如果两者都有，数字优先级更高
-            
+
             if num_ids:
                 if any(nid in file_name for nid in num_ids):
                     filtered.append(d)
             elif letter_ids:
                 if any(lid in file_name.replace("-", "") for lid in letter_ids):
                     filtered.append(d)
-        
+
         if filtered:
             logger.info(f"文档名预过滤: 命中关键词 {doc_ids}, 过滤后剩余 {len(filtered)}/{len(docs)} 个片段")
             return filtered
@@ -262,7 +277,8 @@ class CyberRetriever:
             raise FileNotFoundError(f"FAISS 索引不存在: {_FAISS_DIR}")
         t0 = time.time()
         # faiss C 层不支持中文路径，先复制到临时目录再加载
-        import tempfile, shutil
+        import tempfile
+        import shutil
         _tmp_load = os.path.join(tempfile.gettempdir(), "_cyber_faiss_load")
         if os.path.exists(_tmp_load):
             shutil.rmtree(_tmp_load)
@@ -395,7 +411,8 @@ class CyberRetriever:
             d.pop("_rrf_score", None)
             d.pop("_rrf_contrib", None)
 
-        logger.info(f"RRF 融合: {len(vector_results)} 向量 + {len(bm25_results)} BM25 → {len(sorted_docs)} 去重")
+        logger.info(
+            f"RRF 融合: {len(vector_results)} 向量 + {len(bm25_results)} BM25 → {len(sorted_docs)} 去重")
         return sorted_docs[:top_k]
 
     def _resolve_parent_docs(self, child_docs: list[dict], top_k: int) -> list[dict]:

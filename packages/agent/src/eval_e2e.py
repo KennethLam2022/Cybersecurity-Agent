@@ -19,7 +19,16 @@
     # 指定测试题数（方便调试）
     python eval_e2e.py --limit 5
 """
-import os, sys, json, time, webbrowser, logging, argparse, re
+from _eval_generation import eval_faithfulness, eval_relevancy, eval_hallucination
+from _eval_context import eval_context_precision, eval_context_recall
+import os
+import sys
+import json
+import time
+import webbrowser
+import logging
+import argparse
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -46,8 +55,6 @@ _HTML_DIR.mkdir(exist_ok=True)
 _VERSION_FILE = _VERSION_DIR / "eval_versions.json"
 
 # ── 评分函数 ──
-from _eval_context import eval_context_precision, eval_context_recall
-from _eval_generation import eval_faithfulness, eval_relevancy, eval_hallucination
 
 
 # ============================================================
@@ -186,18 +193,18 @@ def run_evaluation(
     plain_count = total - role_count
     domains = list(dict.fromkeys(q["domain"] for q in questions))
 
-    print(f"\n{'='*70}")
-    print(f"  综合质量评测")
-    print(f"  题数: {total}（角色{role_count} + 自然语言{plain_count}）")
-    print(f"  领域: {', '.join(domains)}")
-    print(f"  评分模式: {'LLM-as-Judge' if use_llm else '启发式回退'}")
-    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"{'='*70}\n")
+    logger.info(f"\n{'='*70}")
+    logger.info(f"  综合质量评测")
+    logger.info(f"  题数: {total}（角色{role_count} + 自然语言{plain_count}）")
+    logger.info(f"  领域: {', '.join(domains)}")
+    logger.info(f"  评分模式: {'LLM-as-Judge' if use_llm else '启发式回退'}")
+    logger.info(f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    logger.info(f"{'='*70}\n")
 
     results = []
     for i, q in enumerate(questions, 1):
         query = q["query"]
-        print(f"[{i}/{total}] [{q['domain'][:6]}] [{q['difficulty']}] {query[:50]}...")
+        logger.info(f"[{i}/{total}] [{q['domain'][:6]}] [{q['difficulty']}] {query[:50]}...")
         t0 = time.time()
 
         try:
@@ -247,12 +254,13 @@ def run_evaluation(
 
             status_ok = len(retrieved_docs) > 0
             trunc = entry["truncation"]
-            trunc_str = f"截断 {trunc.get('truncated_count',0)}条" if trunc.get("truncated_count", 0) > 0 else "未截断"
+            trunc_str = f"截断 {trunc.get('truncated_count', 0)}条" if trunc.get(
+                "truncated_count", 0) > 0 else "未截断"
             avg_score = (score_cp["score"] + score_cr["score"] + score_ft["score"]
                          + score_rl["score"] + score_hc["score"]) / 5
-            print(f"  {'[OK]' if status_ok else '[WARN]'} {elapsed:.1f}s | "
-                  f"来源: {len(retrieved_docs)}条 | {trunc_str} | "
-                  f"平均分: {avg_score:.3f}")
+            logger.info(f"  {'[OK]' if status_ok else '[WARN]'} {elapsed:.1f}s | "
+                        f"来源: {len(retrieved_docs)}条 | {trunc_str} | "
+                        f"平均分: {avg_score:.3f}")
 
         except Exception as e:
             elapsed = time.time() - t0
@@ -271,7 +279,7 @@ def run_evaluation(
                 "auto_status": "运行错误",
                 "error": str(e),
             }
-            print(f"  [ERR] {elapsed:.1f}s | {str(e)[:80]}")
+            logger.info(f"  [ERR] {elapsed:.1f}s | {str(e)[:80]}")
 
         results.append(entry)
 
@@ -280,9 +288,9 @@ def run_evaluation(
             json.dump(results, f, ensure_ascii=False, indent=2)
 
     # ── 汇总 ──
-    print(f"\n{'='*70}")
-    print(f"  评估完成")
-    print(f"{'='*70}")
+    logger.info(f"\n{'='*70}")
+    logger.info(f"  评估完成")
+    logger.info(f"{'='*70}")
     has_src = sum(1 for r in results if r.get("sources"))
     errors = sum(1 for r in results if r.get("auto_status") == "运行错误")
     scorable = [r for r in results if r.get("scores")]
@@ -292,29 +300,31 @@ def run_evaluation(
         for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
             vals = [r["scores"][key]["score"] for r in scorable if key in r.get("scores", {})]
             avg_scores[key] = round(sum(vals) / len(vals), 4) if vals else 0
-        print(f"  平均评分:")
-        print(f"    Context Precision: {avg_scores.get('context_precision', 0):.4f}")
-        print(f"    Context Recall:    {avg_scores.get('context_recall', 0):.4f}")
-        print(f"    Faithfulness:      {avg_scores.get('faithfulness', 0):.4f}")
-        print(f"    Relevancy:         {avg_scores.get('relevancy', 0):.4f}")
-        print(f"    Hallucination:     {avg_scores.get('hallucination', 0):.4f}")
+        logger.info(f"  平均评分:")
+        logger.info(f"    Context Precision: {avg_scores.get('context_precision', 0):.4f}")
+        logger.info(f"    Context Recall:    {avg_scores.get('context_recall', 0):.4f}")
+        logger.info(f"    Faithfulness:      {avg_scores.get('faithfulness', 0):.4f}")
+        logger.info(f"    Relevancy:         {avg_scores.get('relevancy', 0):.4f}")
+        logger.info(f"    Hallucination:     {avg_scores.get('hallucination', 0):.4f}")
 
         # C5 截断影响统计
-        trunc_records = [r for r in scorable if r.get("truncation", {}).get("truncated_count", 0) > 0]
+        trunc_records = [r for r in scorable if r.get(
+            "truncation", {}).get("truncated_count", 0) > 0]
         c5_rate = len(trunc_records) / len(scorable) * 100 if scorable else 0
         if trunc_records:
             orig_sum = sum(r["truncation"]["original_count"] for r in trunc_records)
             kept_sum = sum(r["truncation"]["kept_count"] for r in trunc_records)
             avg_trunc_rate = (orig_sum - kept_sum) / orig_sum * 100 if orig_sum else 0
-            print(f"    C5 截断影响率:   {c5_rate:.0f}% 的题目被截断")
-            print(f"    平均截断量: 原{orig_sum//len(trunc_records)}条 → 保留{kept_sum//len(trunc_records)}条")
+            logger.info(f"    C5 截断影响率:   {c5_rate:.0f}% 的题目被截断")
+            logger.info(
+                f"    平均截断量: 原{orig_sum//len(trunc_records)}条 → 保留{kept_sum//len(trunc_records)}条")
         else:
-            print(f"    C5 截断影响率:   0%（未被截断）")
+            logger.info(f"    C5 截断影响率:   0%（未被截断）")
 
-    print(f"\n  总题数: {len(results)}")
-    print(f"  有来源: {has_src}/{len(results)}")
-    print(f"  错误:   {errors}")
-    print(f"  已保存: {output_file}")
+    logger.info(f"\n  总题数: {len(results)}")
+    logger.info(f"  有来源: {has_src}/{len(results)}")
+    logger.info(f"  错误:   {errors}")
+    logger.info(f"  已保存: {output_file}")
     return results
 
 
@@ -341,8 +351,10 @@ def generate_html(results: list[dict], output_file: Path):
     c5_rate = len(trunc_records) / len(scorable) * 100 if scorable else 0
 
     def _score_color(v):
-        if v >= 0.8: return "#34c759"
-        if v >= 0.5: return "#ff9500"
+        if v >= 0.8:
+            return "#34c759"
+        if v >= 0.5:
+            return "#ff9500"
         return "#ff3b30"
 
     def _bar(v):
@@ -508,7 +520,7 @@ tr:hover{{background:#fafafa}}
 
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"  [OK] HTML: {output_file}")
+    logger.info(f"  [OK] HTML: {output_file}")
 
 
 def _generate_compare_html(current_avg: dict, current_results: list = None) -> str:
@@ -530,7 +542,8 @@ def _generate_compare_html(current_avg: dict, current_results: list = None) -> s
             vals = [r["scores"][key]["score"] for r in prev_scorable if key in r.get("scores", {})]
             prev_avg[key] = round(sum(vals) / len(vals), 4) if vals else 0
         # C5
-        prev_trunc = [r for r in prev_scorable if r.get("truncation", {}).get("truncated_count", 0) > 0]
+        prev_trunc = [r for r in prev_scorable if r.get(
+            "truncation", {}).get("truncated_count", 0) > 0]
         prev_c5_rate = len(prev_trunc) / len(prev_scorable) * 100 if prev_scorable else 0
     except Exception:
         return '<div class="compare-section"><h3>版本对比</h3><p style="color:var(--t2);font-size:13px">历史数据读取失败</p></div>'
@@ -639,15 +652,15 @@ def show_comparison():
     """终端打印版本对比"""
     versions = _load_versions()
     if len(versions) < 2:
-        print("  [i] 只有一次记录，无法对比")
+        logger.info("  [i] 只有一次记录，无法对比")
         return
 
     curr = versions[-1]
     prev = versions[-2]
 
-    print(f"\n  {'='*55}")
-    print(f"  版本对比: {prev['version']} → {curr['version']}")
-    print(f"  {'='*55}")
+    logger.info(f"\n  {'='*55}")
+    logger.info(f"  版本对比: {prev['version']} → {curr['version']}")
+    logger.info(f"  {'='*55}")
 
     curr_avg = curr.get("avg_scores", {})
     prev_avg = prev.get("avg_scores", {})
@@ -660,17 +673,17 @@ def show_comparison():
         "hallucination": "Hallucination",
     }
 
-    print(f"  {'指标':<22} {'当前':>8} {'上次':>8} {'变化':>8}")
-    print(f"  {'-'*50}")
+    logger.info(f"  {'指标':<22} {'当前':>8} {'上次':>8} {'变化':>8}")
+    logger.info(f"  {'-'*50}")
     for key, label in labels.items():
         curr_v = curr_avg.get(key, 0)
         prev_v = prev_avg.get(key, 0)
         diff = curr_v - prev_v
         diff_str = f"+{diff:.3f}" if diff > 0 else str(diff)
-        print(f"  {label:<22} {curr_v:>8.3f} {prev_v:>8.3f} {diff_str:>8}")
+        logger.info(f"  {label:<22} {curr_v:>8.3f} {prev_v:>8.3f} {diff_str:>8}")
 
-    print(f"\n  总题数: {curr.get('total','?')} → {prev.get('total','?')}")
-    print(f"  错误数: {curr.get('errors','?')} → {prev.get('errors','?')}")
+    logger.info(f"\n  总题数: {curr.get('total', '?')} → {prev.get('total', '?')}")
+    logger.info(f"  错误数: {curr.get('errors', '?')} → {prev.get('errors', '?')}")
 
 
 # ============================================================
@@ -695,7 +708,7 @@ def load_questions_from_db(db_path: Optional[str] = None) -> list[dict]:
         _agent_data = _SRC.parent / "agent_data"
         db_path = str(_agent_data / "agent.db") if _agent_data.exists() else ""
     if not db_path or not os.path.exists(db_path):
-        print("  [WARN] DB 不存在，回退硬编码测试集")
+        logger.info("  [WARN] DB 不存在，回退硬编码测试集")
         return QUESTIONS
     import sqlite3
     try:
@@ -704,7 +717,7 @@ def load_questions_from_db(db_path: Optional[str] = None) -> list[dict]:
                 "SELECT query, domain, difficulty, style FROM e2e_eval_items WHERE is_active=1 ORDER BY id ASC"
             ).fetchall()
         if not rows:
-            print("  [WARN] DB 中无测试题，回退硬编码测试集")
+            logger.info("  [WARN] DB 中无测试题，回退硬编码测试集")
             return QUESTIONS
         questions = []
         for i, (query, domain, difficulty, style) in enumerate(rows, 1):
@@ -718,7 +731,7 @@ def load_questions_from_db(db_path: Optional[str] = None) -> list[dict]:
             })
         return questions
     except Exception as e:
-        print(f"  [WARN] 读取 DB 失败: {e}，回退硬编码测试集")
+        logger.info(f"  [WARN] 读取 DB 失败: {e}，回退硬编码测试集")
         return QUESTIONS
 
 
@@ -737,18 +750,19 @@ def main():
     questions = QUESTIONS
     if args.from_db:
         questions = load_questions_from_db()
-        print(f"  [i] 从数据库加载 {len(questions)} 题")
+        logger.info(f"  [i] 从数据库加载 {len(questions)} 题")
     elif args.limit > 0:
         questions = questions[:args.limit]
-        print(f"  [i] 限定 {args.limit} 题（调试模式）")
+        logger.info(f"  [i] 限定 {args.limit} 题（调试模式）")
 
     results = []
     if not args.no_run:
         # 初始化 agent
-        print(f"\n  [*] 初始化 CyberAgent ...")
+        logger.info(f"\n  [*] 初始化 CyberAgent ...")
         from agent import CyberAgent
         agent = CyberAgent()
-        print(f"  [OK] Agent 就绪 (LLM: {agent.llm.model if hasattr(agent.llm, 'model') else '?'})\n")
+        logger.info(
+            f"  [OK] Agent 就绪 (LLM: {agent.llm.model if hasattr(agent.llm, 'model') else '?'})\n")
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_json = _EVAL_DIR / f"eval_e2e_results_{ts}.json"
@@ -763,10 +777,10 @@ def main():
         # 从已有 JSON 加载
         latest_json, _ = find_latest_results()
         if not latest_json:
-            print("  [ERR] 未找到历史结果 JSON，请先不带 --no-run 跑一次")
+            logger.info("  [ERR] 未找到历史结果 JSON，请先不带 --no-run 跑一次")
             sys.exit(1)
         results = json.loads(latest_json.read_text(encoding="utf-8"))
-        print(f"  [i] 从 {latest_json.name} 加载 {len(results)} 条结果")
+        logger.info(f"  [i] 从 {latest_json.name} 加载 {len(results)} 条结果")
 
     # 生成 HTML
     if results:
@@ -777,7 +791,8 @@ def main():
         # 保存版本记录
         stats = _compute_stats(results)
         _save_version(
-            results_json=output_json if not args.no_run else (latest_json or _EVAL_DIR / "unknown.json"),
+            results_json=output_json if not args.no_run else (
+                latest_json or _EVAL_DIR / "unknown.json"),
             html_path=output_html,
             version_tag=version_tag,
             stats=stats,
@@ -790,11 +805,11 @@ def main():
         # 自动打开
         if args.open:
             webbrowser.open(f"file:///{output_html.resolve().as_posix()}")
-            print(f"  [WWW] 已打开浏览器")
+            logger.info(f"  [WWW] 已打开浏览器")
 
-        print(f"\n  [OK] 完成。查看报告: {output_html}")
+        logger.info(f"\n  [OK] 完成。查看报告: {output_html}")
     else:
-        print("  [ERR] 无结果，无法生成报告")
+        logger.info("  [ERR] 无结果，无法生成报告")
 
 
 if __name__ == "__main__":

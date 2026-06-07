@@ -168,7 +168,8 @@ def compare_versions(version_a: str, version_b: str, db_path: str) -> dict:
 def get_active_version_name(db_path: str) -> str | None:
     """获取当前活跃版本的名称"""
     conn = sqlite3.connect(db_path)
-    row = conn.execute("SELECT version_name FROM prompt_versions WHERE is_active = 1 LIMIT 1").fetchone()
+    row = conn.execute(
+        "SELECT version_name FROM prompt_versions WHERE is_active = 1 LIMIT 1").fetchone()
     conn.close()
     return row[0] if row else None
 
@@ -178,7 +179,8 @@ def activate_version(version_id: int, db_path: str) -> dict:
     conn = sqlite3.connect(db_path)
     conn.execute("UPDATE prompt_versions SET is_active = 0")
     conn.execute("UPDATE prompt_versions SET is_active = 1 WHERE id = ?", (version_id,))
-    row = conn.execute("SELECT version_name, system_prompt FROM prompt_versions WHERE id = ?", (version_id,)).fetchone()
+    row = conn.execute(
+        "SELECT version_name, system_prompt FROM prompt_versions WHERE id = ?", (version_id,)).fetchone()
     conn.commit()
     conn.close()
     if row:
@@ -203,7 +205,8 @@ def get_version_prompt(version_id: int, db_path: str) -> dict | None:
 def get_version_results(version_id: int, db_path: str, limit: int = 5) -> dict:
     """获取版本的最新跑分结果"""
     conn = sqlite3.connect(db_path)
-    row = conn.execute("SELECT version_name FROM prompt_versions WHERE id = ?", (version_id,)).fetchone()
+    row = conn.execute("SELECT version_name FROM prompt_versions WHERE id = ?",
+                       (version_id,)).fetchone()
     if not row:
         conn.close()
         return {"error": "版本不存在"}
@@ -248,7 +251,8 @@ def regression_check(version_id: int, db_path: str, threshold: float = 0.1) -> d
     """退化检测：对比最近两次跑分，各维度下降超阈值标记退化"""
     import json
     conn = sqlite3.connect(db_path)
-    row = conn.execute("SELECT version_name FROM prompt_versions WHERE id = ?", (version_id,)).fetchone()
+    row = conn.execute("SELECT version_name FROM prompt_versions WHERE id = ?",
+                       (version_id,)).fetchone()
     if not row:
         conn.close()
         return {"error": "版本不存在"}
@@ -269,8 +273,10 @@ def regression_check(version_id: int, db_path: str, threshold: float = 0.1) -> d
         if len(entries) < 2:
             continue
         try:
-            scores_new = json.loads(entries[0][0]) if isinstance(entries[0][0], str) else entries[0][0]
-            scores_old = json.loads(entries[1][0]) if isinstance(entries[1][0], str) else entries[1][0]
+            scores_new = json.loads(entries[0][0]) if isinstance(
+                entries[0][0], str) else entries[0][0]
+            scores_old = json.loads(entries[1][0]) if isinstance(
+                entries[1][0], str) else entries[1][0]
         except (json.JSONDecodeError, TypeError):
             continue
         for dim in scores_new:

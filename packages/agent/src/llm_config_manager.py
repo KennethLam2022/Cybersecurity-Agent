@@ -6,7 +6,12 @@
   - LLM 配置元数据读写（JSON）
   - LLM 配置卡片持久化（SQLite）
 """
-import os, sys, json, logging, hashlib, base64
+import os
+import sys
+import json
+import logging
+import hashlib
+import base64
 from pathlib import Path
 from typing import Optional
 
@@ -41,7 +46,8 @@ if _ENCRYPTION_KEY:
     logger.info(f"📌 加密密钥已同步到环境变量 LLM_KEY_ENCRYPTION_KEY")
 
 if _CRYPTO_AVAILABLE:
-    _fernet = Fernet(_ENCRYPTION_KEY.encode() if isinstance(_ENCRYPTION_KEY, str) else _ENCRYPTION_KEY)
+    _fernet = Fernet(_ENCRYPTION_KEY.encode() if isinstance(
+        _ENCRYPTION_KEY, str) else _ENCRYPTION_KEY)
     logger.info(f"🔐 Fernet 加密器已初始化 (key 前8位: {_ENCRYPTION_KEY[:8] if _ENCRYPTION_KEY else 'N/A'})")
 
 

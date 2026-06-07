@@ -4,7 +4,9 @@ Prompt 测试管理器 — 纯函数核心模块
 职责：测试集生成、单条/批量运行、智能修复建议
 设计：不依赖 FastAPI，LLM/Agent 从外部注入（DI），可独立 pytest
 """
-import json, time, re
+import json
+import time
+import re
 from typing import Optional, Callable
 from datetime import datetime
 
@@ -93,7 +95,8 @@ def generate_test_set(keywords: str, llm=None) -> list:
     )
 
     try:
-        raw = llm.chat([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=4000, timeout=30)
+        raw = llm.chat([{"role": "user", "content": prompt}],
+                       temperature=0.3, max_tokens=4000, timeout=30)
         items = json.loads(_extract_json(raw))
         if isinstance(items, list) and len(items) >= 5:
             return items[:20]
@@ -139,7 +142,7 @@ def _mock_generate(keywords: str) -> list:
 
 
 def run_single_test(item: dict, agent) -> dict:
-    """运行单条测试
+    """运行单条 Prompt 测试（仅域A规则评分，不调用 LLM）
 
     Args:
         item: {"query": "...", "category": "...", "difficulty": "...", "expected": {...}}
@@ -263,13 +266,14 @@ def suggest_fix(failed_item: dict, current_system_prompt: str, llm=None) -> dict
     if llm is None:
         return {
             "analysis": f"测试失败: {fail_reason}",
-            "new_system_prompt": current_system_prompt + f"\n# 新增规则: 针对 {failed_item.get('category','')} 类问题加强回答规范\n",
-            "diff_summary": f"新增规则: 加强{failed_item.get('category','')}回答规范",
+            "new_system_prompt": current_system_prompt + f"\n# 新增规则: 针对 {failed_item.get('category', '')} 类问题加强回答规范\n",
+            "diff_summary": f"新增规则: 加强{failed_item.get('category', '')}回答规范",
             "changed_lines": {"added": 1, "removed": 0},
         }
 
     try:
-        raw = llm.chat([{"role": "user", "content": prompt}], temperature=0.2, max_tokens=4000, timeout=30)
+        raw = llm.chat([{"role": "user", "content": prompt}],
+                       temperature=0.2, max_tokens=4000, timeout=30)
         result = json.loads(_extract_json(raw))
         return {
             "analysis": result.get("analysis", fail_reason),
