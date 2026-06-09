@@ -18,6 +18,35 @@ import requests as http_requests
 router = APIRouter()
 
 
+def _check_llm_conflict() -> dict:
+    """检查 chat 卡和 promptEval 卡是否配置了相同的 LLM。
+
+    Returns:
+        {"conflict": False} 或
+        {"conflict": True, "chat": "Provider/Model", "promptEval": "Provider/Model",
+         "warning": "① 聊天 LLM 与 ⑥ 后端评测 LLM 均为 xxx，评测可能存在自评偏差。建议为 promptEval 配置不同的 LLM。"}
+    """
+    chat_cfg = _get_llm_config_card("chat")
+    eval_cfg = _get_llm_config_card("promptEval")
+    if not chat_cfg or not chat_cfg.get("model") or not eval_cfg or not eval_cfg.get("model"):
+        # 任一未配置，无法判断或本身就无独立评测 LLM，不告警
+        return {"conflict": False}
+
+    chat_key = f"{chat_cfg.get('provider', '?')}/{chat_cfg['model']}"
+    eval_key = f"{eval_cfg.get('provider', '?')}/{eval_cfg['model']}"
+
+    if chat_key == eval_key:
+        return {
+            "conflict": True,
+            "chat": chat_key,
+            "promptEval": eval_key,
+            "warning": f"① 聊天 LLM 与 ⑥ 后端评测 LLM 均为 「{chat_key}」，"
+                       "评分 LLM 与作答 LLM 使用相同模型，评测可能存在自评偏差。"
+                       "建议为 promptEval 配置一个不同的 LLM（如更强或更严格的模型）以确保评分客观性。",
+        }
+    return {"conflict": False}
+
+
 # ==================== E2E Eval ====================
 @router.get("/api/stats/e2e-eval/items")
 def get_e2e_eval_items():
@@ -210,6 +239,10 @@ def e2e_eval_run(data: dict = None):
                 )
                 logger.info(
                     f"评测 LLM 使用 promptEval 卡片: {prompt_eval_cfg.get('provider', '?')} / {prompt_eval_cfg.get('model', '?')}")
+                # 冲突告警：chat 和 promptEval 是否相同 LLM
+                conflict = _check_llm_conflict()
+                if conflict.get("conflict"):
+                    logger.warning(f"⚠️ 评测 LLM 冲突: {conflict['warning']}")
             except Exception as e:
                 logger.warning(f"创建评测 LLM 失败: {e}")
 
@@ -227,7 +260,6 @@ def e2e_eval_run(data: dict = None):
             use_llm=use_llm,
             output_file=output_json,
             eval_llm=eval_llm,
-            answer_llm=eval_llm,
         )
 
         html_file = _Path(str(_HTML_DIR)) / f"eval_e2e_report_{ts}.html"
@@ -277,6 +309,12 @@ def e2e_eval_latest():
     if not latest_json or not latest_json.exists():
         return JSONResponse({"error": "暂无评测结果"}, status_code=404)
     return JSONResponse(json.loads(latest_json.read_text(encoding="utf-8")))
+
+
+@router.get("/api/stats/e2e-eval/llm-conflict")
+def e2e_eval_llm_conflict():
+    """检查 chat 和 promptEval 是否配置了相同的 LLM，返回冲突告警"""
+    return _check_llm_conflict()
 
 
 @router.get("/api/stats/eval-summary/e2e-quality")

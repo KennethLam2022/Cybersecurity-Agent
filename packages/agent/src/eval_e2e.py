@@ -691,11 +691,19 @@ def show_comparison():
 # ============================================================
 
 def find_latest_results() -> tuple[Optional[Path], Optional[Path]]:
-    """查找最新的结果 JSON 和 HTML"""
+    """查找最新的结果 JSON 和 HTML（按文件名时间戳排序）"""
+    def _ts_key(p: Path):
+        # 文件名: eval_e2e_results_20250609_143000.json → "20250609_143000"
+        name = p.stem
+        parts = name.split("_")
+        if len(parts) >= 4:
+            # parts[-2] = YYYYMMDD, parts[-1] = HHMMSS
+            return parts[-2] + parts[-1]
+        return name
     json_files = sorted(_EVAL_DIR.glob("eval_e2e_results_*.json"),
-                        key=lambda p: p.stat().st_mtime, reverse=True)
+                        key=_ts_key, reverse=True)
     html_files = sorted(_HTML_DIR.glob("eval_e2e_report_*.html"),
-                        key=lambda p: p.stat().st_mtime, reverse=True)
+                        key=_ts_key, reverse=True)
     latest_json = json_files[0] if json_files else None
     latest_html = html_files[0] if html_files else None
     return latest_json, latest_html

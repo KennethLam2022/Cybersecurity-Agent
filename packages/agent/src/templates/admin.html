@@ -145,7 +145,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
 .prompt-view{display:none;animation:fadeIn .3s}
 .prompt-view.active{display:block}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px;margin-bottom:16px}
 .stat-card{background:var(--bg);border-radius:10px;padding:16px;text-align:center}
 .stat-card .num{font-size:32px;font-weight:700;color:var(--a);display:block;overflow-wrap:break-word;word-break:break-all;line-height:1.2}
 .stat-card .lbl{font-size:12px;color:var(--t2);margin-top:4px;display:block}
@@ -668,6 +668,12 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
         <span id="e2eStatus" style="font-size:12px;color:var(--t2)"></span>
         <span style="flex:1"></span>
         <span style="font-size:11px;color:var(--t2)">⚙ 使用 ⑥ 后端评测 LLM 生成分析建议</span>
+      </div>
+
+      <!-- LLM 冲突告警横幅 -->
+      <div id="e2eLlmConflictBanner" style="display:none;margin-bottom:12px;padding:8px 14px;border-radius:8px;font-size:12px;line-height:1.6;background:#fff3cd;border:1px solid #ffc107;color:#856404">
+        <span style="font-weight:600">⚠️ LLM 冲突告警：</span>
+        <span id="e2eLlmConflictText"></span>
       </div>
 
       <!-- 汇总统计 -->
@@ -3382,6 +3388,25 @@ async function loadE2eEval() {
     } catch(e) {
       document.getElementById('e2eSummaryCard').style.display = 'none';
     }
+
+    // LLM 冲突告警：检查 chat 和 promptEval 是否相同
+    try {
+      const r3 = await fetch('/api/stats/e2e-eval/llm-conflict');
+      if (r3.ok) {
+        const d3 = await r3.json();
+        const banner = document.getElementById('e2eLlmConflictBanner');
+        const text = document.getElementById('e2eLlmConflictText');
+        if (d3.conflict && banner && text) {
+          banner.style.display = 'block';
+          text.textContent = d3.warning;
+        } else if (banner) {
+          banner.style.display = 'none';
+        }
+      }
+    } catch(e) {
+      const banner = document.getElementById('e2eLlmConflictBanner');
+      if (banner) banner.style.display = 'none';
+    }
   } catch(e) {
     document.getElementById('e2eEmpty').style.display = 'flex';
     document.getElementById('e2eStats').style.display = 'none';
@@ -3417,7 +3442,7 @@ function renderE2eResults(results) {
     xAxis:{type:'category',data:keys.map(k=>names[k]),axisLabel:{fontSize:11,interval:0}},
     yAxis:{type:'value',min:0,max:1,axisLabel:{formatter:v=>(v*100).toFixed(0)+'%'}},
     series:[{type:'bar',data:keys.map(k=>({
-      value:avgScores[k].toFixed(3),
+      value:+avgScores[k].toFixed(3),
       itemStyle:{color:avgScores[k]>=0.8?'#34c759':avgScores[k]>=0.5?'#ff9500':'#ff3b30'}
     })),barWidth:40,label:{show:true,position:'top',formatter:p=>p.value,fontSize:11}}],
     grid:{left:60,right:20,top:40,bottom:40},
@@ -3434,7 +3459,7 @@ function renderE2eResults(results) {
   const domains = Object.keys(domainMap);
   const domainSeries = keys.map(k => ({
     name: labels[k], type:'bar',
-    data: domains.map(d => (domainMap[d].sum[k]/domainMap[d].total).toFixed(3))
+    data: domains.map(d => +(domainMap[d].sum[k]/domainMap[d].total).toFixed(3))
   }));
   makeChart('chartE2eDomain', {
     title:{text:'各域综合质量表现',textStyle:{fontSize:13,fontWeight:600}},
