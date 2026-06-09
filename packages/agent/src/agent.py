@@ -1052,20 +1052,32 @@ class CyberAgent:
         conversation_id: Optional[str] = None,
         temperature: float = 0.1,
         category: str = "user",
+        skip_memory: bool = False,
     ) -> dict:
         """执行一次问答
 
         流程：
           Query 改写 → 检索 → Prompt 组装 → LLM 生成 → 记忆保存
 
+        Args:
+            skip_memory: True 时跳过所有 DB 写入（conversation/message/usage），
+                         用于 Prompt Test 等不需要持久化的场景。
+
         返回：
           {"answer": "...", "sources": [...], "conversation_id": "...", "rewritten_query": "...", "stats": {...}}
         """
         if not conversation_id:
-            conv = self.memory.create_conversation(title=query[:50], category=category)
-            conversation_id = conv["id"]
+            if skip_memory:
+                import uuid
+                conversation_id = "test_" + str(uuid.uuid4())[:8]
+            else:
+                conv = self.memory.create_conversation(title=query[:50], category=category)
+                conversation_id = conv["id"]
 
-        user_msg_id = self.memory.add_message(conversation_id, "user", query)
+        if skip_memory:
+            user_msg_id = 0
+        else:
+            user_msg_id = self.memory.add_message(conversation_id, "user", query)
 
         # ---- 用户越狱检测 ----
         conv_history = self.memory.get_history(conversation_id)

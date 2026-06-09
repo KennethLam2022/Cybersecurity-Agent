@@ -141,12 +141,13 @@ def _mock_generate(keywords: str) -> list:
     ]
 
 
-def run_single_test(item: dict, agent) -> dict:
+def run_single_test(item: dict, agent, retrieved_docs: Optional[list] = None) -> dict:
     """运行单条 Prompt 测试（仅域A规则评分，不调用 LLM）
 
     Args:
         item: {"query": "...", "category": "...", "difficulty": "...", "expected": {...}}
         agent: CyberAgent 实例
+        retrieved_docs: 可选检索文档列表（供后端记录，域B/C评分在 prompt_tester.py 中处理）
 
     Returns:
         {"id": ..., "query": ..., "scores": {...}, "weighted_score": ..., "passed": ..., ...}
@@ -205,6 +206,7 @@ def run_single_test(item: dict, agent) -> dict:
         "category": category,
         "difficulty": item.get("difficulty", "medium"),
         "answer_preview": answer[:300],
+        "answer": answer,
         "scores": scores,
         "avg_score": round(avg, 2),
         "weighted_score": weighted_score,

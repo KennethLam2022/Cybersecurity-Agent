@@ -879,7 +879,12 @@ def prompt_test_run_all(data: dict = Body(...)):
 
     results = []
     for item in items:
-        result = run_single_test(item, agent)
+        # 为域B/C获取检索文档
+        try:
+            retrieved = agent.memory.search(query=item["query"], limit=10) if hasattr(agent, 'memory') else []
+        except Exception:
+            retrieved = []
+        result = run_single_test(item, agent, retrieved_docs=retrieved)
         results.append(result)
         # 保存单条结果到 version_test_results
         if result.get("scores"):
@@ -890,7 +895,7 @@ def prompt_test_run_all(data: dict = Body(...)):
                     str(item["id"]),
                     result.get("category", ""),
                     item["query"],
-                    result.get("answer_preview", ""),
+                    result.get("answer", ""),
                     json.dumps(result["scores"]),
                     result.get("weighted_score", 0),
                     result.get("duration", 0),
@@ -956,7 +961,7 @@ def prompt_test_run_all(data: dict = Body(...)):
 
 @router.post("/api/prompt/test/run-elastic")
 def prompt_test_run_elastic(data: dict = Body(...)):
-    """运行弹性测试：基线 + 5 种变体 + 4 种噪声，评分一致性/鲁棒性"""
+    """运行弹性测试：基线 + N 种变体 + 动态噪声，评分一致性/鲁棒性/Faithfulness"""
     base_query = data.get("query", "")
     if not base_query:
         return JSONResponse({"error": "query 不能为空"}, status_code=400)
@@ -965,7 +970,9 @@ def prompt_test_run_elastic(data: dict = Body(...)):
     import json
 
     from prompt_versions import get_active_version_name
-    from prompt_tester import _eval_annotation, _eval_brand, _eval_rejection, _eval_contain, _eval_efficiency
+    from prompt_tester import (_eval_annotation, _eval_brand, _eval_rejection, _eval_contain, _eval_efficiency,
+                               _eval_faithfulness, _eval_hallucination, _keyword_overlap_tfidf,
+                               _generate_noise_variants)
 
     active_v = get_active_version_name(agent.memory._db_path) or "unknown"
     conn = _db()
@@ -975,10 +982,9 @@ def prompt_test_run_elastic(data: dict = Body(...)):
     base_duration = time.time() - start
     base_answer = base_result.get("answer", "")
     base_len = len(base_answer)
-    base_tokens = len(base_answer.split())
 
     # 2. 跑变体
-    from prompt_tester import ELASTIC_VARIATIONS, ELASTIC_NOISE
+    from prompt_tester import ELASTIC_VARIATIONS
     variants = []
     for name, transform in ELASTIC_VARIATIONS.items():
         q = transform(base_query)
@@ -988,8 +994,9 @@ def prompt_test_run_elastic(data: dict = Body(...)):
         ans = r.get("answer", "")
         variants.append({"name": name, "query": q[:100], "answer": ans, "duration": round(dur, 2), "length": len(ans), "type": "variation"})
 
-    # 3. 跑噪声
-    for name, q in ELASTIC_NOISE.items():
+    # 3. 跑噪声（动态生成，基于基线问题）
+    noise_variants = _generate_noise_variants(base_query)
+    for name, q in noise_variants.items():
         start = time.time()
         r = agent.ask(query=q, conversation_id=None, temperature=0.1, category="prompt_test")
         dur = time.time() - start
@@ -997,37 +1004,61 @@ def prompt_test_run_elastic(data: dict = Body(...)):
         variants.append({"name": name, "query": q[:100], "answer": ans, "duration": round(dur, 2), "length": len(ans), "type": "noise"})
 
     # 4. 评分
-    # — 一致性 (60%)：语义相似性、要点覆盖率、无矛盾、质量不退化
-    # — 鲁棒性 (40%)：拼写容错、模糊容错、极端输入、对抗性
     consistency_details = {}
     robustness_details = {}
 
     for v in variants:
         ans = v["answer"]
-        # 来源标注分数
         ann_ok, _ = _eval_annotation(ans)
-        # 品牌禁止分数
         brand_ok, _, _ = _eval_brand(ans)
-        # 长度一致性(与基线对比)
-        len_ratio = min(v["length"], base_len) / max(v["length"], base_len, 1)
-        # 是否有内容(非空)
-        has_content = len(ans.strip()) > 50
+        has_content = len(ans.strip()) > 100
+
+        # TF-IDF 语义重叠度
+        kw_overlap = _keyword_overlap_tfidf(base_answer, ans)
+
+        # Faithfulness + Hallucination 评分
+        faith_score, _ = _eval_faithfulness(ans, [])
+        hall_score, _ = _eval_hallucination(ans, [])
+        faith_ok = faith_score >= 0.7
 
         if v["type"] == "variation":
+            # 新一致性公式：faithfulness + 语义重叠 + 标注 + 幻觉
+            consistency_score = round(
+                0.4 * faith_score +
+                0.3 * kw_overlap +
+                0.2 * (1.0 if ann_ok else 0.0) +
+                0.1 * (1.0 if faith_ok else 0.0),
+                2
+            )
+            consistency_score = max(0.0, min(1.0, consistency_score))
             consistency_details[v["name"]] = {
-                "semantic_score": round(len_ratio * 0.6 + (1.0 if ann_ok else 0.0) * 0.4, 2),
+                "semantic_score": consistency_score,
+                "faithfulness": round(faith_score, 2),
+                "hallucination": round(hall_score, 2),
                 "coverage": 1.0 if has_content else 0.0,
-                "non_contradiction": 1.0 if ann_ok else 0.5,
-                "no_degradation": round(len_ratio, 2),
             }
+            v["faithfulness"] = round(faith_score, 2)
+            v["hallucination"] = round(hall_score, 2)
+            v["consistency"] = consistency_score
+            v["keyword_overlap"] = kw_overlap
         else:
-            # noise → robustness
+            # 鲁棒性：每个维度独立判断
+            spell_tol = 1.0 if v["name"] in ("typo", "spelling_error") and has_content else (0.0 if v["name"] in ("typo", "spelling_error") else 0.5)
+            fuzzy_tol = 1.0 if v["name"] in ("casual", "irrelevant") and has_content and kw_overlap > 0.5 else (0.5 if v["name"] in ("casual", "irrelevant") and has_content else 0.0)
+            extreme_inp = 1.0 if v["name"] in ("short", "domain_shift", "length_extreme", "redundant") and has_content else (0.3 if v["name"] in ("short", "domain_shift", "length_extreme", "redundant") else 0.0)
+            adversarial = 1.0 if v["name"] == "inducement" and brand_ok and faith_score >= 0.7 else (0.5 if v["name"] == "inducement" and brand_ok else 0.0)
+            mixed_tol = 1.0 if v["name"] == "mixed" and has_content and kw_overlap > 0.4 else 0.0
+
             robustness_details[v["name"]] = {
-                "spelling_tolerance": 1.0 if has_content and brand_ok else 0.5 if has_content else 0.0,
-                "fuzzy_tolerance": 1.0 if has_content else 0.0,
-                "extreme_input": 1.0 if has_content and ann_ok else 0.3,
-                "adversarial": 0.0 if brand_ok and ann_ok else 0.5,
+                "spelling_tolerance": spell_tol,
+                "fuzzy_tolerance": fuzzy_tol,
+                "extreme_input": extreme_inp,
+                "adversarial": adversarial,
+                "mixed_tolerance": mixed_tol,
             }
+            v["faithfulness"] = round(faith_score, 2)
+            v["hallucination"] = round(hall_score, 2)
+            v["keyword_overlap"] = kw_overlap
 
     # 聚合
     consistency_scores = [v.get("semantic_score", 0) for v in consistency_details.values()]
@@ -1036,7 +1067,11 @@ def prompt_test_run_elastic(data: dict = Body(...)):
     for rd in robustness_details.values():
         robustness_scores.append(sum(rd.values()) / len(rd))
     robustness_avg = round(sum(robustness_scores) / len(robustness_scores), 2) if robustness_scores else 0
-    composite = round(consistency_avg * 0.6 + robustness_avg * 0.4, 2)
+    composite = round(consistency_avg * 0.5 + robustness_avg * 0.5, 2)
+
+    # 最弱变体
+    all_scores = [(v["name"], v.get("consistency", 0) or v.get("faithfulness", 0)) for v in variants if v["type"] == "variation"]
+    weakest = sorted(all_scores, key=lambda x: x[1])[:3]
 
     report = {
         "timestamp": datetime.now().isoformat(),
@@ -1054,8 +1089,9 @@ def prompt_test_run_elastic(data: dict = Body(...)):
         "results": variants,
         "consistency_details": consistency_details,
         "robustness_details": robustness_details,
+        "weakest": [{"name": w[0], "score": w[1]} for w in weakest],
         "version": active_v,
-        "variant_type": True,  # 标记为弹性结果
+        "variant_type": True,
     }
 
     # 5. 保存到 DB

@@ -212,57 +212,48 @@ def _parse_image(path: Path) -> str:
     return text
 
 
-def _classify_table(rows: list) -> str:
-    """根据行/列数判断表格类型。
+def _parse_excel(path: Path) -> str:
+    """用 openpyxl 解析 Excel，按知识库表格策略输出 Markdown。
 
-    返回: 'small' | 'medium' | 'large'
-    - small  (≤20行, ≤10列) → Markdown 表格，可读性最好
-    - medium (≤200行, ≤20列) → HTML 表格，LLM 理解力最强（冠军方案验证）
-    - large  (>200行 或 >20列) → 属性-值序列化，避免语义稀疏
+    策略（来自知识库 2.3-表格处理）：
+    1. 小/中表格 → 整表作为 Markdown 表格（保持完整性）
+    2. 大表格（>20行或>10列） → 序列化为 attribute-value 对
+    3. 每个 sheet 独立输出
     """
-    if not rows:
-        return "small"
-    n_rows = len(rows)
-    n_cols = len(rows[0]) if rows else 0
+    import openpyxl
 
-    if n_rows <= 20 and n_cols <= 10:
-        return "small"
-    elif n_rows <= 200 and n_cols <= 20:
-        return "medium"
-    else:
-        return "large"
+    wb = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
+    sheets_text = []
+    sheet_index = 0
 
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            continue
 
-def _table_to_html(rows: list) -> str:
-    """将二维数组渲染为 HTML 表格。
+        cleaned = []
+        for row in rows:
+            cleaned.append([str(c) if c is not None else "" for c in row])
 
-    LLM 理解 HTML 表格的能力远强于 Markdown 表格（RAG Challenge 冠军方案验证），
-    特别是合并单元格、子标题等复杂结构在 HTML 中可以完整表达。
-    """
-    if not rows:
-        return ""
-    lines = ["<table>"]
-    # 表头
-    lines.append("  <thead>")
-    lines.append("    <tr>" + "".join(f"<th>{_escape_html(str(h))}</th>" for h in rows[0]) + "</tr>")
-    lines.append("  </thead>")
-    # 表体
-    lines.append("  <tbody>")
-    for row in rows[1:]:
-        cells = "".join(f"<td>{_escape_html(str(c))}</td>" for c in row)
-        lines.append(f"    <tr>{cells}</tr>")
-    lines.append("  </tbody>")
-    lines.append("</table>")
-    return "\n".join(lines)
+        sheet_text = f"## Sheet: {sheet_name}\n\n"
 
+        if len(cleaned) <= 20 and len(cleaned[0]) <= 10:
+            cleaned_20 = cleaned[:20]
+            if len(cleaned) > 20:
+                logger.info(f"  Sheet '{sheet_name}' 行数 {len(cleaned)} > 20，仅转前 20 行为表格，后续序列化")
+            sheet_text += _table_to_markdown(cleaned_20)
+            if len(cleaned) > 20:
+                sheet_text += "\n\n### 完整序列化（属性-值对）\n\n"
+                sheet_text += _table_serialize(cleaned)
+        else:
+            sheet_text += _table_serialize(cleaned)
 
-def _escape_html(text: str) -> str:
-    """转义 HTML 特殊字符，防止表格内容破坏 HTML 结构。"""
-    return (text
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;"))
+        sheets_text.append(sheet_text)
+        sheet_index += 1
+
+    wb.close()
+    return "\n\n---\n\n".join(sheets_text)
 
 
 def _table_to_markdown(rows: list) -> str:
@@ -296,74 +287,6 @@ def _table_serialize(rows: list) -> str:
         if pairs:
             entries.append("; ".join(pairs))
     return "\n".join(entries)
-
-
-def _parse_excel(path: Path) -> str:
-    """用 openpyxl 解析 Excel，按知识库表格策略输出 Markdown/HTML。
-
-    策略（来自知识库 2.3-表格处理 + RAG Challenge 冠军方案）：
-    1. 智能分流：分类别输出 MD / HTML / 序列化
-    2. 整表保留：中等表格整表输出 HTML，不切片（LLM 理解力最强）
-    3. Sheet 感知：每 Sheet 独立输出，section 元数据带 sheet 名
-    4. 大表标记：超大表添加 <!-- EXCEL_LARGE_TABLE --> 标记，下游切片器可择机不跨 chunk 切断
-    """
-    import openpyxl
-
-    wb = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
-    sheets_text = []
-    sheet_index = 0
-
-    for sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-        rows = list(ws.iter_rows(values_only=True))
-        if not rows:
-            continue
-
-        cleaned = []
-        for row in rows:
-            cleaned.append([str(c) if c is not None else "" for c in row])
-
-        table_type = _classify_table(cleaned)
-        n_rows = len(cleaned)
-        n_cols = len(cleaned[0]) if cleaned else 0
-
-        # --- Sheet 级元数据标记（改进 ③） ---
-        sheet_header = (
-            f"## Sheet: {sheet_name}\n\n"
-            f"<!-- sheet_name: {sheet_name} -->\n"
-            f"<!-- sheet_index: {sheet_index} -->\n"
-            f"<!-- table_type: {table_type} -->\n"
-            f"<!-- dimensions: {n_rows}rows x {n_cols}cols -->\n\n"
-        )
-
-        # --- 智能表格类型分流（改进 ① + ②） ---
-        if table_type == "small":
-            # 小表 → Markdown 表格，整表输出
-            sheet_text = sheet_header + _table_to_markdown(cleaned)
-            sheet_text += f"\n\n<!-- end sheet: {sheet_name} -->"
-
-        elif table_type == "medium":
-            # 中表 → HTML 表格（LLM 理解力最强）
-            sheet_text = sheet_header + _table_to_html(cleaned)
-            sheet_text += f"\n\n<!-- end sheet: {sheet_name} -->"
-
-        else:  # large
-            # 大表 → 属性-值序列化 + 大表标记（改进 ④）
-            sheet_text = (
-                sheet_header
-                + "<!-- EXCEL_LARGE_TABLE -->\n"
-                + f"<!-- 该 Sheet 行数较多 ({n_rows}行×{n_cols}列)，建议下游切片时保持整表不跨 chunk 切断 -->\n\n"
-                + "### 表格序列化（属性-值对）\n\n"
-                + _table_serialize(cleaned)
-                + f"\n\n<!-- end sheet: {sheet_name} -->"
-            )
-
-        sheets_text.append(sheet_text)
-        sheet_index += 1
-        logger.info(f"  Sheet '{sheet_name}': {n_rows}行×{n_cols}列 → {table_type}")
-
-    wb.close()
-    return "\n\n---\n\n".join(sheets_text)
 
 
 def _count_pages(path: Path) -> int:

@@ -280,9 +280,18 @@ class CyberRetriever:
         import tempfile
         import shutil
         _tmp_load = os.path.join(tempfile.gettempdir(), "_cyber_faiss_load")
-        if os.path.exists(_tmp_load):
-            shutil.rmtree(_tmp_load)
-        shutil.copytree(_FAISS_DIR, _tmp_load)
+        # 多次重试清理 + 复制（Windows 文件锁可能导致 rmtree 失败）
+        for attempt in range(3):
+            try:
+                if os.path.exists(_tmp_load):
+                    shutil.rmtree(_tmp_load)
+                shutil.copytree(_FAISS_DIR, _tmp_load)
+                break
+            except Exception:
+                if attempt < 2:
+                    time.sleep(0.1)
+                else:
+                    raise
         try:
             self._faiss_db = FAISS.load_local(
                 _tmp_load,
@@ -701,14 +710,14 @@ class CyberRetriever:
             self._load_faiss()
             info["faiss"] = True
             info["faiss_vectors"] = self._faiss_db.index.ntotal
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"FAISS 加载失败: {e}")
         try:
             self._load_chroma()
             info["chroma"] = True
             info["chroma_chunks"] = self._chroma_collection.count()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Chroma 加载失败: {e}")
         return info
 
     def embed_query(self, text: str) -> list[float]:

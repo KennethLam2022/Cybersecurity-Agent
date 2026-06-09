@@ -386,7 +386,10 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
             <div class="chart-grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
               <div class="chart-card" style="margin:0"><div class="card-title">📊 各变体一致性得分 <span class="hint" style="font-weight:400;font-size:11px;color:var(--t2)">与基线对比 · 柱状图</span></div><div class="chart-box" id="elasticConsistencyChart"></div></div>
               <div class="chart-card" style="margin:0"><div class="card-title">🛡️ 鲁棒性评估 <span class="hint" style="font-weight:400;font-size:11px;color:var(--t2)">4个鲁棒性维度 · 雷达图</span></div><div class="chart-box" id="elasticRobustnessChart"></div></div>
+              <div class="chart-card" style="margin:0"><div class="card-title">🎯 Faithfulness & 幻觉分析 <span class="hint" style="font-weight:400;font-size:11px;color:var(--t2)">变体 vs 基线的一致性评估</span></div><div class="chart-box" id="elasticFaithfulnessChart"></div></div>
             </div>
+            <!-- 最弱变体提示 -->
+            <div id="elasticWeakest" style="margin-bottom:16px;padding:8px 12px;background:rgba(233,69,96,0.06);border-radius:6px;font-size:12px"></div>
             <div class="chart-card" style="margin-bottom:16px">
               <div class="card-title">📈 基线 vs 变体偏差分析 <span class="hint" style="font-weight:400;font-size:11px;color:var(--t2)">每条变体相对基线的得分偏差 · 超过±20%标红</span></div>
               <div class="chart-box" id="elasticDeviationChart" style="height:260px"></div>
@@ -2214,7 +2217,14 @@ function renderTestItems(items) {
 function renderPromptContribution(dimScores) {
   if (promptContributionChart) promptContributionChart.dispose();
 
-  const labels = Object.keys(dimScores);
+  // 维度名中文映射
+  const dimNames = {
+    '来源标注': '来源标注', '品牌禁止': '品牌禁止', '越狱拦截': '越狱拦截', '偏题检测': '偏题检测',
+    '首答完整': '首答完整', '知识准确': '知识准确', 'output_format': '输出格式', '响应效率': '响应效率',
+    'context_precision': '上下文精确度', 'context_recall': '上下文召回率',
+    'faithfulness': '忠实度', 'relevancy': '切题度', 'hallucination': '幻觉',
+  };
+  const labels = Object.keys(dimScores).map(k => dimNames[k] || k);
   const values = Object.values(dimScores);
 
   // 如果无分数，渲染占位消息
@@ -2234,7 +2244,7 @@ function renderPromptContribution(dimScores) {
     tooltip: {trigger:'item',formatter:p=>`${p.name}: ${p.value}%`},
     grid:{left:40,right:10,top:30,bottom:24},
     xAxis: {type:'category', data:labels, axisLabel:{fontSize:11,color:'#888'}, axisLine:{lineStyle:{color:'#333'}}},
-    yAxis: {type:'value', min:0, max:100, name:'得分', axisLabel:{fontSize:11,color:'#888'}, splitLine:{lineStyle:{color:'#ddd'}}},
+    yAxis: {type:'value', min:0, max:100, name:'得分(%)', axisLabel:{fontSize:11,color:'#888',formatter:v=>v+'%'}, splitLine:{lineStyle:{color:'#ddd'}}},
     series: [{
       type:'bar', data:values.map(v=>v*100),
       itemStyle:{color:'#e94560',borderRadius:[4,4,0,0]},
@@ -2250,11 +2260,18 @@ function renderPromptContribution(dimScores) {
 
 function renderPromptRadar(dimScores) {
   if (promptRadarChart) promptRadarChart.dispose();
-  const labels = Object.keys(dimScores);
+  // 维度名中文映射
+  const dimNames = {
+    '来源标注': '来源标注', '品牌禁止': '品牌禁止', '越狱拦截': '越狱拦截', '偏题检测': '偏题检测',
+    '首答完整': '首答完整', '知识准确': '知识准确', 'output_format': '输出格式', '响应效率': '响应效率',
+    'context_precision': '上下文精确度', 'context_recall': '上下文召回率',
+    'faithfulness': '忠实度', 'relevancy': '切题度', 'hallucination': '幻觉',
+  };
+  const labels = Object.keys(dimScores).map(k => dimNames[k] || k);
   const values = Object.values(dimScores);
 
   promptRadarChart = makeChart('promptRadarChart', {
-    title: {text: '各维度得分', textStyle:{fontSize:14,fontWeight:600}},
+    title: {text: '各维度得分(%)', textStyle:{fontSize:14,fontWeight:600}},
     tooltip: {trigger:'item',formatter:p=>`${p.name}: ${p.value}%`},
     radar: {
       indicator: labels.map((l,i) => ({name:l, max:100})),
@@ -2332,6 +2349,36 @@ function renderElasticCharts(d) {
     makeChart('wsElasticRadar', {
       radar:{indicator:dimLabels.map(l=>({name:l,max:100})),center:['50%','50%'],radius:'60%',axisName:{color:'#888',fontSize:10},splitArea:{areaStyle:{color:['rgba(142,68,173,0.02)','rgba(142,68,173,0.05)']}},axisLine:{lineStyle:{color:'#333'}}},series:[{type:'radar',data:[{value:avgScores,areaStyle:{color:'rgba(142,68,173,0.15)'},lineStyle:{color:'#8e44ad',width:2},itemStyle:{color:'#8e44ad'}}]}],tooltip:{trigger:'item'},
     });
+  }
+
+  // Faithfulness 柱状图
+  const featDims = ['faithfulness','hallucination','semantic_score','coverage'];
+  const featLabels = ['Faithfulness','Hallucination','语义一致性','内容覆盖'];
+  const featColors = ['#27ae60','#e74c3c','#3498db','#f39c12'];
+  const featValues = featDims.map(dim => {
+    const vals = Object.values(cd).map(v => (v[dim] || 0) * 100);
+    return vals.length ? Math.round(vals.reduce((a,b)=>a+b,0) / vals.length) : 0;
+  });
+  makeChart('elasticFaithfulnessChart', {
+    title: {text: 'Faithfulness & 幻觉分析', textStyle:{fontSize:13,fontWeight:600}, left:'center'},
+    tooltip: {trigger:'axis',formatter:p=>`${p[0].name}: ${p[0].value}%`},
+    grid:{left:40,right:10,top:36,bottom:40},
+    xAxis: {type:'value', max:100, axisLabel:{fontSize:10,color:'#888',formatter:v=>v+'%'}, splitLine:{lineStyle:{color:'#ddd'}}},
+    yAxis: {type:'category', data:featLabels.reverse(), axisLabel:{fontSize:10,color:'#888'}},
+    series: [{
+      type:'bar', data:featValues.reverse(),
+      itemStyle:{color:p=>featColors[p.dataIndex],borderRadius:[0,4,4,0]},
+      barMaxWidth:14,
+      label:{show:true,position:'right',fontSize:10,color:'#888',formatter:p=>p.value+'%'},
+    }],
+  });
+
+  // 最弱变体提示
+  const weak = d.weakest || [];
+  const weakDiv = document.getElementById('elasticWeakest');
+  if (weakDiv && weak.length) {
+    const weakText = weak.map(w => `【${w.name}】得分 ${w.score.toFixed(2)}`).join('；');
+    weakDiv.innerHTML = `<span style="color:#e94560;font-weight:bold">⚠️ 最弱 3 个变体：${weakText}</span>`;
   }
 
   // 偏差分析（基线 vs 各变体长度偏差）
@@ -2896,9 +2943,12 @@ async function loadPromptHistory() {
     const dates=h.map(x=>new Date(x.timestamp).toLocaleDateString('zh-CN')).reverse();
     const weighted=h.map(x=>x.weighted_score).reverse();
     const passRate=h.map(x=>x.pass_rate).reverse();
-    promptHistoryChart=makeChart('promptHistoryChart',{title:{text:'历史评测趋势',textStyle:{fontSize:14,fontWeight:600}},tooltip:{trigger:'axis'},legend:{data:['加权总分','总体得分','通过率'],textStyle:{fontSize:11,color:'#888'},bottom:0},grid:{left:40,right:20,top:30,bottom:30},xAxis:{type:'category',data:dates,axisLabel:{fontSize:11,color:'#888'},axisLine:{lineStyle:{color:'#333'}}},yAxis:{type:'value',min:0,max:100,name:'分数',axisLabel:{fontSize:11,color:'#888'},splitLine:{lineStyle:{color:'#ddd'}}},series:[{name:'加权总分',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:weighted,lineStyle:{width:2,color:'#e94560'},itemStyle:{color:'#e94560'}},{name:'总体得分',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:h.map(x=>x.overall_score).reverse(),lineStyle:{width:2,color:'#3498db'},itemStyle:{color:'#3498db'}},{name:'通过率',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:passRate,lineStyle:{width:2,color:'#27ae60'},itemStyle:{color:'#27ae60'}}]});
+    promptHistoryChart=makeChart('promptHistoryChart',{title:{text:'历史评测趋势',textStyle:{fontSize:14,fontWeight:600}},tooltip:{trigger:'axis'},legend:{data:['加权总分','总体得分','通过率'],textStyle:{fontSize:11,color:'#888'},bottom:0},grid:{left:40,right:20,top:30,bottom:30},xAxis:{type:'category',data:dates,axisLabel:{fontSize:11,color:'#888'},axisLine:{lineStyle:{color:'#333'}}},yAxis:{type:'value',min:0,max:100,name:'分数(%)',axisLabel:{fontSize:11,color:'#888',formatter:v=>v+'%'},splitLine:{lineStyle:{color:'#ddd'}}},series:[{name:'加权总分',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:weighted.map(v=>v*100),lineStyle:{width:2,color:'#e94560'},itemStyle:{color:'#e94560'}},{name:'总体得分',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:h.map(x=>x.overall_score).reverse(),lineStyle:{width:2,color:'#3498db'},itemStyle:{color:'#3498db'}},{name:'通过率',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:passRate,lineStyle:{width:2,color:'#27ae60'},itemStyle:{color:'#27ae60'}}]});
     // 同步渲染工作台全量历史趋势
-    makeChart('wsFullTrend',{grid:{left:40,right:20,top:6,bottom:24},xAxis:{type:'category',data:dates,axisLabel:{fontSize:10,color:'#888'},axisLine:{lineStyle:{color:'#333'}}},yAxis:{type:'value',min:60,max:100,axisLabel:{fontSize:10,color:'#888'},splitLine:{lineStyle:{color:'#ddd'}}},series:[{name:'加权总分',type:'line',data:weighted,smooth:true,symbol:'circle',symbolSize:6,lineStyle:{width:2,color:'#e94560'},itemStyle:{color:'#e94560'}},{name:'通过率',type:'line',data:passRate,smooth:true,symbol:'circle',symbolSize:6,lineStyle:{width:2,color:'#34c759'},itemStyle:{color:'#34c759'}}],tooltip:{trigger:'axis'},legend:{data:['加权总分','通过率'],textStyle:{fontSize:10,color:'#888'},bottom:0}});
+    const wsData = weighted.map(v=>v*100);
+    const wsMin = Math.max(0, Math.min(...wsData) - 5);
+    const wsMax = Math.min(100, Math.max(...wsData) + 5);
+    makeChart('wsFullTrend',{grid:{left:40,right:20,top:6,bottom:24},xAxis:{type:'category',data:dates,axisLabel:{fontSize:10,color:'#888'},axisLine:{lineStyle:{color:'#333'}}},yAxis:{type:'value',min:wsMin,max:wsMax,axisLabel:{fontSize:10,color:'#888',formatter:v=>v+'%'},splitLine:{lineStyle:{color:'#ddd'}}},series:[{name:'加权总分',type:'line',data:wsData,smooth:true,symbol:'circle',symbolSize:6,lineStyle:{width:2,color:'#e94560'},itemStyle:{color:'#e94560'}},{name:'通过率',type:'line',data:passRate,smooth:true,symbol:'circle',symbolSize:6,lineStyle:{width:2,color:'#34c759'},itemStyle:{color:'#34c759'}}],tooltip:{trigger:'axis'},legend:{data:['加权总分','通过率'],textStyle:{fontSize:10,color:'#888'},bottom:0}});
   } catch(e) { console.error('加载历史失败:',e); }
 }
 
@@ -2984,8 +3034,8 @@ async function loadPipelineStats() {
       <div class="stat-card"><span class="num green">${last.total_files}</span><span class="label">最后批次文件数</span></div>
       <div class="stat-card"><span class="num green">${successRate}%</span><span class="label">成功率</span></div>
       <div class="stat-card"><span class="num orange">${failRate}%</span><span class="label">失败率</span></div>
-      <div class="stat-card"><span class="num blue">${last.faiss_after}</span><span class="label">当前FAISS</span></div>
-      <div class="stat-card"><span class="num blue">${last.chroma_after}</span><span class="label">当前Chroma</span></div>`;
+      <div class="stat-card"><span class="num blue">${faissBase}</span><span class="label">当前FAISS</span></div>
+      <div class="stat-card"><span class="num blue">${chromaBase}</span><span class="label">当前Chroma</span></div>`;
 
     const reversed = [...data].reverse();
     const dates = reversed.map(d => (d.created_at || '').slice(5, 16));
