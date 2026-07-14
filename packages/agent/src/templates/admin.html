@@ -4,8 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>网络安全 Agent · 管理后台</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js" integrity="sha384-pPi0zxBAoDu6+JXW/C68UZLvBUUtU+7zonhif43rqj7pxsGyqyqzcian2Rj37Rss" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js" integrity="sha384-U1KEY0DDCF4Dq6Yx1J+EZ5Hnj8X5bMn52OAcJB8C4OiAWeU4iJhJ/Tv5KhTqu8zZ" crossorigin="anonymous"></script>
+<script>var _eChartLoaded=false;var _eChartLoading=false;function loadECharts(){if(_eChartLoading)return Promise.resolve();_eChartLoading=true;return new Promise(function(r){if(typeof echarts!=='undefined'&&_eChartLoaded)return r();var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js';s.onload=function(){_eChartLoaded=true;var s2=document.createElement('script');s2.src='https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js';s2.onload=r;s2.onerror=r;document.head.appendChild(s2)};s.onerror=function(){var s3=document.createElement('script');s3.src='https://unpkg.com/echarts@5/dist/echarts.min.js';s3.onload=function(){_eChartLoaded=true;var s4=document.createElement('script');s4.src='https://unpkg.com/echarts-wordcloud@2/dist/echarts-wordcloud.min.js';s4.onload=r;s4.onerror=r;document.head.appendChild(s4)};s3.onerror=function(){var s5=document.createElement('script');s5.src='https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js';s5.onload=function(){_eChartLoaded=true;r()};s5.onerror=function(){console.warn('ECharts CDN all failed, charts disabled');r()};document.head.appendChild(s5)};document.head.appendChild(s3)};document.head.appendChild(s)})}loadECharts();</script>
 <style>
 :root{--bg:#f5f5f7;--card:#fff;--t:#1d1d1f;--t1:#1d1d1f;--t2:#6e6e73;--b:#e5e5ea;--b2:#d1d1d6;--bg1:#fff;--a:#0071e3;--accent:#0071e3;--g:#34c759;--y:#ff9500;--r:#ff3b30;--f:-apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -1634,6 +1633,11 @@ function makeChart(elemId, option) {
   const el = document.getElementById(elemId);
   if (!el) return null;
   if (chartInstances[elemId]) chartInstances[elemId].dispose();
+  if (typeof echarts === 'undefined') {
+    console.warn('ECharts not loaded yet, will retry:', elemId);
+    setTimeout(function(){ makeChart(elemId, option); }, 500);
+    return null;
+  }
   const chart = echarts.init(el);
   chart.setOption(option);
   chartInstances[elemId] = chart;
