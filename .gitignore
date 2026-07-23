@@ -11,7 +11,7 @@ build/
 
 # ============ 运行时生成数据 ============
 agent_data/
-RAG_DATA/
+# RAG_DATA/  -- 放开注释，用 git lfs 追踪大文件
 upload_staging/
 packages/vector_store/
 packages/vector_store_test/
