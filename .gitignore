@@ -66,3 +66,7 @@ docs/
 sandbox_test.txt
 packages/preprocessor/src/source_map.json
 packages/agent/src/templates/沟通.md
+scripts/gen_req_doc.py
+scripts/gen_docs.py
+scripts/gen_prd.py
+packages/preprocessor/src/test_full_pipeline.py

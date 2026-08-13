@@ -37,7 +37,7 @@ Cybersecurity Agent 是一个本地优先的网络安全知识库问答系统。
 ### 前置条件
 
 - Windows 10/11
-- Python 3.10 或更高版本；当前启动脚本使用 `D:\Programs\Python\Python312\python.exe`
+- Python 3.10 或更高版本；建议使用 Python 3.12
 - Node.js 18 或更高版本；仅在需要运行 TypeScript 工作区脚本时使用
 - 可用的大模型服务配置；本地或远程均可，具体以后台模型配置为准
 - 如果使用本地 Embedding 或兜底模型，需要先启动相应的本地模型服务

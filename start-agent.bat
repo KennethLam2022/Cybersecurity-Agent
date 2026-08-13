@@ -6,7 +6,7 @@ echo   NetSec AI Agent - Starting...
 echo ============================================
 echo.
 
-set "PY=D:\Programs\Python\Python312\python.exe"
+set "PY=python"
 set "DIR=%~dp0"
 
 if not exist "%DIR%packages\agent\src\main.py" (
