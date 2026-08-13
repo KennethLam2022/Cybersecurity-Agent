@@ -6,7 +6,7 @@
   Layer 3 — Embedding 向量语义去重 (入库后)
 
 完全独立，不依赖 LLM，SimHash 用内置 hashlib。
-标准号提取覆盖 GB/GB-T/YD/YD-T/JR-T/GM-T 等运营商常用标准。
+标准号提取覆盖 GB/GB-T/YD/YD-T/JR-T/GM-T 等常见标准。
 """
 
 import os

@@ -40,7 +40,7 @@ def add_box_outline(ax, x, y, w, h, text, color=C_LIGHT_BLUE, border=C_BLUE, fon
 def draw_architecture():
     fig, ax = plt.subplots(figsize=(20, 12))
     ax.set_xlim(0, 20); ax.set_ylim(0, 12); ax.axis('off')
-    ax.text(10, 11.6, '网络安全移动运营商智能Agent — 系统架构图', ha='center', fontsize=24, fontweight='bold', color=C_DARK_BLUE)
+    ax.text(10, 11.6, '网络安全智能 Agent — 系统架构图', ha='center', fontsize=24, fontweight='bold', color=C_DARK_BLUE)
 
     # User layer
     add_box(ax, 0.5, 9.8, 8.0, 1.4, '用户接入层', C_BLUE, C_WHITE, 17)

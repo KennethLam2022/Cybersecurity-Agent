@@ -13,7 +13,7 @@ IMG_DIR = Path(__file__).parent.parent / "docs" / "images"
 WPML = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 
 INSERTIONS = [
-    ("1.3 系统架构全景", "01_system_architecture.png", 5.8, "图1 网络安全移动运营商智能Agent — 系统架构图"),
+    ("1.3 系统架构全景", "01_system_architecture.png", 5.8, "图1 网络安全智能 Agent — 系统架构图"),
     ("2.1 用户提问→回答全流程", "02_qa_flow.png", 5.5, "图2 用户提问→回答流水线（13步）"),
     ("3. RAG 检索管道（核心引擎）", "03_rag_pipeline.png", 5.8, "图3 RAG 检索流水线 — 4 阶段架构"),
     ("4. 文档预处理流水线", "04_preprocessing.png", 5.8, "图4 文档预处理流水线"),
