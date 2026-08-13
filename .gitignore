@@ -52,3 +52,17 @@ Thumbs.db
 # ============ 文档临时 ============
 ~$*.docx
 .worktrees/
+
+# ============ Public release exclusions ============
+RAG_DATA/
+upload_staging/
+MD_Cleaned/
+deploy/
+docs/
+.trae/
+.githooks/
+安全报告/
+*.code-workspace
+sandbox_test.txt
+packages/preprocessor/src/source_map.json
+packages/agent/src/templates/沟通.md
