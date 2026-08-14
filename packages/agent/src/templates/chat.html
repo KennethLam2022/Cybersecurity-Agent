@@ -59,7 +59,7 @@ function addMsg(role, text, sources) {
   if (role === 'assistant' && sources && sources.length > 0) {
     const src = document.createElement('div');
     src.className = 'src';
-    src.textContent = '来源: ' + sources.map(s => s.file_name).filter((v,i,a) => a.indexOf(v)===i).join(', ');
+    src.textContent = '来源: ' + sources.map(s => s.display_name || s.file_name).filter((v,i,a) => a.indexOf(v)===i).join(', ');
     div.appendChild(src);
   }
   chat.appendChild(div);

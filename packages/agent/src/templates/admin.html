@@ -1324,7 +1324,7 @@ async function selectConversation(convId) {
           const pct = Math.round(conf * 100);
           const cl = confLabel(conf);
           const ct = confText(conf);
-          const fn = s.file_name || '未知文件';
+          const fn = s.display_name || s.file_name || '未知文件';
           const sec = s.section ? ` / ${s.section}` : '';
           html += `<div class="src-item">
             <span class="file-name" title="${escHtml(fn)}">${escHtml(fn.length > 35 ? fn.slice(0,35)+'...' : fn)}</span>
@@ -1924,7 +1924,7 @@ selectConversation = async function(convId) {
           const pct = Math.round(conf * 100);
           const cl = confLabel(conf);
           const ct = confText(conf);
-          const fn = s.file_name || '未知文件';
+          const fn = s.display_name || s.file_name || '未知文件';
           const sec = s.section ? ` / ${s.section}` : '';
           html += `<div class="src-item">
             <span class="file-name" title="${escHtml(fn)}">${escHtml(fn.length > 35 ? fn.slice(0,35)+'...' : fn)}</span>

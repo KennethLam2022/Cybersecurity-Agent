@@ -652,6 +652,22 @@ def submit_rating(data: dict = Body(...)):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+@router.post("/api/rating/semantic-fallback")
+def semantic_fallback_rating(data: dict = Body(...)):
+    message_id = data.get("message_id")
+    if not message_id:
+        return JSONResponse({"ok": False, "error": "缺少 message_id"}, status_code=400)
+
+    def _run():
+        try:
+            agent.infer_semantic_rating_for_message(int(message_id))
+        except Exception as e:
+            logger.warning(f"后台语义评分失败: message_id={message_id}, error={e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True, "queued": True}
+
+
 @router.get("/api/stats/drill-down")
 def drill_down(type: str, key: str, limit: int = 50, category: str = "all"):
     try:

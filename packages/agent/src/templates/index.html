@@ -81,6 +81,8 @@ let isLoading = false;
 let llmPresets = {};
 let _savedProviders = {};  // 已保存的提供商配置（含 Key），切换时自动填充
 let _lastWarningMsg = '';  // 上次的 Ollama 告警消息
+let _ratingTimers = {};
+let _ratedMessages = {};
 
 // ===== 设置模态框 =====
 function openSettings() {
@@ -714,7 +716,19 @@ async function sendMessage() {
     let fullContent = '';
     let reasoningContent = '';
     let sourcesData = null;
+    let assistantMessageId = null;
+    let answerCompleted = false;
     let newConvId = currentConvId;
+
+    function renderCurrentBubble() {
+        const reasoningHtml = reasoningContent ? renderReasoning(reasoningContent) : '';
+        bubble.innerHTML = reasoningHtml + formatContent(fullContent);
+        if (answerCompleted) {
+            renderSourcesIntoBubble(bubble, sourcesData);
+            if (assistantMessageId) appendRating(bubble, assistantMessageId);
+        }
+        scrollToBottom();
+    }
 
     try {
         const response = await fetch('/api/chat/stream', {
@@ -754,14 +768,12 @@ async function sendMessage() {
 
                         case 'reasoning':
                             reasoningContent += event.content;
-                            bubble.innerHTML = renderReasoning(reasoningContent) + formatContent(fullContent);
-                            scrollToBottom();
+                            renderCurrentBubble();
                             break;
 
                         case 'token':
                             fullContent += event.content;
-                            bubble.innerHTML = formatContent(fullContent);
-                            scrollToBottom();
+                            renderCurrentBubble();
                             break;
 
                         case 'error':
@@ -770,19 +782,37 @@ async function sendMessage() {
                             scrollToBottom();
                             break;
 
+                        case 'sources':
+                            sourcesData = event.sources;
+                            assistantMessageId = event.message_id || assistantMessageId;
+                            newConvId = event.conversation_id || newConvId;
+                            if (newConvId) currentConvId = newConvId;
+                            renderCurrentBubble();
+                            break;
+
+                        case 'answer_done':
+                            answerCompleted = true;
+                            sourcesData = event.sources || sourcesData;
+                            assistantMessageId = event.message_id || assistantMessageId;
+                            newConvId = event.conversation_id || newConvId;
+                            if (newConvId) currentConvId = newConvId;
+                            if (event.reasoning_content) {
+                                reasoningContent = event.reasoning_content;
+                            }
+                            renderCurrentBubble();
+                            break;
+
                         case 'done':
                             receivedDone = true;
-                            sourcesData = event.sources;
+                            answerCompleted = true;
+                            sourcesData = event.sources || sourcesData;
+                            assistantMessageId = event.message_id || assistantMessageId;
                             newConvId = event.conversation_id;
                             currentConvId = newConvId;
                             if (event.reasoning_content) {
                                 reasoningContent = event.reasoning_content;
-                                bubble.innerHTML = renderReasoning(reasoningContent) + formatContent(fullContent);
                             }
-                            // 追加评分组件
-                            if (event.message_id) {
-                                setTimeout(() => appendRating(bubble, event.message_id), 100);
-                            }
+                            renderCurrentBubble();
                             break;
 
                         case 'warning':
@@ -797,8 +827,12 @@ async function sendMessage() {
         }
 
         // 流正常结束但没收到 done 事件（连接意外中断）
-        if (!receivedDone && !fullContent) {
-            bubble.innerHTML = '<p style="color:#e53e3e;">抱歉，连接意外中断，请重试。</p>';
+        if (!receivedDone) {
+            if (!fullContent) {
+                bubble.innerHTML = '<p style="color:#e53e3e;">抱歉，连接意外中断，请重试。</p>';
+            } else if (answerCompleted) {
+                renderSourcesIntoBubble(bubble, sourcesData);
+            }
         }
     } catch (err) {
         if (err.name === 'AbortError') {
@@ -807,25 +841,6 @@ async function sendMessage() {
             bubble.innerHTML = '<p style="color:#e53e3e;">抱歉，请求出错了，请重试。</p>';
         }
         console.error('Stream error:', err);
-    }
-
-    // 渲染来源信息
-    if (sourcesData && sourcesData.length > 0) {
-        const items = sourcesData.map(s => {
-            const label = s.label
-                ? `<span class="conf-label conf-${s.label}" title="置信度: ${s.confidence}">${s.label}</span>`
-                : '';
-            return `<div class="source-item">
-                <span class="source-cat">${escapeHtml(s.category || '')}</span>
-                <span class="source-file">${escapeHtml(s.file_name || '')} / ${escapeHtml(s.section || '')}</span>
-                ${label}
-                <span class="source-score">${s.confidence != null ? s.confidence.toFixed(2) : ''}</span>
-            </div>`;
-        }).join('');
-        bubble.innerHTML += `<details class="message-sources">
-            <summary>📎 ${sourcesData.length} 篇参考文档</summary>
-            ${items}
-        </details>`;
     }
 
     document.getElementById('chatTitle').textContent = query.substring(0, 50);
@@ -843,20 +858,7 @@ function appendMessage(role, content, sources) {
     const div = document.createElement('div');
     div.className = `message ${role}`;
 
-    let sourcesHtml = '';
-    if (sources && sources.length > 0) {
-        const items = sources.map(s =>
-            `<div class="source-item">
-                <span class="source-cat">${escapeHtml(s.category || '')}</span>
-                <span class="source-file">${escapeHtml(s.file_name || '')} / ${escapeHtml(s.section || '')}</span>
-                <span class="source-score">${s.score?.toFixed(2) || ''}</span>
-            </div>`
-        ).join('');
-        sourcesHtml = `<details class="message-sources">
-            <summary>📎 ${sources.length} 篇参考文档</summary>
-            ${items}
-        </details>`;
-    }
+    const sourcesHtml = renderSourcesHtml(sources);
 
     div.innerHTML = `
         <div class="message-role">${role === 'user' ? '你' : '助手'}</div>
@@ -892,6 +894,31 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function renderSourcesHtml(sources) {
+    if (!sources || sources.length === 0) return '';
+    const items = sources.map(s => {
+        const label = s.label
+            ? `<span class="conf-label conf-${s.label}" title="置信度: ${s.confidence}">${s.label}</span>`
+            : '';
+        return `<div class="source-item">
+            <span class="source-cat">${escapeHtml(s.category || '')}</span>
+            <span class="source-file">${escapeHtml(s.display_name || s.file_name || '')} / ${escapeHtml(s.section || '')}</span>
+            ${label}
+            <span class="source-score">${s.confidence != null ? Number(s.confidence).toFixed(2) : ''}</span>
+        </div>`;
+    }).join('');
+    return `<details class="message-sources">
+        <summary>📎 ${sources.length} 篇参考文档</summary>
+        ${items}
+    </details>`;
+}
+
+function renderSourcesIntoBubble(bubble, sources) {
+    if (!bubble || !sources || sources.length === 0 || bubble.querySelector('.message-sources')) return;
+    bubble.insertAdjacentHTML('beforeend', renderSourcesHtml(sources));
+    scrollToBottom();
+}
+
 function renderReasoning(text) {
     if (!text) return '';
     return `<details class="reasoning-box" open>
@@ -924,22 +951,35 @@ function appendRating(bubble, messageId) {
     if (!bubble || bubble.querySelector('.rating-bar')) return;
     const bar = document.createElement('div');
     bar.className = 'rating-bar';
+    const lockedRating = _ratedMessages[messageId];
     let starsHtml = '';
     for (let i = 1; i <= 5; i++) {
-        starsHtml += `<svg class="rating-star" data-val="${i}" viewBox="0 0 24 24" onclick="submitRating(this, ${messageId}, ${i})" onmouseover="hoverStar(this,${i})" onmouseout="resetStars(this)">
+        const active = lockedRating && i <= lockedRating ? ' active' : '';
+        const style = lockedRating && i <= lockedRating ? ' style="color:#ff9500;cursor:default"' : '';
+        const handlers = lockedRating ? '' : `onclick="submitRating(this, ${messageId}, ${i})" onmouseover="hoverStar(this,${i})" onmouseout="resetStars(this)"`;
+        starsHtml += `<svg class="rating-star${active}" data-val="${i}" viewBox="0 0 24 24" ${handlers}${style}>
             <path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
         </svg>`;
     }
-    bar.innerHTML = starsHtml + '<span class="rating-label">评价回答质量</span>';
+    const labels = ['', '不满意', '不太满意', '一般', '满意', '非常满意'];
+    const labelHtml = lockedRating
+        ? `<span class="rating-locked">⭐ ${labels[lockedRating] || lockedRating}</span>`
+        : '<span class="rating-label">评价回答质量</span>';
+    bar.innerHTML = starsHtml + labelHtml;
     bubble.appendChild(bar);
+    if (!lockedRating) scheduleSemanticFallbackRating(messageId);
+}
 
-    // 如果有 Ollama 告警，追加灰色标注
-    if (_lastWarningMsg) {
-        const annotation = document.createElement('div');
-        annotation.className = 'warning-annotation';
-        annotation.textContent = '语义评分由本地 Ollama 兜底完成';
-        bubble.appendChild(annotation);
-    }
+function scheduleSemanticFallbackRating(messageId) {
+    if (!messageId || _ratingTimers[messageId]) return;
+    _ratingTimers[messageId] = setTimeout(() => {
+        fetch('/api/rating/semantic-fallback', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message_id: messageId}),
+        }).catch(e => console.debug('语义评分兜底提交失败:', e))
+          .finally(() => { delete _ratingTimers[messageId]; });
+    }, 30000);
 }
 
 function hoverStar(el, val) {
@@ -959,6 +999,11 @@ function resetStars(el) {
 }
 
 function submitRating(el, messageId, rating) {
+    _ratedMessages[messageId] = rating;
+    if (_ratingTimers[messageId]) {
+        clearTimeout(_ratingTimers[messageId]);
+        delete _ratingTimers[messageId];
+    }
     const bar = el.parentElement;
     const stars = bar.querySelectorAll('.rating-star');
     stars.forEach((s, i) => {

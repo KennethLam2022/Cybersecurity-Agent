@@ -10,6 +10,7 @@ Prompt 架构设计（参考知识库 三层架构 E.5）：
 """
 from memory import ConversationMemory, get_llm_config_card
 from llm_provider import LLMProvider
+from dataclasses import dataclass, field
 import os
 import sys
 import logging
@@ -19,7 +20,7 @@ import asyncio
 import httpx
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 # 项目根目录
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -79,6 +80,29 @@ _OUTPUT_FORBIDDEN_PATTERNS = [
     r"(预算.*万|万元|千元|元/年|总价|费用为|报价|成本约)",
     r"(iptables|sed -i|vim |nano |chmod |chown |logrotate|syslog)",
 ]
+
+COMPLIANCE_DECISION_QUERY_PATTERN = re.compile(
+    r"(是否合法|合不合法|是否合规|合不合规|是否允许|允不允许|可不可以|能不能|能否|是否可以|"
+    r"是否能够|能.{0,40}吗|可以.{0,40}吗|需要.*授权|必须.*授权|未经授权|未授权|"
+    r"法律责任|处罚|违法|违规|不得|禁止)",
+    re.I,
+)
+
+COMPLIANCE_DECISION_EXPANSION_TERMS = (
+    "法律依据 合规要求 授权 未经授权 禁止 不得 法律责任 处罚 义务 边界 条件"
+)
+
+LEGAL_REFERENCE_PATTERN = re.compile(
+    r"《[^》]{2,40}(?:法|条例|办法|规定|规范|标准|指南)》|"
+    r"[\u4e00-\u9fff]{2,30}(?:法|条例|办法|规定|规范|标准|指南)"
+)
+
+COMPLIANCE_DECISION_FALLBACK_ANSWER = (
+    "当前知识库没有检索到足够的合规或法律依据，不能确认该行为是否允许。\n\n"
+    "本次检索到的参考资料与问题存在一定相关性，但不足以支撑“是否合法、是否合规、是否需要授权、"
+    "是否存在法律责任”这类结论。需要知识库召回明确涉及授权条件、禁止性要求、责任后果或适用条款的资料后，"
+    "才能给出结论。"
+)
 
 
 def _detect_prompt_injection(text: str) -> tuple[bool, str]:
@@ -427,6 +451,67 @@ def compute_confidence(doc: dict, result_set_size: Optional[int] = None) -> dict
     return {"confidence": round(confidence, 4), "label": label}
 
 
+def _strip_markdown_heading(line: str) -> str:
+    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", str(line or "")).strip()
+    text = text.strip("《》「」『』【】[] \t\r\n：:;；")
+    return text
+
+
+def _looks_like_clause_or_noise(text: str) -> bool:
+    if not text:
+        return True
+    low = text.lower()
+    if len(text) > 80:
+        return True
+    if low.startswith(("version", "warning", "生成时间")):
+        return True
+    if re.match(r"^(第[一二三四五六七八九十百千万零〇两\d]+[章节条款]?|\d+(?:\.\d+)*)(\s|$|[、.．])", text):
+        return True
+    return text in {"范围", "术语和定义", "前言", "引言", "目次", "参考文献", "附录"}
+
+
+def _extract_title_from_content(content: str) -> str:
+    for raw in str(content or "").splitlines()[:40]:
+        line = _strip_markdown_heading(raw)
+        if not line or _looks_like_clause_or_noise(line):
+            continue
+        if len(line) <= 60:
+            return line
+    return ""
+
+
+def _is_standard_id_only(name: str) -> bool:
+    compact = re.sub(r"[\s_\-/.]+", "", str(name or "").upper())
+    return bool(re.fullmatch(r"(GB|GBT|YD|YDT|JR|JRT|GM|GMT)\d{3,6}(\d{4})?", compact))
+
+
+def source_display_name(doc: dict) -> str:
+    """生成可读来源名，避免只显示标准号。"""
+    file_name = str(doc.get("file_name") or "").strip()
+    explicit = str(
+        doc.get("display_name")
+        or doc.get("source_name")
+        or doc.get("doc_title")
+        or doc.get("title")
+        or doc.get("standard_name")
+        or ""
+    ).strip()
+    if explicit:
+        if file_name and explicit not in file_name and file_name not in explicit:
+            return f"{file_name}《{explicit}》"
+        return explicit
+
+    section = _strip_markdown_heading(str(doc.get("section") or ""))
+    content_title = _extract_title_from_content(str(doc.get("content") or ""))
+    inferred = content_title or (section if not _looks_like_clause_or_noise(section) else "")
+
+    if inferred and file_name and inferred not in file_name and (len(file_name) <= 32 or _is_standard_id_only(file_name)):
+        return f"{file_name}《{inferred}》"
+    if inferred and not file_name:
+        return inferred
+    return file_name or inferred or "未知文档"
+
+
 def build_context_block(docs: list[dict]) -> str:
     """将检索结果格式化为结构化参考资料块
 
@@ -435,7 +520,7 @@ def build_context_block(docs: list[dict]) -> str:
     """
     parts = ["【参考资料】（按相关性从高到低排列）："]
     for i, d in enumerate(docs, 1):
-        source_tag = f"[来源{i}] {d['file_name']} / {d['section']}"
+        source_tag = f"[来源{i}: {source_display_name(d)} / {d['section']}]"
         conf = compute_confidence(d, len(docs))
         score_str = f"（置信度：{conf['confidence']} — {conf['label']}）"
         parts.append(f"\n{source_tag} {score_str}")
@@ -625,21 +710,204 @@ def build_prompt_messages(
     return messages, truncation_info
 
 
-QUERY_REWRITE_PROMPT = """你是一个网络安全知识库检索助手。用户的原始问题可能口语化、不完整、缺少关键词。
+QUERY_REWRITE_PROMPT = """你是一个网络安全知识库检索助手。请结合历史对话和当前问题，生成适合 RAG 检索的结构化 Query。
 
-请将用户的问题改写成**更适合知识库检索的版本**：
+必须只输出 JSON，不要输出解释、Markdown 或代码块。
 
-改写规则：
-1. **提取核心关键词**：法规名称（如网络安全法）、标准编号（如GB/T 22239）、技术术语（如访问控制）
-2. **补充领域上下文**：用户没说但隐含的术语（如"等保要求"→"网络安全等级保护 基本要求"）
-3. **保持简洁**：去掉口语化修饰词（"帮我看看"、"我想知道"等），只保留核心语义
-4. **保持完整性**：如果问题包含对比/否定（"区别"、"不能"），保留这些逻辑关键词
-5. **不要编造**：不存在的术语不要加，不确定的不要补
+规则：
+1. standalone_query 必须是脱离上下文也能理解的独立问题，处理“它、这个、那条、三级呢”等指代。
+2. semantic_query 用自然语言表达完整语义，适合向量检索。
+3. keyword_query 用法规名、标准号、条款号、核心术语组成，适合 BM25。
+4. 保留否定词、比较关系、标准编号、条款号、等级和限定条件。
+5. 不得编造法规、标准、条款或资料中未出现的事实。
+6. 如果是对比问题，在 sub_queries 中拆成 2 到 4 个检索子问题。
+7. 如果问题是在问“是否合法、是否合规、能不能做、是否允许、是否需要授权、责任后果”，query_type 使用 compliance_decision；
+   keyword_query 和 sub_queries 必须补充通用合规检索词，如“法律依据、合规要求、授权、未经授权、禁止、不得、法律责任、处罚、义务、边界、条件”。
+   只有用户问题或历史上下文明示具体法规/标准名称时，才可写入具体法规名、标准号或条款号。
 
-直接输出改写后的结果，不要解释。
+JSON 结构：
+{
+  "need_rewrite": true,
+  "standalone_query": "",
+  "semantic_query": "",
+  "keyword_query": "",
+  "query_type": "general|article_lookup|standard_lookup|comparison|follow_up|compliance_decision",
+  "sub_queries": [],
+  "entities": {
+    "doc_ids": [],
+    "standards": [],
+    "article_numbers": [],
+    "categories": [],
+    "topics": [],
+    "levels": [],
+    "negative_terms": []
+  }
+}
 
-原始问题：{query}
-改写后："""
+历史对话：
+{history}
+
+当前问题：{query}
+"""
+
+
+@dataclass
+class QueryRewriteResult:
+    original_query: str
+    need_rewrite: bool = False
+    standalone_query: str = ""
+    semantic_query: str = ""
+    keyword_query: str = ""
+    query_type: str = "general"
+    sub_queries: list[str] = field(default_factory=list)
+    entities: dict[str, list[str]] = field(default_factory=dict)
+    fallback_used: bool = False
+
+    def __post_init__(self):
+        self.standalone_query = (self.standalone_query or self.original_query).strip()
+        self.semantic_query = (self.semantic_query or self.standalone_query or self.original_query).strip()
+        self.keyword_query = (self.keyword_query or "").strip()
+        self.query_type = self.query_type or "general"
+        self.sub_queries = _clean_string_list(self.sub_queries)
+        defaults = {
+            "doc_ids": [], "standards": [], "article_numbers": [], "categories": [],
+            "topics": [], "levels": [], "negative_terms": [],
+        }
+        merged = dict(defaults)
+        if isinstance(self.entities, dict):
+            for key in defaults:
+                merged[key] = _clean_string_list(self.entities.get(key, []))
+        self.entities = merged
+
+    @classmethod
+    def from_dict(cls, original_query: str, data: dict[str, Any], fallback_used: bool = False) -> "QueryRewriteResult":
+        entities = data.get("entities") if isinstance(data.get("entities"), dict) else {}
+        return cls(
+            original_query=original_query,
+            need_rewrite=bool(data.get("need_rewrite", True)),
+            standalone_query=str(data.get("standalone_query") or original_query),
+            semantic_query=str(data.get("semantic_query") or data.get("standalone_query") or original_query),
+            keyword_query=str(data.get("keyword_query") or ""),
+            query_type=str(data.get("query_type") or "general"),
+            sub_queries=list(data.get("sub_queries") or []),
+            entities=entities,
+            fallback_used=fallback_used,
+        )
+
+    def retrieval_queries(self) -> list[str]:
+        queries = [self.original_query, self.standalone_query, self.semantic_query, self.keyword_query]
+        queries.extend(self.sub_queries)
+        return _clean_string_list(queries)
+
+    def metadata_filter(self) -> dict[str, Any]:
+        return {
+            "doc_ids": self.entities.get("doc_ids", []),
+            "categories": self.entities.get("categories", []),
+            "file_name_contains": self.entities.get("standards", []),
+            "section_contains": self.entities.get("article_numbers", []),
+            "article_numbers": self.entities.get("article_numbers", []),
+            "topics": self.entities.get("topics", []),
+            "levels": self.entities.get("levels", []),
+            "negative_terms": self.entities.get("negative_terms", []),
+            "exclude_deprecated": True,
+            "hard_filter": bool(self.entities.get("doc_ids") or self.entities.get("article_numbers")),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "original_query": self.original_query,
+            "need_rewrite": self.need_rewrite,
+            "standalone_query": self.standalone_query,
+            "semantic_query": self.semantic_query,
+            "keyword_query": self.keyword_query,
+            "query_type": self.query_type,
+            "sub_queries": self.sub_queries,
+            "entities": self.entities,
+            "fallback_used": self.fallback_used,
+            "retrieval_queries": self.retrieval_queries(),
+        }
+
+
+def _clean_string_list(items: list[Any]) -> list[str]:
+    seen = set()
+    result = []
+    for item in items or []:
+        s = str(item).strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        result.append(s)
+    return result
+
+
+def is_compliance_decision_query(query: str, query_type: str = "") -> bool:
+    """识别需要合规/法律依据支撑的判断类问题。"""
+    return query_type == "compliance_decision" or bool(COMPLIANCE_DECISION_QUERY_PATTERN.search(query or ""))
+
+
+def enrich_queries_for_compliance_decision(query: str, queries: list[str], query_type: str = "") -> list[str]:
+    """合规判断类问题的通用 Query 扩展，避免改写失败后只召回操作性资料。"""
+    if not is_compliance_decision_query(query, query_type):
+        return _clean_string_list(queries)
+    base_query = (query or "").strip()
+    expansion = f"{base_query} {COMPLIANCE_DECISION_EXPANSION_TERMS}".strip()
+    return _clean_string_list([*(queries or []), expansion, COMPLIANCE_DECISION_EXPANSION_TERMS])
+
+
+def _source_text_for_guard(source: dict) -> str:
+    return " ".join(
+        str(source.get(k) or "")
+        for k in ("file_name", "display_name", "category", "section", "content")
+    )
+
+
+def source_contains_compliance_basis(source: dict) -> bool:
+    text = _source_text_for_guard(source)
+    if LEGAL_REFERENCE_PATTERN.search(text):
+        return True
+    return bool(re.search(r"(法律依据|合规要求|授权|未经授权|禁止|不得|应当|法律责任|处罚|义务|边界|条件|违法|违规)", text))
+
+
+def has_authoritative_compliance_sources(sources: list[dict], min_confidence: float = 0.35) -> bool:
+    for source in sources or []:
+        confidence = source.get("confidence")
+        if confidence is None:
+            confidence = compute_confidence(source).get("confidence", 0)
+        if float(confidence or 0) >= min_confidence and source_contains_compliance_basis(source):
+            return True
+    return False
+
+
+def answer_mentions_unbacked_legal_references(answer: str, sources: list[dict]) -> list[str]:
+    source_text = "\n".join(_source_text_for_guard(s) for s in sources or [])
+    mentioned = _clean_string_list(m.group(0).strip("《》") for m in LEGAL_REFERENCE_PATTERN.finditer(answer or ""))
+    return [name for name in mentioned if name not in source_text]
+
+
+def compliance_decision_guard_answer(query: str, sources: list[dict], query_type: str = "") -> Optional[str]:
+    if not is_compliance_decision_query(query, query_type):
+        return None
+    if has_authoritative_compliance_sources(sources):
+        return None
+    return COMPLIANCE_DECISION_FALLBACK_ANSWER
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    if not text:
+        return None
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.I).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(cleaned[start:end + 1])
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 SELF_VERIFY_PROMPT = """你是一个严格的"事实核查员"。请逐句核对回答中的每个结论是否在参考资料中有明确依据。
@@ -983,6 +1251,12 @@ class CyberAgent:
                 real_files.add(fn)
                 base = fn.rsplit(".", 1)[0] if "." in fn else fn
                 real_files.add(base)
+            display = source_display_name(s)
+            if display:
+                real_files.add(display)
+                if "《" in display:
+                    real_files.add(display.split("《", 1)[0].strip())
+                    real_files.add(display.split("《", 1)[1].rstrip("》").strip())
 
         replacements = []
         for ref in pattern:
@@ -1023,12 +1297,30 @@ class CyberAgent:
             logger.warning(f"来源核验：精确替换 {removed_count} 个编造引用标记（保留原文）")
         return cleaned if cleaned else "该问题超出我的知识范围，无法提供有效回答。"
 
-    def _rewrite_query(self, query: str) -> str:
-        """检索前 Query 改写：将口语化问题转为检索友好版本"""
+    @staticmethod
+    def _format_history_for_rewrite(history: list[dict], limit: int = 6) -> str:
+        if not history:
+            return "无"
+        rows = []
+        for msg in history[-limit:]:
+            role = msg.get("role", "")
+            content = str(msg.get("content", "")).strip()
+            if not content:
+                continue
+            if len(content) > 220:
+                content = content[:220] + "..."
+            rows.append(f"{role}: {content}")
+        return "\n".join(rows) if rows else "无"
+
+    def _build_query_rewrite(self, query: str, history: Optional[list[dict]] = None) -> QueryRewriteResult:
+        """检索前 Query 重构：生成独立问题、语义 Query、关键词 Query 和元数据实体。"""
         if not self.use_query_rewrite:
-            return query
+            return QueryRewriteResult(original_query=query, fallback_used=True)
         try:
-            prompt = QUERY_REWRITE_PROMPT.format(query=query)
+            prompt = QUERY_REWRITE_PROMPT.format(
+                query=query,
+                history=self._format_history_for_rewrite(history or []),
+            )
             t0 = time.time()
             rewritten = self.llm.chat(
                 [{"role": "user", "content": prompt}],
@@ -1037,14 +1329,33 @@ class CyberAgent:
                 timeout=30,
             )
             elapsed = time.time() - t0
-            rewritten = (rewritten.get("content", "") if isinstance(
-                rewritten, dict) else rewritten).strip().strip('"').strip("'")
-            if rewritten and rewritten != query and len(rewritten) < 200:
-                logger.info(f"Query 改写: 「{query[:40]}」→「{rewritten[:60]}」 ({elapsed:.1f}s)")
-                return rewritten
+            content = (rewritten.get("content", "") if isinstance(rewritten, dict) else rewritten).strip()
+            data = _extract_json_object(content)
+            if data:
+                result = QueryRewriteResult.from_dict(query, data)
+                logger.info(
+                    f"Query 改写: type={result.query_type} queries={len(result.retrieval_queries())} "
+                    f"「{query[:40]}」→「{result.semantic_query[:60]}」 ({elapsed:.1f}s)"
+                )
+                return result
+            # 兼容旧式字符串输出
+            plain = content.strip().strip('"').strip("'")
+            if plain and len(plain) < 240:
+                return QueryRewriteResult(
+                    original_query=query,
+                    need_rewrite=plain != query,
+                    standalone_query=plain,
+                    semantic_query=plain,
+                    keyword_query="",
+                    fallback_used=True,
+                )
         except Exception as e:
             logger.warning(f"Query 改写失败 (不影响检索): {e}")
-        return query
+        return QueryRewriteResult(original_query=query, fallback_used=True)
+
+    def _rewrite_query(self, query: str) -> str:
+        """兼容旧调用：返回单个检索 Query。"""
+        return self._build_query_rewrite(query).semantic_query
 
     def ask(
         self,
@@ -1137,17 +1448,32 @@ class CyberAgent:
                 "stats": {"search_time": 0, "llm_time": 0, "total_time": 0, "docs_count": 0},
             }
 
-        # ---- Query 改写 ----
-        search_query = self._rewrite_query(query)
+        # ---- Query 改写 / 多路检索计划 ----
+        t0_rw = time.time()
+        query_plan = self._build_query_rewrite(query, conv_history)
+        rewrite_time = time.time() - t0_rw
+        search_queries = enrich_queries_for_compliance_decision(
+            query, query_plan.retrieval_queries(), query_plan.query_type
+        )
 
         t0 = time.time()
-        docs = self.retriever.search(
-            search_query,
+        docs = self.retriever.search_multi(
+            search_queries,
             top_k=self.top_k,
             use_rerank=self.use_rerank,
+            metadata_filter=query_plan.metadata_filter(),
+            rerank_query=query_plan.standalone_query or query,
+            use_chroma_where=True,
         )
         search_time = time.time() - t0
         logger.info(f"检索完成: {len(docs)} 条 ({search_time:.2f}s)")
+        trace_data = {
+            "original_query": query,
+            "rewrite_enabled": self.use_query_rewrite,
+            "query_rewrite": query_plan.to_dict(),
+            "effective_retrieval_queries": search_queries,
+            "retrieval": getattr(self.retriever, "last_trace", {}),
+        }
 
         # ---- 空结果预检 + 降级处理 ----
         if not docs:
@@ -1158,7 +1484,7 @@ class CyberAgent:
                 if fallback_docs:
                     logger.info(f"降级检索成功: 「{fq}」→ {len(fallback_docs)} 条")
                     docs = fallback_docs
-                    search_query = fq
+                    trace_data["fallback_query"] = fq
                     break
 
         if not docs:
@@ -1173,13 +1499,51 @@ class CyberAgent:
                 "answer": answer,
                 "sources": sources,
                 "conversation_id": conversation_id,
-                "rewritten_query": search_query if search_query != query else None,
+                "rewritten_query": query_plan.semantic_query if query_plan.semantic_query != query else None,
                 "verified": False,
                 "stats": {
+                    "rewrite_time": round(rewrite_time, 2),
                     "search_time": round(search_time, 2),
                     "llm_time": 0,
-                    "total_time": round(search_time, 2),
+                    "total_time": round(rewrite_time + search_time, 2),
                     "docs_count": 0,
+                    "trace": trace_data,
+                },
+            }
+
+        sources = [
+            {
+                "file_name": d["file_name"],
+                "display_name": source_display_name(d),
+                "category": d["category"],
+                "section": d["section"],
+                "content": d.get("content", ""),
+                **compute_confidence(d),
+            }
+            for d in docs
+        ]
+
+        guarded_answer = compliance_decision_guard_answer(query, sources, query_plan.query_type)
+        if guarded_answer:
+            self.memory.add_message(conversation_id, "assistant", guarded_answer, sources=sources)
+            self.memory.extract_and_save_memory(conversation_id, query, guarded_answer)
+            first_msg = self.memory.get_history(conversation_id)
+            if len([m for m in first_msg if m["role"] == "user"]) == 1:
+                self.memory.update_title(conversation_id, query[:50])
+            trace_data["compliance_decision_guard"] = "no_authoritative_compliance_source"
+            return {
+                "answer": guarded_answer,
+                "sources": sources,
+                "conversation_id": conversation_id,
+                "rewritten_query": query_plan.semantic_query if query_plan.semantic_query != query else None,
+                "verified": False,
+                "stats": {
+                    "rewrite_time": round(rewrite_time, 2),
+                    "search_time": round(search_time, 2),
+                    "llm_time": 0,
+                    "total_time": round(rewrite_time + search_time, 2),
+                    "docs_count": len(docs),
+                    "trace": trace_data,
                 },
             }
 
@@ -1216,16 +1580,6 @@ class CyberAgent:
         reasoning = llm_result.get("reasoning_content")
         llm_time = time.time() - t1
 
-        sources = [
-            {
-                "file_name": d["file_name"],
-                "category": d["category"],
-                "section": d["section"],
-                **compute_confidence(d),
-            }
-            for d in docs
-        ]
-
         # ---- 自检 ----
         was_verified = False
         verified = self._verify_answer(answer, sources)
@@ -1236,6 +1590,13 @@ class CyberAgent:
 
         # ---- 来源核验：删除引用知识库中不存在文件的句子（如编造"宪法""电信条例"等） ----
         answer = self._check_sources_origin(answer, sources)
+
+        if is_compliance_decision_query(query, query_plan.query_type):
+            unbacked_refs = answer_mentions_unbacked_legal_references(answer, sources)
+            if unbacked_refs:
+                logger.warning(f"合规依据护栏：回答提及未召回法规/标准名 {unbacked_refs}，改为低覆盖兜底")
+                answer = COMPLIANCE_DECISION_FALLBACK_ANSWER
+                was_verified = True
 
         # ---- 输出越界过滤（防御纵深） ----
         answer = _filter_output_forbidden(answer)
@@ -1257,14 +1618,16 @@ class CyberAgent:
             "reasoning_content": reasoning,
             "sources": sources,
             "conversation_id": conversation_id,
-            "rewritten_query": search_query if search_query != query else None,
+            "rewritten_query": query_plan.semantic_query if query_plan.semantic_query != query else None,
             "verified": was_verified,
             "stats": {
+                "rewrite_time": round(rewrite_time, 2),
                 "search_time": round(search_time, 2),
                 "llm_time": round(llm_time, 2),
-                "total_time": round(search_time + llm_time, 2),
+                "total_time": round(rewrite_time + search_time + llm_time, 2),
                 "docs_count": len(docs),
                 "truncation": truncation_info,
+                "trace": trace_data,
             },
         }
 
@@ -1297,13 +1660,6 @@ class CyberAgent:
         llm_success = True
         was_circuit_break = False
         circuit_provider = None
-
-        # ---- 语义兜底评分（异步，不阻塞主流程） ----
-        rating_result = {}
-        try:
-            rating_result = self._infer_rating(conversation_id, query) or {}
-        except Exception as e:
-            logger.warning(f"语义评分推断失败: {e}")
 
         # ---- 用户越狱检测（含渐进式越狱） ----
         conv_history = self.memory.get_history(conversation_id)
@@ -1372,21 +1728,34 @@ class CyberAgent:
         yield {"type": "status", "stage": "retrieving", "message": "正在检索知识库..."}
 
         t0_rw = time.time()
-        search_query = self._rewrite_query(query)
+        query_plan = self._build_query_rewrite(query, conv_history)
+        search_queries = enrich_queries_for_compliance_decision(
+            query, query_plan.retrieval_queries(), query_plan.query_type
+        )
         t_rewrite = time.time() - t0_rw
 
         loop = asyncio.get_event_loop()
         t0_sr = time.time()
         docs = await loop.run_in_executor(
             None,
-            lambda: self.retriever.search(
-                search_query,
+            lambda: self.retriever.search_multi(
+                search_queries,
                 top_k=self.top_k,
                 use_rerank=self.use_rerank,
+                metadata_filter=query_plan.metadata_filter(),
+                rerank_query=query_plan.standalone_query or query,
+                use_chroma_where=True,
             ),
         )
         t_search = time.time() - t0_sr
         logger.info(f"流式检索完成: {len(docs)} 条")
+        trace_data = {
+            "original_query": query,
+            "rewrite_enabled": self.use_query_rewrite,
+            "query_rewrite": query_plan.to_dict(),
+            "effective_retrieval_queries": search_queries,
+            "retrieval": getattr(self.retriever, "last_trace", {}),
+        }
 
         # ---- 空结果预检 + 降级处理 ----
         if not docs:
@@ -1401,6 +1770,7 @@ class CyberAgent:
                 if fallback_docs:
                     logger.info(f"流式降级检索成功: 「{fq}」→ {len(fallback_docs)} 条")
                     docs = fallback_docs
+                    trace_data["fallback_query"] = fq
                     break
 
         if not docs:
@@ -1412,8 +1782,38 @@ class CyberAgent:
             if len([m for m in first_msgs if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
             self.memory.log_usage(conversation_id, msg_id, query, rewrite_time=round(
-                t_rewrite, 3), total_time=total_time, returned_count=0)
+                t_rewrite, 3), total_time=total_time, returned_count=0, trace_data=trace_data)
             yield {"type": "token", "content": answer}
+            yield {"type": "done", "sources": sources, "conversation_id": conversation_id, "message_id": msg_id}
+            return
+
+        sources = [
+            {
+                "file_name": d["file_name"],
+                "display_name": source_display_name(d),
+                "category": d["category"],
+                "section": d["section"],
+                "content": d.get("content", ""),
+                **compute_confidence(d),
+            }
+            for d in docs
+        ]
+
+        msg_id = self.memory.add_message(conversation_id, "assistant", "", sources=sources)
+        yield {"type": "sources", "sources": sources, "conversation_id": conversation_id, "message_id": msg_id}
+
+        guarded_answer = compliance_decision_guard_answer(query, sources, query_plan.query_type)
+        if guarded_answer:
+            trace_data["compliance_decision_guard"] = "no_authoritative_compliance_source"
+            total_time = round(time.time() - t_start, 3)
+            self.memory._update_last_message(conversation_id, guarded_answer, sources=sources)
+            first_msgs = self.memory.get_history(conversation_id)
+            if len([m for m in first_msgs if m["role"] == "user"]) == 1:
+                self.memory.update_title(conversation_id, query[:50])
+            self.memory.log_usage(conversation_id, msg_id, query, rewrite_time=round(
+                t_rewrite, 3), search_time=round(t_search, 3), total_time=total_time,
+                returned_count=len(docs), trace_data=trace_data)
+            yield {"type": "token", "content": guarded_answer}
             yield {"type": "done", "sources": sources, "conversation_id": conversation_id, "message_id": msg_id}
             return
 
@@ -1453,18 +1853,16 @@ class CyberAgent:
         t_llm = time.time() - t0_llm
         total_time = round(time.time() - t_start, 3)
 
+        yield {
+            "type": "answer_done",
+            "sources": sources,
+            "conversation_id": conversation_id,
+            "message_id": msg_id,
+            "reasoning_content": "".join(reasoning_list) if reasoning_list else None,
+        }
+
         # 保存到记忆
-        sources = [
-            {
-                "file_name": d["file_name"],
-                "category": d["category"],
-                "section": d["section"],
-                **compute_confidence(d),
-            }
-            for d in docs
-        ]
-        msg_id = self.memory.add_message(
-            conversation_id, "assistant", full_content, sources=sources)
+        self.memory._update_last_message(conversation_id, full_content, sources=sources)
 
         # ---- 来源核验：流式路径同样做后处理 ----
         corrected = self._check_sources_origin(full_content, sources)
@@ -1472,6 +1870,13 @@ class CyberAgent:
             logger.warning(f"流式路径来源核验：删除了编造引用内容，已修正记忆中的版本")
             self.memory._update_last_message(conversation_id, corrected, sources=sources)
             full_content = corrected
+
+        if is_compliance_decision_query(query, query_plan.query_type):
+            unbacked_refs = answer_mentions_unbacked_legal_references(full_content, sources)
+            if unbacked_refs:
+                logger.warning(f"流式路径合规依据护栏：回答提及未召回法规/标准名 {unbacked_refs}，改为低覆盖兜底")
+                full_content = COMPLIANCE_DECISION_FALLBACK_ANSWER
+                self.memory._update_last_message(conversation_id, full_content, sources=sources)
 
         # ---- 输出越界过滤（防御纵深） ----
         filtered = _filter_output_forbidden(full_content)
@@ -1485,13 +1890,6 @@ class CyberAgent:
         if annotated != full_content:
             self.memory._update_last_message(conversation_id, annotated, sources=sources)
             full_content = annotated
-
-        # ---- 事实自检（与 ask() 路径一致） ----
-        verified = self._verify_answer(full_content, sources)
-        if verified != full_content:
-            logger.info(f"流式路径自检：删除了无依据内容，已修正记忆中的版本")
-            self.memory._update_last_message(conversation_id, verified, sources=sources)
-            full_content = verified
 
         first_msgs = self.memory.get_history(conversation_id)
         if len([m for m in first_msgs if m["role"] == "user"]) == 1:
@@ -1508,16 +1906,92 @@ class CyberAgent:
             returned_count=len(docs),
             was_truncated=was_truncated,
             documents=sources,
+            trace_data=trace_data,
         )
 
-        # ---- 语义兜底评分结果 → 告警事件 ----
-        if rating_result.get("used_ollama"):
-            yield {
-                "type": "warning",
-                "message": "语义评分已切换至本地 Ollama 兜底，当前 LLM 提供商可能存在问题，建议联系厂商确认或刷新模型列表。",
-            }
-
         yield {"type": "done", "sources": sources, "conversation_id": conversation_id, "message_id": msg_id, "reasoning_content": "".join(reasoning_list) if reasoning_list else None}
+
+    def infer_semantic_rating_for_message(self, message_id: int) -> dict:
+        """用户未评分时的后台语义评分，不参与本轮回答链路。"""
+        item = self.memory.get_assistant_message_for_rating(message_id)
+        if not item:
+            return {"ok": False, "reason": "message_not_found"}
+        if item.get("user_rating") is not None:
+            return {"ok": True, "skipped": True, "reason": "user_already_rated"}
+        if item.get("semantic_rating") is not None:
+            return {"ok": True, "skipped": True, "reason": "semantic_already_rated"}
+
+        prompt = f"""请评估 AI 助手回答质量，只输出一个数字（1-5）。
+
+评分标准：
+1 = 明显错误、答非所问、无依据或存在严重风险
+2 = 相关性弱、依据不足、可用性较差
+3 = 基本相关，但不完整或表达一般
+4 = 回答准确、结构清楚、基本满足问题
+5 = 回答准确、完整、依据充分、表达清楚
+
+用户问题：
+{item.get('query', '')[:500]}
+
+AI 回答：
+{item.get('content', '')[:1200]}
+
+只输出数字："""
+
+        rating = None
+        used_fallback = False
+
+        scoring_cfg = get_llm_config_card('scoring')
+        scoring_url = (scoring_cfg.get('base_url') or '').rstrip('/') + \
+            '/chat/completions' if scoring_cfg.get('base_url') else ''
+        scoring_key = scoring_cfg.get('api_key', '')
+        scoring_model = scoring_cfg.get('model', '')
+
+        if scoring_url and scoring_model:
+            try:
+                headers = {"Content-Type": "application/json"}
+                if scoring_key:
+                    headers["Authorization"] = f"Bearer {scoring_key}"
+                resp = httpx.post(
+                    scoring_url,
+                    headers=headers,
+                    json={"model": scoring_model, "messages": [
+                        {"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 5},
+                    timeout=15,
+                )
+                if resp.status_code == 200:
+                    text = resp.json()["choices"][0]["message"]["content"].strip()
+                    rating = int("".join(c for c in text if c.isdigit())[:1])
+            except Exception as e:
+                logger.debug(f"超时语义评分失败 (scoring card): {e}")
+
+        if rating is None:
+            used_fallback = True
+            fallback_cfg = get_llm_config_card('fallback')
+            fb_url = (fallback_cfg.get('base_url')
+                      or 'http://localhost:11434/v1').rstrip('/') + '/chat/completions'
+            fb_model = fallback_cfg.get('model') or 'qwen2.5:7b'
+            try:
+                resp = httpx.post(
+                    fb_url,
+                    json={"model": fb_model, "messages": [
+                        {"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 5},
+                    timeout=15,
+                )
+                if resp.status_code == 200:
+                    text = resp.json()["choices"][0]["message"]["content"].strip()
+                    rating = int("".join(c for c in text if c.isdigit())[:1])
+            except Exception as e:
+                logger.debug(f"超时语义评分失败 (fallback): {e}")
+
+        if rating and 1 <= rating <= 5:
+            updated = self.memory.update_semantic_rating_if_unrated(message_id, rating)
+            logger.info(
+                f"超时语义评分: msg_id={message_id} rating={rating} updated={updated} "
+                f"(source={'fallback' if used_fallback else 'scoring_card'})"
+            )
+            return {"ok": True, "rating": rating, "used_ollama": used_fallback, "updated": updated}
+        return {"ok": False, "reason": "rating_failed", "used_ollama": used_fallback}
 
     def _infer_rating(self, conversation_id: str, user_query: str) -> dict:
         """语义兜底评分：分析用户对上一轮回答的态度

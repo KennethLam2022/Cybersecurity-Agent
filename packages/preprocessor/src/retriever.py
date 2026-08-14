@@ -28,6 +28,15 @@ import jieba
 from rank_bm25 import BM25Okapi
 
 from memory import get_llm_config_card
+from metadata_filter import (
+    MetadataFilterSpec,
+    apply_metadata_filter,
+    boost_by_metadata,
+    build_chroma_where,
+    infer_metadata_filter_from_query,
+    merge_filter_specs,
+    normalize_filter_spec,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +131,7 @@ class CyberRetriever:
         self._bm25: Optional[BM25Okapi] = None
         self._bm25_docs: Optional[list[dict]] = None
         self._use_hybrid = use_hybrid
+        self.last_trace: dict = {}
         # 启动时预加载 BM25 索引（避免首次检索慢）
         self._build_bm25_index()
         # 用于匹配文档编号的正则，如 YD/T 2692-2014, GB/T 22239-2019
@@ -424,6 +434,28 @@ class CyberRetriever:
             f"RRF 融合: {len(vector_results)} 向量 + {len(bm25_results)} BM25 → {len(sorted_docs)} 去重")
         return sorted_docs[:top_k]
 
+    @staticmethod
+    def _rrf_merge_many(result_sets: list[list[dict]], top_k: int, k: int = 60) -> list[dict]:
+        """RRF 融合多个查询分支结果。"""
+        seen = {}
+        for branch_idx, docs in enumerate(result_sets):
+            for rank, doc in enumerate(docs):
+                pid = doc.get("chunk_id") or doc.get("parent_id") or id(doc)
+                score = 1.0 / (k + rank + 1)
+                if pid not in seen:
+                    seen[pid] = dict(doc)
+                    seen[pid]["_rrf_score"] = score
+                    seen[pid]["_rrf_contrib"] = [branch_idx]
+                else:
+                    seen[pid]["_rrf_score"] = seen[pid].get("_rrf_score", 0) + score
+                    seen[pid].setdefault("_rrf_contrib", []).append(branch_idx)
+
+        sorted_docs = sorted(seen.values(), key=lambda d: d.get("_rrf_score", 0), reverse=True)
+        for d in sorted_docs:
+            d.pop("_rrf_score", None)
+            d.pop("_rrf_contrib", None)
+        return sorted_docs[:top_k]
+
     def _resolve_parent_docs(self, child_docs: list[dict], top_k: int) -> list[dict]:
         """将子chunk列表按 parent_id 分组去重，返回父节完整文本
 
@@ -489,6 +521,8 @@ class CyberRetriever:
         sources: tuple = ("faiss", "chroma"),
         use_parent: bool = True,
         use_hybrid: Optional[bool] = None,
+        metadata_filter: Optional[MetadataFilterSpec | dict] = None,
+        use_chroma_where: bool = False,
     ) -> list[dict]:
         """执行检索
 
@@ -500,6 +534,8 @@ class CyberRetriever:
           sources:      检索源，("faiss",) / ("chroma",) / ("faiss", "chroma")
           use_parent:   是否启用父文档检索
           use_hybrid:   是否启用 BM25 + 向量混合检索（默认跟随实例配置）
+          metadata_filter: 可选元数据过滤条件，默认与规则提取条件合并
+          use_chroma_where: 是否将高置信 category 条件下推到 Chroma where
 
         返回：
           [{"content", "file_name", "category", "section",
@@ -508,8 +544,17 @@ class CyberRetriever:
         if use_hybrid is None:
             use_hybrid = self._use_hybrid
 
+        filter_spec = merge_filter_specs(infer_metadata_filter_from_query(query), metadata_filter)
         seen = {}
         candidate_k = top_k * _RETRIEVE_MULTIPLIER
+        trace = {
+            "query": query,
+            "metadata_filter": filter_spec.to_dict(),
+            "counts": {"faiss": 0, "chroma": 0, "bm25": 0, "merged": 0},
+            "chroma_where": None,
+            "chroma_where_fallback": False,
+            "metadata_filter_fallback": False,
+        }
 
         # ---- FAISS 召回 ----
         if "faiss" in sources:
@@ -517,6 +562,7 @@ class CyberRetriever:
                 self._load_faiss()
                 t0 = time.time()
                 raw = self._faiss_db.similarity_search_with_score(query, k=candidate_k)
+                trace["counts"]["faiss"] = len(raw)
                 logger.info(f"FAISS 召回 {len(raw)} 条 ({time.time() - t0:.3f}s)")
                 for doc, score in raw:
                     cid = doc.metadata.get("chunk_id", "")
@@ -541,10 +587,21 @@ class CyberRetriever:
                 self._load_chroma()
                 t0 = time.time()
                 q_emb = self._embedding_model.embed_query(query)
+                where = build_chroma_where(filter_spec) if use_chroma_where else None
+                trace["chroma_where"] = where
                 results = self._chroma_collection.query(
                     query_embeddings=[q_emb],
                     n_results=candidate_k,
+                    **({"where": where} if where else {}),
                 )
+                if where and not results.get("ids", [[]])[0]:
+                    trace["chroma_where_fallback"] = True
+                    logger.info("Chroma where 查询为空，回退到不带 where 的查询")
+                    results = self._chroma_collection.query(
+                        query_embeddings=[q_emb],
+                        n_results=candidate_k,
+                    )
+                trace["counts"]["chroma"] = len(results["ids"][0])
                 logger.info(f"Chroma 召回 {len(results['ids'][0])} 条 ({time.time() - t0:.3f}s)")
                 for j, cid in enumerate(results["ids"][0]):
                     if cid not in seen:
@@ -583,15 +640,31 @@ class CyberRetriever:
         # ---- BM25 混合检索 + RRF 融合 ----
         if use_hybrid and seen:
             bm25_results = self._bm25_search(query, candidate_k)
+            trace["counts"]["bm25"] = len(bm25_results)
             if bm25_results:
                 docs = self._rrf_merge(docs, bm25_results, candidate_k)
         # ---------------------------------
+        trace["counts"]["merged"] = len(docs)
 
         # --- 负向检索：否定句式扣分 ---
         has_neg, neg_kw = self._detect_negation(query)
         if has_neg:
             logger.info(f"负向检索: 检测到否定句式，负向关键词={neg_kw}")
             docs = self._apply_negative_boost(docs, neg_kw)
+        # --------------------------------
+
+        # --- 元数据软加权 + 硬过滤（带回退） ---
+        before_meta = len(docs)
+        docs = boost_by_metadata(docs, filter_spec)
+        if filter_spec.hard_filter:
+            filtered_docs = apply_metadata_filter(docs, filter_spec)
+            if filtered_docs:
+                docs = filtered_docs
+                logger.info(f"元数据过滤: {before_meta} → {len(docs)}")
+            else:
+                trace["metadata_filter_fallback"] = True
+                logger.info("元数据过滤无结果，回退到未过滤候选集")
+        trace["counts"]["after_metadata_filter"] = len(docs)
         # --------------------------------
 
         # --- 文档名预过滤 ---
@@ -623,11 +696,13 @@ class CyberRetriever:
             docs = self._rerank(query, docs, len(docs), timeout)
         else:
             docs = sorted(docs, key=lambda x: x["score"])
+        trace["counts"]["after_rerank"] = len(docs)
 
         if use_parent:
             docs = self._resolve_parent_docs(docs, top_k)
         else:
             docs = docs[:top_k]
+        trace["counts"]["returned"] = len(docs)
 
         # 确保所有数值为 Python 原生类型（numpy float32 不能 JSON 序列化）
         for d in docs:
@@ -635,6 +710,89 @@ class CyberRetriever:
                 if key in d and d[key] is not None:
                     d[key] = round(float(d[key]), 4)
 
+        self.last_trace = trace
+        return docs
+
+    def search_multi(
+        self,
+        queries: list[str],
+        top_k: int = 10,
+        use_rerank: bool = True,
+        timeout: int = 30,
+        sources: tuple = ("faiss", "chroma"),
+        use_parent: bool = True,
+        use_hybrid: Optional[bool] = None,
+        metadata_filter: Optional[MetadataFilterSpec | dict] = None,
+        rerank_query: Optional[str] = None,
+        use_chroma_where: bool = False,
+    ) -> list[dict]:
+        """多 Query 召回后统一融合、过滤、重排和父文档聚合。"""
+        unique_queries = []
+        for q in queries:
+            q = (q or "").strip()
+            if q and q not in unique_queries:
+                unique_queries.append(q)
+        if not unique_queries:
+            return []
+
+        filter_spec = normalize_filter_spec(metadata_filter)
+        branch_results = []
+        branch_traces = []
+        candidate_k = top_k * _RETRIEVE_MULTIPLIER
+        for q in unique_queries:
+            docs = self.search(
+                q,
+                top_k=top_k,
+                use_rerank=False,
+                timeout=timeout,
+                sources=sources,
+                use_parent=False,
+                use_hybrid=use_hybrid,
+                metadata_filter=filter_spec,
+                use_chroma_where=use_chroma_where,
+            )
+            branch_results.append(docs)
+            branch_traces.append(dict(self.last_trace))
+
+        docs = self._rrf_merge_many(branch_results, candidate_k)
+        before_meta = len(docs)
+        docs = boost_by_metadata(docs, filter_spec)
+        metadata_filter_fallback = False
+        if filter_spec.hard_filter:
+            filtered_docs = apply_metadata_filter(docs, filter_spec)
+            if filtered_docs:
+                docs = filtered_docs
+            else:
+                metadata_filter_fallback = True
+
+        if use_rerank and self._rerank_api_key:
+            docs = self._rerank(rerank_query or unique_queries[0], docs, len(docs), timeout)
+        else:
+            docs = sorted(docs, key=lambda x: x["score"])
+
+        if use_parent:
+            docs = self._resolve_parent_docs(docs, top_k)
+        else:
+            docs = docs[:top_k]
+
+        for d in docs:
+            for key in ("score", "rerank_score"):
+                if key in d and d[key] is not None:
+                    d[key] = round(float(d[key]), 4)
+
+        self.last_trace = {
+            "mode": "multi_query",
+            "queries": unique_queries,
+            "metadata_filter": filter_spec.to_dict(),
+            "branches": branch_traces,
+            "counts": {
+                "branches": [len(b) for b in branch_results],
+                "merged": before_meta,
+                "after_metadata_filter": len(docs),
+                "returned": len(docs),
+            },
+            "metadata_filter_fallback": metadata_filter_fallback,
+        }
         return docs
 
     def _rerank(

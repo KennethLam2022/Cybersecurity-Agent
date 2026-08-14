@@ -753,6 +753,46 @@ class ConversationMemory:
             conn.execute(
                 f"UPDATE usage_logs SET {field} = ? WHERE message_id = ?", (rating, message_id))
 
+    def update_semantic_rating_if_unrated(self, message_id: int, rating: int) -> bool:
+        """仅在用户未手动评分且尚无语义评分时写入兜底评分。"""
+        with sqlite3.connect(self._db_path) as conn:
+            cur = conn.execute(
+                """
+                UPDATE usage_logs
+                SET semantic_rating = ?
+                WHERE message_id = ?
+                  AND user_rating IS NULL
+                  AND semantic_rating IS NULL
+                """,
+                (rating, message_id),
+            )
+            return cur.rowcount > 0
+
+    def get_assistant_message_for_rating(self, message_id: int) -> Optional[dict]:
+        """读取单条 assistant 消息及其问答上下文，用于超时语义评分。"""
+        with sqlite3.connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT m.id, m.conversation_id, m.content, m.sources,
+                       u.query, u.user_rating, u.semantic_rating
+                FROM messages m
+                LEFT JOIN usage_logs u ON m.id = u.message_id
+                WHERE m.id = ? AND m.role = 'assistant'
+                """,
+                (message_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "conversation_id": row[1],
+            "content": row[2],
+            "sources": json.loads(row[3]) if row[3] else [],
+            "query": row[4] or "",
+            "user_rating": row[5],
+            "semantic_rating": row[6],
+        }
+
     def update_jailbreak_status(self, conversation_id: str, status: str, reason: str = None, message_id: int = None):
         with sqlite3.connect(self._db_path) as conn:
             if reason and message_id:
