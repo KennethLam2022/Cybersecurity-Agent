@@ -24,5 +24,8 @@ def test_agent_eval_default_questions_are_general():
     module = _load("eval_30_profiles", "eval_30_v3.py")
 
     assert module.QUESTIONS is module.GENERAL_QUESTIONS
-    assert not any("工信部" in item["query"] or "电信网" in item["query"] for item in module.QUESTIONS)
+    assert not any(
+        "工信部" in item["query"] or "电信网" in item["query"] or "核心网" in item["query"]
+        for item in module.QUESTIONS
+    )
     assert all(item["profile"] == "industry/telecom" for item in module.INDUSTRY_TELECOM_QUESTIONS)

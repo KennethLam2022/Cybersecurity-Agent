@@ -85,7 +85,7 @@ GENERAL_QUESTIONS = [
     {"id": "H19", "domain": "05-跨领域综合", "difficulty": "困难",
      "query": "用户的手机号、位置信息、通话记录属于什么级别的数据？需要什么保护措施？", "style": "plain"},
     {"id": "H20", "domain": "05-跨领域综合", "difficulty": "困难",
-     "query": "采购核心网设备时供应链安全要关注哪些风险点？", "style": "role"},
+     "query": "采购关键业务系统软硬件时，供应链安全要关注哪些风险点？", "style": "role"},
 
     # ── 07-应急响应（3题 新增）──
     {"id": "E01", "domain": "07-应急响应", "difficulty": "中等",
