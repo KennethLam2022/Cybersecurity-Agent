@@ -237,7 +237,7 @@ for p in [_SRC, _PREPROCESSOR]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from security_taxonomy import fallback_queries
+from security_taxonomy import category_emoji, fallback_queries
 
 
 # ============================================================
@@ -2178,7 +2178,6 @@ if __name__ == "__main__":
         print(f"\nA:\n{result['answer'][:500]}")
         print(f"\n来源 ({len(result['sources'])} 条):")
         for s in result['sources']:
-            cat_icon = {"01-国家法律": "📜", "02-等保国标": "🛡️",
-                        "03-CII关基": "🔐", "04-通信行业": "📡"}.get(s['category'], "📄")
+            cat_icon = category_emoji(s.get("category", ""))
             print(f"  {cat_icon} {s['file_name']} / {s['section']} ({s['score']})")
         print(f"\n⏱ {result['stats']}")

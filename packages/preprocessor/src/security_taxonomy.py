@@ -71,6 +71,14 @@ def category_icon(category: str, default: str = "file-text") -> str:
     return default
 
 
+def category_emoji(category: str, default: str = "📄") -> str:
+    normalized = normalize_category(category)
+    for domain in domains():
+        if domain.get("category") == normalized:
+            return str(domain.get("emoji") or default)
+    return default
+
+
 def fallback_queries(domain_id: str = "default") -> list[str]:
     data = load_taxonomy().get("fallback_queries", {})
     queries = data.get(domain_id) or data.get("default") or []

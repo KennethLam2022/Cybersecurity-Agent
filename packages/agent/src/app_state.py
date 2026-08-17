@@ -524,9 +524,29 @@ def _load_source_map() -> dict:
     return {}
 
 
+def _enabled_source_profiles() -> set[str]:
+    raw = os.getenv("CYBER_AGENT_SOURCE_PROFILES", "general")
+    profiles = {p.strip() for p in raw.split(",") if p.strip()}
+    return profiles or {"general"}
+
+
+def _source_map_entry_enabled(cat_config: dict, enabled_profiles: set[str]) -> bool:
+    if "all" in enabled_profiles:
+        return True
+    profile = str(cat_config.get("profile") or "").strip()
+    scope = str(cat_config.get("scope") or "general").strip()
+    if profile:
+        return profile in enabled_profiles
+    return scope == "general" and "general" in enabled_profiles
+
+
 def _get_source_dirs() -> list[str]:
     dirs = []
+    enabled_profiles = _enabled_source_profiles()
     for cat_name, cat_config in _load_source_map().items():
+        if not _source_map_entry_enabled(cat_config, enabled_profiles):
+            logger.info(f"跳过未启用资料源 profile: {cat_name} ({cat_config.get('profile') or cat_config.get('scope')})")
+            continue
         for d in cat_config.get("source_dirs", []):
             if d and os.path.isdir(d):
                 dirs.append(d)

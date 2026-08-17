@@ -21,13 +21,11 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("eval_retrieval")
 
 
-TEST_SET = [
+GENERAL_TEST_SET = [
     {"query": "等保三级对访问控制有什么要求", "expected": "等保|等级保护", "category": "等保"},
-    {"query": "5G核心网的安全技术要求有哪些", "expected": "5G|核心网", "category": "5G安全"},
     {"query": "个人信息保护法中用户同意机制如何实现", "expected": "个人信息保护|个保法", "category": "数据安全"},
     {"query": "关键信息基础设施安全保护条例的适用范围", "expected": "关键信息基础|CII", "category": "CII"},
     {"query": "数据出境安全评估的流程是什么", "expected": "数据出境|数据安全", "category": "数据安全"},
-    {"query": "工信部网络安全考核指标有哪些", "expected": "工信部|网络安全考核", "category": "合规"},
     {"query": "移动互联网APP个人信息保护要求", "expected": "APP|个人信息", "category": "APP安全"},
     {"query": "网络安全事件应急响应流程", "expected": "应急响应|事件", "category": "应急"},
     {"query": "数据分类分级的方法和标准", "expected": "数据分类|数据分级", "category": "数据安全"},
@@ -41,18 +39,38 @@ TEST_SET = [
     {"query": "网络安全事件分类分级", "expected": "事件分类|20986", "category": "应急"},
     {"query": "物联网安全接入技术要求", "expected": "物联网|IoT", "category": "等保"},
     {"query": "个人信息安全影响评估方法", "expected": "个人信息|安全影响", "category": "数据安全"},
-    {"query": "通信网络安全防护管理办法", "expected": "通信网络|工信部", "category": "CII"},
     {"query": "网络安全法的核心义务", "expected": "网络安全法", "category": "合规"},
     {"query": "密码法对商用密码的管理要求", "expected": "密码法|商用密码", "category": "密码"},
     {"query": "数据安全技术 数据脱敏规范", "expected": "脱敏|数据安全", "category": "数据安全"},
-    {"query": "移动通信网网元功能安全要求", "expected": "网元|移动通信", "category": "5G安全"},
-    {"query": "中国移动大数据安全保护体系", "expected": "大数据|中国移动", "category": "数据安全"},
-    {"query": "工信部公共互联网网络安全应急预案", "expected": "应急预案|公共互联网", "category": "应急"},
     {"query": "个人信息去标识化技术规范", "expected": "去标识化|37964", "category": "数据安全"},
     {"query": "Intel TDX 安全技术原理", "expected": "TDX|可信", "category": "技术"},
     {"query": "GB/T 20984 信息安全风险评估方法", "expected": "20984|风险评估", "category": "等保"},
     {"query": "上海市网络安全事件应急预案", "expected": "上海|应急预案", "category": "应急"},
+    {"query": "软件供应链中的开源组件风险如何识别和处置", "expected": "供应链|开源", "category": "供应链"},
+    {"query": "云环境中的身份权限最小化如何落地", "expected": "云|身份|权限", "category": "云安全"},
+    {"query": "漏洞修复优先级应依据哪些风险因素确定", "expected": "漏洞|风险", "category": "漏洞管理"},
+    {"query": "安全运营中心如何建立告警分级和闭环流程", "expected": "安全运营|告警|闭环", "category": "安全运营"},
+    {"query": "第三方供应商接入前应开展哪些安全评估", "expected": "供应商|安全评估", "category": "供应链"},
 ]
+
+# 通信行业资料仍可用于专项回归，但不参与通用网络安全主干评分。
+INDUSTRY_TELECOM_TEST_SET = [
+    {"query": "5G核心网的安全技术要求有哪些", "expected": "5G|核心网", "category": "通信行业", "profile": "industry/telecom"},
+    {"query": "工信部网络安全考核指标有哪些", "expected": "工信部|网络安全考核", "category": "通信行业", "profile": "industry/telecom"},
+    {"query": "通信网络安全防护管理办法", "expected": "通信网络|工信部", "category": "通信行业", "profile": "industry/telecom"},
+    {"query": "移动通信网网元功能安全要求", "expected": "网元|移动通信", "category": "通信行业", "profile": "industry/telecom"},
+    {"query": "中国移动大数据安全保护体系", "expected": "大数据|中国移动", "category": "通信行业", "profile": "industry/telecom"},
+    {"query": "工信部公共互联网网络安全应急预案", "expected": "应急预案|公共互联网", "category": "通信行业", "profile": "industry/telecom"},
+]
+
+TEST_SET = GENERAL_TEST_SET
+
+
+def get_test_set(profile: str = "general") -> list[dict]:
+    """返回评测集；行业专项必须显式指定 profile。"""
+    if profile in ("industry/telecom", "telecom"):
+        return list(INDUSTRY_TELECOM_TEST_SET)
+    return list(GENERAL_TEST_SET)
 
 
 def evaluate():

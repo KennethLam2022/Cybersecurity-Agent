@@ -28,7 +28,7 @@ from metadata_filter import (
     infer_metadata_filter_from_query,
     merge_filter_specs,
 )
-from security_taxonomy import category_aliases, category_icon, infer_categories_from_text, normalize_category
+from security_taxonomy import category_aliases, category_emoji, category_icon, infer_categories_from_text, normalize_category
 
 
 def test_extract_json_object_from_markdown_fence():
@@ -117,6 +117,7 @@ def test_taxonomy_normalizes_general_and_industry_aliases():
     assert normalize_category("等保") == "02-等保国标"
     assert normalize_category("通信") == "04-通信行业"
     assert category_icon("02-等保国标") == "shield"
+    assert category_emoji("04-通信行业") == "📡"
 
 
 def test_taxonomy_infers_multiple_configured_categories():

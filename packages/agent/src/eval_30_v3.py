@@ -36,7 +36,7 @@ EVAL_DIR.mkdir(parents=True, exist_ok=True)
 VERSION = "v3_human_tone"
 
 # 标记：👤 = 带用户角色，💬 = 纯自然语言
-QUESTIONS = [
+GENERAL_QUESTIONS = [
     # ── 02-等保国标（5题）──
     {"id": "H01", "domain": "02-等保国标", "difficulty": "中等",
      "query": "我是运维工程师，我们系统要做等保三级，安全审计方面有啥要求？", "style": "role"},
@@ -71,13 +71,13 @@ QUESTIONS = [
     {"id": "H14", "domain": "03-CII关基", "difficulty": "中等",
      "query": "我是安全值班的，CII出安全事件了，上报流程是怎样的？多长时间内要报？", "style": "role"},
 
-    # ── 04-通信行业（3题）──
-    {"id": "H15", "domain": "04-通信行业", "difficulty": "基础",
-     "query": "电信网和互联网安全防护的定级备案流程是怎样的？", "style": "plain"},
-    {"id": "H16", "domain": "04-通信行业", "difficulty": "中等",
-     "query": "工信部网络信息安全考核都考什么？评分标准有哪些？", "style": "role"},
-    {"id": "H17", "domain": "04-通信行业", "difficulty": "中等",
-     "query": "用户个人信息保护有什么技术要求？该怎么落地？", "style": "plain"},
+    # ── 04-通用安全能力（3题）──
+    {"id": "H15", "domain": "06-应急响应", "difficulty": "基础",
+     "query": "安全事件发生后，证据保全和影响范围确认应先做什么？", "style": "plain"},
+    {"id": "H16", "domain": "08-风险评估", "difficulty": "中等",
+     "query": "我是风险负责人，如何把资产、威胁、脆弱性和影响量化成风险等级？", "style": "role"},
+    {"id": "H17", "domain": "09-供应链安全", "difficulty": "中等",
+     "query": "引入第三方软件前，如何建立供应商安全准入和持续评估机制？", "style": "plain"},
 
     # ── 05-跨领域综合（3题）──
     {"id": "H18", "domain": "05-跨领域综合", "difficulty": "困难",
@@ -115,6 +115,25 @@ QUESTIONS = [
     {"id": "B02", "domain": "10-业务连续性", "difficulty": "困难",
      "query": "我是安全经理，公司要做业务连续性管理体系建设，从哪里开始？关键步骤是什么？", "style": "role"},
 ]
+
+# 行业专项题保留为可选 profile，不进入默认通用评测。
+INDUSTRY_TELECOM_QUESTIONS = [
+    {"id": "T01", "domain": "04-通信行业", "difficulty": "基础",
+     "query": "电信网和互联网安全防护的定级备案流程是怎样的？", "style": "plain", "profile": "industry/telecom"},
+    {"id": "T02", "domain": "04-通信行业", "difficulty": "中等",
+     "query": "工信部网络信息安全考核都考什么？评分标准有哪些？", "style": "role", "profile": "industry/telecom"},
+    {"id": "T03", "domain": "04-通信行业", "difficulty": "中等",
+     "query": "用户个人信息保护有什么技术要求？该怎么落地？", "style": "plain", "profile": "industry/telecom"},
+]
+
+QUESTIONS = GENERAL_QUESTIONS
+
+
+def get_questions(profile: str = "general") -> list[dict]:
+    """默认返回通用题；行业评测通过显式 profile 选择。"""
+    if profile in ("industry/telecom", "telecom"):
+        return list(INDUSTRY_TELECOM_QUESTIONS)
+    return list(GENERAL_QUESTIONS)
 
 
 def run_evaluation(agent, output_file):

@@ -3704,7 +3704,7 @@ async function runEvalWithTestSet() {
   <div class="modal-content" style="max-width:500px">
     <div class="modal-header"><h3>🎲 AI 生成测试集</h3><button class="modal-close" onclick="closeAiModal()">&times;</button></div>
     <p style="font-size:13px;color:var(--t2);margin-bottom:12px">输入关键词，AI 将自动生成一组测试用例</p>
-    <textarea id="aiKeywordInput" placeholder="等保合规、数据安全、5G 安全、应急响应..." style="width:100%;height:80px;padding:10px;border:1px solid var(--b);border-radius:8px;font-size:13px;font-family:var(--f);outline:none;resize:vertical;box-sizing:border-box"></textarea>
+    <textarea id="aiKeywordInput" placeholder="法律法规、等保合规、数据安全、个人信息保护、APP 安全、应急响应、供应链安全..." style="width:100%;height:80px;padding:10px;border:1px solid var(--b);border-radius:8px;font-size:13px;font-family:var(--f);outline:none;resize:vertical;box-sizing:border-box"></textarea>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
       <button onclick="closeAiModal()" style="background:var(--b);color:var(--t);border:none;padding:8px 20px;border-radius:8px;font-size:13px;cursor:pointer;font-family:var(--f)">取消</button>
       <button id="aiGenerateBtn" onclick="doAiGenerate()" style="background:var(--a);color:#fff;border:none;padding:8px 20px;border-radius:8px;font-size:13px;cursor:pointer;font-family:var(--f);font-weight:600">生成测试集</button>
