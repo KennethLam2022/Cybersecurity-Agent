@@ -37,6 +37,7 @@ from metadata_filter import (
     merge_filter_specs,
     normalize_filter_spec,
 )
+from security_taxonomy import infer_categories_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -884,16 +885,8 @@ class CyberRetriever:
 
 
 def _expected_category(query: str) -> str | None:
-    q = query.lower()
-    if any(k in q for k in ["网络安全法", "个人信息保护法", "数据安全法", "密码法", "电子签名法", "gdpr", "关键信息基础设施安全保护条例"]):
-        return "01-国家法律"
-    if any(k in q for k in ["等保", "等级保护"]):
-        return "02-等保国标"
-    if any(k in q for k in ["关键信息基础设施", "cii"]):
-        return "03-CII关基"
-    if any(k in q for k in ["电信", "移动互联网", "大数据", "工信部", "移动通信"]):
-        return "04-通信行业"
-    return None
+    hits = infer_categories_from_text(query)
+    return hits[0] if hits else None
 
 
 if __name__ == "__main__":

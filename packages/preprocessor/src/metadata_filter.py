@@ -10,17 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-
-_CATEGORY_ALIASES = {
-    "等保": "02-等保国标",
-    "等级保护": "02-等保国标",
-    "关基": "03-CII关基",
-    "关键信息基础设施": "03-CII关基",
-    "通信": "04-通信行业",
-    "通信行业": "04-通信行业",
-    "国家法律": "01-国家法律",
-    "法律": "01-国家法律",
-}
+from security_taxonomy import category_aliases, known_categories, normalize_category
 
 
 @dataclass
@@ -74,7 +64,7 @@ def normalize_filter_spec(spec: MetadataFilterSpec | dict | None) -> MetadataFil
         return spec
 
     categories = _uniq(list(spec.get("categories") or []))
-    exact_categories = [_CATEGORY_ALIASES.get(c, c) for c in categories]
+    exact_categories = [normalize_category(c) for c in categories]
 
     return MetadataFilterSpec(
         doc_ids=_uniq(list(spec.get("doc_ids") or [])),
@@ -106,7 +96,7 @@ def merge_filter_specs(*specs: MetadataFilterSpec | dict | None) -> MetadataFilt
         merged.hard_filter = merged.hard_filter or spec.hard_filter
 
     merged.doc_ids = _uniq(merged.doc_ids)
-    merged.categories = _uniq([_CATEGORY_ALIASES.get(c, c) for c in merged.categories])
+    merged.categories = _uniq([normalize_category(c) for c in merged.categories])
     merged.file_name_contains = _uniq(merged.file_name_contains)
     merged.section_contains = _uniq(merged.section_contains)
     merged.article_numbers = _uniq(merged.article_numbers)
@@ -142,7 +132,7 @@ def infer_metadata_filter_from_query(query: str) -> MetadataFilterSpec:
     spec.article_numbers.extend(article_numbers)
     spec.section_contains.extend(article_numbers)
 
-    for alias, category in _CATEGORY_ALIASES.items():
+    for alias, category in category_aliases().items():
         if alias in q:
             spec.categories.append(category)
 
@@ -262,6 +252,6 @@ def build_chroma_where(spec: MetadataFilterSpec | dict | None) -> dict[str, Any]
     if len(spec.categories) != 1:
         return None
     category = spec.categories[0]
-    if category not in set(_CATEGORY_ALIASES.values()):
+    if category not in known_categories():
         return None
     return {"category": category}

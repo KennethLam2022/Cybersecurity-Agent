@@ -28,6 +28,7 @@ from metadata_filter import (
     infer_metadata_filter_from_query,
     merge_filter_specs,
 )
+from security_taxonomy import category_aliases, category_icon, infer_categories_from_text, normalize_category
 
 
 def test_extract_json_object_from_markdown_fence():
@@ -108,6 +109,20 @@ def test_build_chroma_where_only_for_single_exact_category():
 
     spec_multi = merge_filter_specs({"categories": ["等保", "关基"]})
     assert build_chroma_where(spec_multi) is None
+
+
+def test_taxonomy_normalizes_general_and_industry_aliases():
+    aliases = category_aliases()
+    assert aliases["数据安全"] == "05-数据安全"
+    assert normalize_category("等保") == "02-等保国标"
+    assert normalize_category("通信") == "04-通信行业"
+    assert category_icon("02-等保国标") == "shield"
+
+
+def test_taxonomy_infers_multiple_configured_categories():
+    hits = infer_categories_from_text("APP 调用通讯录权限时涉及个人信息保护和隐私合规")
+    assert "07-APP安全" in hits
+    assert "11-个人信息保护" in hits
 
 
 def test_source_display_name_combines_standard_id_and_title():
