@@ -86,7 +86,7 @@ def generate_test_set(keywords: str, llm=None) -> list:
 
     constraints = "根据以下关键词生成覆盖多维度、多难度的测试题，共 20 条。"
     if not keywords or keywords.strip() in ("随机", "默认", ""):
-        constraints = "自主生成覆盖等保2.0、数据安全、APP安全、5G安全、应急响应、安全管理等领域的测试题，共 20 条。"
+        constraints = "自主生成覆盖法律法规、等保2.0、数据安全、个人信息保护、APP安全、应急响应、风险管理、安全管理体系、供应链安全等通用网络安全领域的测试题，共 20 条。"
         keywords = "全领域覆盖"
 
     prompt = GENERATE_PROMPT.format(
