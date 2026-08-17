@@ -238,6 +238,7 @@ for p in [_SRC, _PREPROCESSOR]:
         sys.path.insert(0, p)
 
 from security_taxonomy import category_emoji, fallback_queries
+from trace_observability import add_trace_step, build_trace_envelope, finish_trace, retrieval_counts
 
 
 # ============================================================
@@ -1380,6 +1381,7 @@ class CyberAgent:
         返回：
           {"answer": "...", "sources": [...], "conversation_id": "...", "rewritten_query": "...", "stats": {...}}
         """
+        t_start = time.time()
         if not conversation_id:
             if skip_memory:
                 import uuid
@@ -1393,22 +1395,43 @@ class CyberAgent:
         else:
             user_msg_id = self.memory.add_message(conversation_id, "user", query)
 
+        trace_data = build_trace_envelope(
+            original_query=query,
+            rewrite_enabled=self.use_query_rewrite,
+            conversation_id=conversation_id,
+            conversation_category=category,
+            path="chat.sync",
+            db_path=getattr(self.memory, "_db_path", None),
+        )
+
         # ---- 用户越狱检测 ----
         conv_history = self.memory.get_history(conversation_id)
         is_jailbreak, jb_reason = _detect_user_jailbreak(query, conv_history)
         if is_jailbreak:
             logger.warning(f"⚠️ 检测到越狱尝试: {jb_reason}")
+            add_trace_step(
+                trace_data,
+                "jailbreak_detection",
+                triggered=True,
+                reason=jb_reason,
+                user_query=query[:120],
+            )
+            finish_trace(trace_data, "blocked", reason="user_jailbreak")
             answer = (
                 "我是专注于网络安全的智能助手，主要提供等保测评、数据安全、"
                 "合规检查、安全管理体系等方面的知识。关于设备选型、价格、"
                 "具体技术操作等问题，建议您咨询相关领域的专业人员获取更准确的信息。"
             )
             sources = []
-            self.memory.add_message(conversation_id, "assistant", answer, sources=[])
+            msg_id = self.memory.add_message(conversation_id, "assistant", answer, sources=[])
             first_msg = self.memory.get_history(conversation_id)
             if len([m for m in first_msg if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
-            self.memory.log_usage(conversation_id, 0, query, off_topic=True, total_time=0)
+            self.memory.log_usage(
+                conversation_id, msg_id, query, off_topic=True,
+                total_time=round(time.time() - t_start, 3),
+                trace_data=trace_data, answer_jailbreak=1,
+            )
             self.memory.update_jailbreak_status(
                 conversation_id, "pending", "用户诱导越狱", message_id=user_msg_id)
             return {"answer": answer, "sources": sources, "conversation_id": conversation_id, "skipped": True, "jailbreak_reason": jb_reason}
@@ -1418,11 +1441,23 @@ class CyberAgent:
         if offtopic_reply:
             answer = offtopic_reply
             sources = []
-            self.memory.add_message(conversation_id, "assistant", answer, sources=[])
+            add_trace_step(
+                trace_data,
+                "offtopic_detection",
+                triggered=True,
+                user_query=query[:120],
+            )
+            finish_trace(trace_data, "blocked", reason="offtopic")
+            msg_id = self.memory.add_message(conversation_id, "assistant", answer, sources=[])
             self.memory.extract_and_save_memory(conversation_id, query, answer)
             first_msg = self.memory.get_history(conversation_id)
             if len([m for m in first_msg if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
+            self.memory.log_usage(
+                conversation_id, msg_id, query, off_topic=True,
+                total_time=round(time.time() - t_start, 3),
+                trace_data=trace_data,
+            )
             return {
                 "answer": answer,
                 "sources": sources,
@@ -1437,11 +1472,18 @@ class CyberAgent:
         if greeting_reply:
             answer = greeting_reply
             sources = []
-            self.memory.add_message(conversation_id, "assistant", answer, sources=[])
+            add_trace_step(trace_data, "greeting_detection", triggered=True)
+            finish_trace(trace_data, "answered", reason="greeting")
+            msg_id = self.memory.add_message(conversation_id, "assistant", answer, sources=[])
             self.memory.extract_and_save_memory(conversation_id, query, answer)
             first_msg = self.memory.get_history(conversation_id)
             if len([m for m in first_msg if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
+            self.memory.log_usage(
+                conversation_id, msg_id, query, off_topic=True,
+                total_time=round(time.time() - t_start, 3),
+                trace_data=trace_data,
+            )
             return {
                 "answer": answer,
                 "sources": sources,
@@ -1458,6 +1500,17 @@ class CyberAgent:
         search_queries = enrich_queries_for_compliance_decision(
             query, query_plan.retrieval_queries(), query_plan.query_type
         )
+        add_trace_step(
+            trace_data,
+            "query_rewrite",
+            enabled=self.use_query_rewrite,
+            duration_s=round(rewrite_time, 3),
+            time_s=round(rewrite_time, 3),
+            original=query,
+            rewritten=query_plan.semantic_query if query_plan.semantic_query != query else "",
+            result=query_plan.to_dict(),
+            effective_retrieval_queries=search_queries,
+        )
 
         t0 = time.time()
         docs = self.retriever.search_multi(
@@ -1470,13 +1523,22 @@ class CyberAgent:
         )
         search_time = time.time() - t0
         logger.info(f"检索完成: {len(docs)} 条 ({search_time:.2f}s)")
-        trace_data = {
-            "original_query": query,
-            "rewrite_enabled": self.use_query_rewrite,
-            "query_rewrite": query_plan.to_dict(),
-            "effective_retrieval_queries": search_queries,
-            "retrieval": getattr(self.retriever, "last_trace", {}),
-        }
+        trace_data["query_rewrite"] = query_plan.to_dict()
+        trace_data["effective_retrieval_queries"] = search_queries
+        trace_data["retrieval"] = getattr(self.retriever, "last_trace", {})
+        add_trace_step(
+            trace_data,
+            "retrieval",
+            duration_s=round(search_time, 3),
+            time_s=round(search_time, 3),
+            returned_count=len(docs),
+            total_results=len(docs),
+            top_sources=[
+                {"file_name": d.get("file_name", ""), "section": d.get("section", "")}
+                for d in docs[:5]
+            ],
+            trace=trace_data["retrieval"],
+        )
 
         # ---- 空结果预检 + 降级处理 ----
         if not docs:
@@ -1487,16 +1549,36 @@ class CyberAgent:
                     logger.info(f"降级检索成功: 「{fq}」→ {len(fallback_docs)} 条")
                     docs = fallback_docs
                     trace_data["fallback_query"] = fq
+                    add_trace_step(
+                        trace_data,
+                        "fallback_retrieval",
+                        query=fq,
+                        returned_count=len(fallback_docs),
+                    )
                     break
 
         if not docs:
             answer = "该问题超出我的知识范围，知识库中暂无相关文件覆盖。"
             sources = []
-            self.memory.add_message(conversation_id, "assistant", answer, sources=[])
+            finish_trace(trace_data, "no_retrieval_result")
+            msg_id = self.memory.add_message(conversation_id, "assistant", answer, sources=[])
             self.memory.extract_and_save_memory(conversation_id, query, answer)
             first_msg = self.memory.get_history(conversation_id)
             if len([m for m in first_msg if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
+            counts = retrieval_counts(trace_data)
+            self.memory.log_usage(
+                conversation_id, msg_id, query,
+                rewrite_time=round(rewrite_time, 3),
+                faiss_time=round(search_time, 3),
+                total_time=round(time.time() - t_start, 3),
+                faiss_count=counts["faiss"],
+                chroma_count=counts["chroma"],
+                bm25_count=counts["bm25"],
+                final_count=counts["final"],
+                returned_count=0,
+                trace_data=trace_data,
+            )
             return {
                 "answer": answer,
                 "sources": sources,
@@ -1527,12 +1609,33 @@ class CyberAgent:
 
         guarded_answer = compliance_decision_guard_answer(query, sources, query_plan.query_type)
         if guarded_answer:
-            self.memory.add_message(conversation_id, "assistant", guarded_answer, sources=sources)
+            add_trace_step(
+                trace_data,
+                "compliance_decision_guard",
+                triggered=True,
+                reason="no_authoritative_compliance_source",
+            )
+            finish_trace(trace_data, "guarded", reason="no_authoritative_compliance_source")
+            msg_id = self.memory.add_message(conversation_id, "assistant", guarded_answer, sources=sources)
             self.memory.extract_and_save_memory(conversation_id, query, guarded_answer)
             first_msg = self.memory.get_history(conversation_id)
             if len([m for m in first_msg if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
             trace_data["compliance_decision_guard"] = "no_authoritative_compliance_source"
+            counts = retrieval_counts(trace_data)
+            self.memory.log_usage(
+                conversation_id, msg_id, query,
+                rewrite_time=round(rewrite_time, 3),
+                faiss_time=round(search_time, 3),
+                total_time=round(time.time() - t_start, 3),
+                faiss_count=counts["faiss"],
+                chroma_count=counts["chroma"],
+                bm25_count=counts["bm25"],
+                final_count=counts["final"],
+                returned_count=len(docs),
+                documents=sources,
+                trace_data=trace_data,
+            )
             return {
                 "answer": guarded_answer,
                 "sources": sources,
@@ -1581,6 +1684,18 @@ class CyberAgent:
         answer = llm_result.get("content", "")
         reasoning = llm_result.get("reasoning_content")
         llm_time = time.time() - t1
+        add_trace_step(
+            trace_data,
+            "llm_generation",
+            duration_s=round(llm_time, 3),
+            time_s=round(llm_time, 3),
+            total_time_s=round(time.time() - t_start, 3),
+            model=getattr(self.llm, "model", ""),
+            prompt_messages=len(messages),
+            response_length=len(answer or ""),
+            reasoning_length=len(reasoning or ""),
+            was_truncated=bool(truncation_info.get("was_truncated") if isinstance(truncation_info, dict) else False),
+        )
 
         # ---- 自检 ----
         was_verified = False
@@ -1604,8 +1719,18 @@ class CyberAgent:
         answer = _filter_output_forbidden(answer)
         # ---- 来源标注校验 ----
         answer = _validate_annotations(answer)
+        add_trace_step(
+            trace_data,
+            "post_processing",
+            verified=was_verified,
+            source_check_corrected=was_verified,
+            actions=["verify_answer"] if was_verified else [],
+            sources_count=len(sources),
+            answer_chars=len(answer or ""),
+        )
+        finish_trace(trace_data, "answered", returned_count=len(docs))
 
-        self.memory.add_message(conversation_id, "assistant", answer, sources=sources)
+        msg_id = self.memory.add_message(conversation_id, "assistant", answer, sources=sources)
 
         # ---- 抽取并保存跨会话记忆（角色、标准等） ----
         self.memory.extract_and_save_memory(conversation_id, query, answer)
@@ -1614,6 +1739,25 @@ class CyberAgent:
         if len([m for m in first_msg if m["role"] == "user"]) == 1:
             title = query[:50]
             self.memory.update_title(conversation_id, title)
+
+        counts = retrieval_counts(trace_data)
+        self.memory.log_usage(
+            conversation_id=conversation_id,
+            message_id=msg_id,
+            query=query,
+            rewrite_time=round(rewrite_time, 3),
+            faiss_time=round(search_time, 3),
+            llm_time=round(llm_time, 3),
+            total_time=round(time.time() - t_start, 3),
+            faiss_count=counts["faiss"],
+            chroma_count=counts["chroma"],
+            bm25_count=counts["bm25"],
+            final_count=counts["final"],
+            returned_count=len(docs),
+            was_truncated=bool(truncation_info.get("was_truncated") if isinstance(truncation_info, dict) else False),
+            documents=sources,
+            trace_data=trace_data,
+        )
 
         return {
             "answer": answer,
@@ -1668,8 +1812,16 @@ class CyberAgent:
         is_jailbreak, jb_reason = _detect_user_jailbreak(query, conv_history)
         if is_jailbreak:
             logger.warning(f"⚠️ 检测到越狱尝试: {jb_reason}")
-            td = {"original_query": query, "rewrite_enabled": self.use_query_rewrite, "steps": [
-                {"step": "jailbreak_detection", "triggered": True, "reason": jb_reason, "user_query": query[:80]}]}
+            td = build_trace_envelope(
+                original_query=query,
+                rewrite_enabled=self.use_query_rewrite,
+                conversation_id=conversation_id,
+                conversation_category=category,
+                path="chat.stream",
+                db_path=getattr(self.memory, "_db_path", None),
+            )
+            add_trace_step(td, "jailbreak_detection", triggered=True, reason=jb_reason, user_query=query[:80])
+            finish_trace(td, "blocked", reason="user_jailbreak")
             jailbreak_reply = (
                 "我是专注于网络安全的智能助手，主要提供等保测评、数据安全、"
                 "合规检查、安全管理体系等方面的知识。关于设备选型、价格、"
@@ -1692,8 +1844,16 @@ class CyberAgent:
         # ---- 非安全话题检测（流式路径） ----
         offtopic_reply = self._check_offtopic(query)
         if offtopic_reply:
-            td = {"original_query": query, "rewrite_enabled": self.use_query_rewrite, "steps": [
-                {"step": "jailbreak_detection", "triggered": True, "reason": "offtopic", "user_query": query[:80]}]}
+            td = build_trace_envelope(
+                original_query=query,
+                rewrite_enabled=self.use_query_rewrite,
+                conversation_id=conversation_id,
+                conversation_category=category,
+                path="chat.stream",
+                db_path=getattr(self.memory, "_db_path", None),
+            )
+            add_trace_step(td, "offtopic_detection", triggered=True, user_query=query[:80])
+            finish_trace(td, "blocked", reason="offtopic")
             msg_id = self.memory.add_message(
                 conversation_id, "assistant", offtopic_reply, sources=[])
             first_msgs = self.memory.get_history(conversation_id)
@@ -1711,8 +1871,16 @@ class CyberAgent:
         # ---- 社交寒暄检测（流式路径） ----
         greeting_reply = self._check_greeting(query)
         if greeting_reply:
-            td = {"original_query": query, "rewrite_enabled": self.use_query_rewrite,
-                  "steps": [{"step": "greeting_detection", "triggered": True}]}
+            td = build_trace_envelope(
+                original_query=query,
+                rewrite_enabled=self.use_query_rewrite,
+                conversation_id=conversation_id,
+                conversation_category=category,
+                path="chat.stream",
+                db_path=getattr(self.memory, "_db_path", None),
+            )
+            add_trace_step(td, "greeting_detection", triggered=True)
+            finish_trace(td, "answered", reason="greeting")
             msg_id = self.memory.add_message(
                 conversation_id, "assistant", greeting_reply, sources=[])
             first_msgs = self.memory.get_history(conversation_id)
@@ -1735,6 +1903,25 @@ class CyberAgent:
             query, query_plan.retrieval_queries(), query_plan.query_type
         )
         t_rewrite = time.time() - t0_rw
+        trace_data = build_trace_envelope(
+            original_query=query,
+            rewrite_enabled=self.use_query_rewrite,
+            conversation_id=conversation_id,
+            conversation_category=category,
+            path="chat.stream",
+            db_path=getattr(self.memory, "_db_path", None),
+        )
+        add_trace_step(
+            trace_data,
+            "query_rewrite",
+            enabled=self.use_query_rewrite,
+            duration_s=round(t_rewrite, 3),
+            time_s=round(t_rewrite, 3),
+            original=query,
+            rewritten=query_plan.semantic_query if query_plan.semantic_query != query else "",
+            result=query_plan.to_dict(),
+            effective_retrieval_queries=search_queries,
+        )
 
         loop = asyncio.get_event_loop()
         t0_sr = time.time()
@@ -1751,13 +1938,22 @@ class CyberAgent:
         )
         t_search = time.time() - t0_sr
         logger.info(f"流式检索完成: {len(docs)} 条")
-        trace_data = {
-            "original_query": query,
-            "rewrite_enabled": self.use_query_rewrite,
-            "query_rewrite": query_plan.to_dict(),
-            "effective_retrieval_queries": search_queries,
-            "retrieval": getattr(self.retriever, "last_trace", {}),
-        }
+        trace_data["query_rewrite"] = query_plan.to_dict()
+        trace_data["effective_retrieval_queries"] = search_queries
+        trace_data["retrieval"] = getattr(self.retriever, "last_trace", {})
+        add_trace_step(
+            trace_data,
+            "retrieval",
+            duration_s=round(t_search, 3),
+            time_s=round(t_search, 3),
+            returned_count=len(docs),
+            total_results=len(docs),
+            top_sources=[
+                {"file_name": d.get("file_name", ""), "section": d.get("section", "")}
+                for d in docs[:5]
+            ],
+            trace=trace_data["retrieval"],
+        )
 
         # ---- 空结果预检 + 降级处理 ----
         if not docs:
@@ -1772,18 +1968,29 @@ class CyberAgent:
                     logger.info(f"流式降级检索成功: 「{fq}」→ {len(fallback_docs)} 条")
                     docs = fallback_docs
                     trace_data["fallback_query"] = fq
+                    add_trace_step(
+                        trace_data,
+                        "fallback_retrieval",
+                        query=fq,
+                        returned_count=len(fallback_docs),
+                    )
                     break
 
         if not docs:
             answer = "该问题超出我的知识范围，知识库中暂无相关文件覆盖。"
             sources = []
+            finish_trace(trace_data, "no_retrieval_result")
             total_time = round(time.time() - t_start, 3)
             msg_id = self.memory.add_message(conversation_id, "assistant", answer, sources=[])
             first_msgs = self.memory.get_history(conversation_id)
             if len([m for m in first_msgs if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
+            counts = retrieval_counts(trace_data)
             self.memory.log_usage(conversation_id, msg_id, query, rewrite_time=round(
-                t_rewrite, 3), total_time=total_time, returned_count=0, trace_data=trace_data)
+                t_rewrite, 3), faiss_time=round(t_search, 3), total_time=total_time,
+                faiss_count=counts["faiss"], chroma_count=counts["chroma"],
+                bm25_count=counts["bm25"], final_count=counts["final"],
+                returned_count=0, trace_data=trace_data)
             yield {"type": "token", "content": answer}
             yield {"type": "done", "sources": sources, "conversation_id": conversation_id, "message_id": msg_id}
             return
@@ -1806,14 +2013,24 @@ class CyberAgent:
         guarded_answer = compliance_decision_guard_answer(query, sources, query_plan.query_type)
         if guarded_answer:
             trace_data["compliance_decision_guard"] = "no_authoritative_compliance_source"
+            add_trace_step(
+                trace_data,
+                "compliance_decision_guard",
+                triggered=True,
+                reason="no_authoritative_compliance_source",
+            )
+            finish_trace(trace_data, "guarded", reason="no_authoritative_compliance_source")
             total_time = round(time.time() - t_start, 3)
             self.memory._update_last_message(conversation_id, guarded_answer, sources=sources)
             first_msgs = self.memory.get_history(conversation_id)
             if len([m for m in first_msgs if m["role"] == "user"]) == 1:
                 self.memory.update_title(conversation_id, query[:50])
+            counts = retrieval_counts(trace_data)
             self.memory.log_usage(conversation_id, msg_id, query, rewrite_time=round(
-                t_rewrite, 3), search_time=round(t_search, 3), total_time=total_time,
-                returned_count=len(docs), trace_data=trace_data)
+                t_rewrite, 3), faiss_time=round(t_search, 3), total_time=total_time,
+                faiss_count=counts["faiss"], chroma_count=counts["chroma"],
+                bm25_count=counts["bm25"], final_count=counts["final"],
+                returned_count=len(docs), documents=sources, trace_data=trace_data)
             yield {"type": "token", "content": guarded_answer}
             yield {"type": "done", "sources": sources, "conversation_id": conversation_id, "message_id": msg_id}
             return
@@ -1853,6 +2070,17 @@ class CyberAgent:
                 yield {"type": "token", "content": chunk}
         t_llm = time.time() - t0_llm
         total_time = round(time.time() - t_start, 3)
+        add_trace_step(
+            trace_data,
+            "llm_generation",
+            duration_s=round(t_llm, 3),
+            time_s=round(t_llm, 3),
+            total_time_s=total_time,
+            model=getattr(self.llm, "model", ""),
+            prompt_messages=len(messages),
+            response_length=len(full_content or ""),
+            reasoning_length=len("".join(reasoning_list)) if reasoning_list else 0,
+        )
 
         yield {
             "type": "answer_done",
@@ -1891,11 +2119,21 @@ class CyberAgent:
         if annotated != full_content:
             self.memory._update_last_message(conversation_id, annotated, sources=sources)
             full_content = annotated
+        add_trace_step(
+            trace_data,
+            "post_processing",
+            source_check_corrected=False,
+            actions=[],
+            sources_count=len(sources),
+            answer_chars=len(full_content or ""),
+        )
+        finish_trace(trace_data, "answered", returned_count=len(docs))
 
         first_msgs = self.memory.get_history(conversation_id)
         if len([m for m in first_msgs if m["role"] == "user"]) == 1:
             self.memory.update_title(conversation_id, query[:50])
 
+        counts = retrieval_counts(trace_data)
         self.memory.log_usage(
             conversation_id=conversation_id,
             message_id=msg_id,
@@ -1904,6 +2142,10 @@ class CyberAgent:
             faiss_time=round(t_search, 3),
             llm_time=round(t_llm, 3),
             total_time=total_time,
+            faiss_count=counts["faiss"],
+            chroma_count=counts["chroma"],
+            bm25_count=counts["bm25"],
+            final_count=counts["final"],
             returned_count=len(docs),
             was_truncated=was_truncated,
             documents=sources,

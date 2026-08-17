@@ -938,6 +938,17 @@ def _build_report_doc(title: str, date_line: str, summary_cards: list, headers: 
 
 def _render_trace_report(trace: dict) -> str:
     """将 RAG 全链路 trace 数据渲染为 HTML"""
+    ctx = trace.get("context", {}) if isinstance(trace, dict) else {}
+    llm_ctx = ctx.get("llm", {}) if isinstance(ctx, dict) else {}
+    chat_llm = llm_ctx.get("chat", {}) if isinstance(llm_ctx, dict) else {}
+    kb = ctx.get("knowledge_base", {}) if isinstance(ctx, dict) else {}
+    context_html = f"""
+<p>执行结果: <strong>{trace.get("outcome", "unknown")}</strong></p>
+<p>Prompt 版本: <code>{ctx.get("prompt_version", "")}</code></p>
+<p>Taxonomy 版本: <code>{ctx.get("taxonomy_version", "")}</code></p>
+<p>Chat 模型: <code>{chat_llm.get("provider", "")} / {chat_llm.get("model", "")}</code></p>
+<p>知识库快照: cleaned={kb.get("cleaned_docs", 0)}，parent_sections={kb.get("parent_sections", 0)}，FAISS={'✅' if kb.get("faiss_index_exists") else '❌'}，Chroma={'✅' if kb.get("chroma_exists") else '❌'}</p>
+"""
     steps_html = ""
     step_num = 0
     for s in trace.get("steps", []):
@@ -1007,6 +1018,7 @@ def _render_trace_report(trace: dict) -> str:
     return f"""<div style="background:#f9f9f9;border-radius:8px;padding:16px;margin-bottom:20px">
 <p>原始查询: <code>{trace.get("original_query", "")}</code></p>
 <p>改写启用: {'✅ 是' if trace.get("rewrite_enabled") else '❌ 否'}</p>
+{context_html}
 <hr style="border:none;border-top:1px solid #ddd;margin:12px 0">
 {steps_html}
 </div>"""
