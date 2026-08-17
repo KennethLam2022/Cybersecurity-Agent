@@ -197,6 +197,14 @@ class TestIsAdminRoute:
     def test_admin_llm_configs(self):
         assert is_admin_route("/api/llm/configs/save") is True
 
+    def test_admin_llm_legacy_config_routes(self):
+        assert is_admin_route("/api/llm/config") is True
+        assert is_admin_route("/api/llm/presets") is True
+        assert is_admin_route("/api/llm/test") is True
+
+    def test_public_llm_current_config_readonly(self):
+        assert is_admin_route("/api/llm/config/current") is False
+
     def test_public_chat_path(self):
         assert is_admin_route("/api/conversations") is False
 

@@ -67,6 +67,9 @@ _ADMIN_ROUTES = [
     "/api/conversations/detail",
     "/api/conversations/stats",
     "/api/conversations/{conv_id}/hard",
+    "/api/llm/config",
+    "/api/llm/presets",
+    "/api/llm/test",
     "/api/llm/refresh-models",
 ]
 
@@ -75,9 +78,7 @@ PUBLIC_ROUTES = {
     "/api/conversations",
     "/api/chat/stream",
     "/api/rating",
-    "/api/llm/config",
-    "/api/llm/presets",
-    "/api/llm/test",
+    "/api/llm/config/current",
     "/admin/model-config",
     "/api/admin/stream",
 }
