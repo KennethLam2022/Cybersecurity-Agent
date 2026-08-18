@@ -44,6 +44,7 @@ from app_state import (
     _build_report_doc, _render_trace_report,
 )
 from profile_classifier import profile_options, suggest_document_profile
+from profile_migration import apply_profile_migration, scan_profile_migration
 from agent import SystemPromptLoader
 
 router = APIRouter()
@@ -458,6 +459,27 @@ def documents_scan(files: list[UploadFile] = File(...)):
 @router.get("/api/documents/profile-registry")
 def documents_profile_registry():
     return JSONResponse({"status": "ok", "profiles": profile_options()})
+
+
+@router.get("/api/documents/profile-migration/summary")
+def documents_profile_migration_summary(limit: int = 500):
+    limit_val = max(1, min(int(limit or 500), 5000))
+    return JSONResponse({"status": "ok", **scan_profile_migration(limit=limit_val)})
+
+
+@router.post("/api/documents/profile-migration/apply")
+def documents_profile_migration_apply(data: dict = Body(default={})):
+    limit = data.get("limit")
+    limit_val = None
+    if limit:
+        limit_val = max(1, min(int(limit), 5000))
+    update_vector_stores = bool(data.get("update_vector_stores", True))
+    result = apply_profile_migration(limit=limit_val, update_vector_stores=update_vector_stores)
+    try:
+        agent.refresh_retriever()
+    except Exception as e:
+        logger.warning(f"profile 迁移后刷新 retriever 失败: {e}")
+    return JSONResponse({"status": "ok", **result})
 
 
 @router.post("/api/documents/start-processing")

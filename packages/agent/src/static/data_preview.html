@@ -26,6 +26,12 @@
   .page-header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
   .page-header p { font-size: 13px; color: var(--t2); margin-top: 6px; }
   .page-header .badge { display: inline-block; background: #0071e312; color: var(--a); font-size: 11px; padding: 2px 10px; border-radius: 100px; font-weight: 600; margin-left: 10px; vertical-align: middle; }
+  .migration-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0 24px; padding: 12px 14px; background: var(--card); border: 1px solid var(--b); border-radius: 10px; }
+  .migration-bar .mini-stat { font-size: 12px; color: var(--t2); }
+  .migration-bar .mini-stat strong { color: var(--t); }
+  .migration-bar .btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--b); background: var(--bg); color: var(--t); font-size: 12px; cursor: pointer; }
+  .migration-bar .btn.primary { border-color: var(--a); background: #0071e312; color: var(--a); }
+  .migration-bar .btn:disabled { opacity: .45; cursor: not-allowed; }
 
   .stat-bar { display: flex; gap: 14px; margin-bottom: 24px; }
   .stat-item { flex: 1; background: var(--card); border: 1px solid var(--b); border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; gap: 14px; }
@@ -235,6 +241,16 @@
       <span id="docTotalBadge" style="font-size:14px;color:var(--t2);font-weight:500;white-space:nowrap">已入库: 0</span>
     </div>
     <p>拖拽上传文档 → 扫描校验 → 确认范围 → 自动清洗切片 → 入库知识库</p>
+  </div>
+
+  <div class="migration-bar">
+    <button class="btn primary" id="btnLoadMigration">刷新存量建议</button>
+    <button class="btn" id="btnApplyMigration">应用存量校准</button>
+    <div class="mini-stat">总量 <strong id="migrationTotal">0</strong></div>
+    <div class="mini-stat">待确认 <strong id="migrationPending">0</strong></div>
+    <div class="mini-stat">通用 <strong id="migrationGeneral">0</strong></div>
+    <div class="mini-stat">通信扩展 <strong id="migrationTelecom">0</strong></div>
+    <div class="mini-stat">待确认清单 <strong id="migrationReviewList">0</strong></div>
   </div>
 
   <!-- 统计栏 -->
@@ -473,6 +489,13 @@
     const batchFill = $('batchFill');
     const batchDone = $('batchDone');
     const batchTotal = $('batchTotal');
+    const btnLoadMigration = $('btnLoadMigration');
+    const btnApplyMigration = $('btnApplyMigration');
+    const migrationTotal = $('migrationTotal');
+    const migrationPending = $('migrationPending');
+    const migrationGeneral = $('migrationGeneral');
+    const migrationTelecom = $('migrationTelecom');
+    const migrationReviewList = $('migrationReviewList');
 
     const totalCount = $('totalCount');
     const successCount = $('successCount');
@@ -711,6 +734,60 @@
       filterBar.querySelectorAll('.chip').forEach(chip => {
         chip.classList.toggle('active', chip.dataset.filter === currentFilter);
       });
+    }
+
+    function updateMigrationSummary(summary) {
+      const total = summary?.total ?? 0;
+      const pending = summary?.pending ?? 0;
+      const general = summary?.summary?.general ?? 0;
+      const telecom = summary?.summary?.['industry/telecom'] ?? 0;
+      const records = Array.isArray(summary?.records) ? summary.records : [];
+      const reviewCount = records.filter(r => r.needs_review).length;
+      migrationTotal.textContent = total;
+      migrationPending.textContent = pending;
+      migrationGeneral.textContent = general;
+      migrationTelecom.textContent = telecom;
+      migrationReviewList.textContent = reviewCount;
+    }
+
+    async function loadMigrationSummary() {
+      try {
+        btnLoadMigration.disabled = true;
+        btnLoadMigration.textContent = '刷新中...';
+        const resp = await fetch('/api/documents/profile-migration/summary?limit=500');
+        const data = await resp.json();
+        if (data.status === 'ok') updateMigrationSummary(data);
+      } catch (e) {
+        statusText.textContent = '⚠️ 存量 profile 概览加载失败: ' + e.message;
+      } finally {
+        btnLoadMigration.disabled = false;
+        btnLoadMigration.textContent = '刷新存量建议';
+      }
+    }
+
+    async function applyMigrationSummary() {
+      if (!confirm('确定应用存量资料 profile 校准？这会写入 sidecar 并更新向量库 metadata。')) return;
+      try {
+        btnApplyMigration.disabled = true;
+        btnApplyMigration.textContent = '应用中...';
+        const resp = await fetch('/api/documents/profile-migration/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ update_vector_stores: true }),
+        });
+        const data = await resp.json();
+        if (data.status === 'ok') {
+          statusText.textContent = `✅ 存量 profile 校准完成：${data.written_sidecars || 0} 个文件`;
+          await loadMigrationSummary();
+        } else {
+          statusText.textContent = `❌ 存量 profile 校准失败: ${data.message || '未知错误'}`;
+        }
+      } catch (e) {
+        statusText.textContent = '❌ 存量 profile 校准请求失败: ' + e.message;
+      } finally {
+        btnApplyMigration.disabled = false;
+        btnApplyMigration.textContent = '应用存量校准';
+      }
     }
 
     // ─── File Reading ───────────────────────────────────────
@@ -1180,6 +1257,8 @@
 
     // Start
     btnStart.addEventListener('click', startProcessing);
+    btnLoadMigration.addEventListener('click', loadMigrationSummary);
+    btnApplyMigration.addEventListener('click', applyMigrationSummary);
 
     // Stop
     btnStop.addEventListener('click', () => {
@@ -1237,6 +1316,7 @@
       }
       render();
       statusText.textContent = '📋 已就绪，拖入文件开始';
+      loadMigrationSummary();
     })();
 
     // 页面加载时，从后端拉取真实已入库数 + FAISS/Chroma 向量数
