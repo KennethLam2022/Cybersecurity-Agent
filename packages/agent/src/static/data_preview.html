@@ -118,6 +118,14 @@
   .conflict-select { background: var(--card); color: var(--t); border: 1px solid #ff950044; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-family: inherit; cursor: pointer; outline: none; }
   .conflict-select:hover { border-color: var(--y); }
   .conflict-select option { background: var(--card); color: var(--t); }
+  .profile-box { display: flex; flex-direction: column; gap: 4px; align-items: stretch; max-width: 190px; margin: 0 auto; }
+  .profile-row { display: flex; gap: 4px; align-items: center; }
+  .profile-select,.category-input { width: 100%; min-width: 0; border: 1px solid var(--b); border-radius: 6px; background: var(--card); color: var(--t); font-size: 11px; padding: 3px 6px; font-family: inherit; outline: none; }
+  .profile-select:focus,.category-input:focus { border-color: var(--a); box-shadow: 0 0 0 2px #0071e312; }
+  .profile-meta { color: var(--t2); font-size: 10px; line-height: 1.35; white-space: normal; text-align: left; }
+  .profile-confirm { border: 1px solid var(--b); background: var(--bg); color: var(--t); border-radius: 6px; padding: 3px 7px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .profile-confirm.ok { color: var(--g); border-color: #34c75944; background: #34c75910; }
+  .profile-confirm.need { color: var(--y); border-color: #ff950044; background: #ff950010; }
 
   .summary-bar { display: flex; gap: 14px; padding: 16px; background: var(--card); border: 1px solid var(--b); border-radius: 10px; margin-bottom: 20px; }
   .summary-item { flex: 1; text-align: center; }
@@ -337,7 +345,7 @@
       </div>
       <div class="col-file">文件名</div>
       <div class="col-size">大小</div>
-      <div class="col-source">来源分类</div>
+      <div class="col-source">资料归属</div>
       <div class="col-status">状态</div>
       <div class="col-action"></div>
     </div>
@@ -430,6 +438,15 @@
     let currentBatchIndex = 0;     // 当前处理到第几批
     let totalBatches = 0;          // 总批次数
     let totalSelectedQ = 0;        // 总文件数（用于进度条）
+    let profileRegistry = [];
+    const FALLBACK_PROFILES = [
+      { profile: 'general', label: '网络安全通用主干', category: '通用', scope: 'general', industry: '', description: '通用网络安全主干资料' },
+      { profile: 'industry/telecom', label: '通信行业扩展', category: '04-通信行业标准-运营商', scope: 'industry', industry: 'telecom', description: '通信行业扩展资料包' },
+      { profile: 'industry/finance', label: '金融行业扩展', category: '11-金融行业安全', scope: 'industry', industry: 'finance', description: '金融行业扩展资料包' },
+      { profile: 'industry/energy', label: '能源行业扩展', category: '12-能源行业安全', scope: 'industry', industry: 'energy', description: '能源行业扩展资料包' },
+      { profile: 'industry/healthcare', label: '医疗行业扩展', category: '13-医疗行业安全', scope: 'industry', industry: 'healthcare', description: '医疗行业扩展资料包' },
+      { profile: 'industry/government', label: '政务行业扩展', category: '14-政务行业安全', scope: 'industry', industry: 'government', description: '政务行业扩展资料包' },
+    ];
 
     // ─── DOM refs ───────────────────────────────────────────
     const $ = id => document.getElementById(id);
@@ -469,6 +486,33 @@
     const sumPending = $('sumPending');
     const sumBatch = $('sumBatch');
     const selectedCount = $('selectedCount');
+
+    function escHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function getProfileOptions() {
+      return profileRegistry.length ? profileRegistry : FALLBACK_PROFILES;
+    }
+
+    function getProfileOption(profile) {
+      return getProfileOptions().find(p => p.profile === profile) || getProfileOptions()[0];
+    }
+
+    function getProfileLabel(profile) {
+      const opt = getProfileOption(profile);
+      return opt ? opt.label : (profile || '待确认');
+    }
+
+    function getProfileCategory(profile) {
+      const opt = getProfileOption(profile);
+      return opt ? opt.category : '通用';
+    }
 
     // ─── Helpers ────────────────────────────────────────────
     function fmtSize(bytes) {
@@ -535,6 +579,15 @@
         const cls = statusClass(f.state, f.isDup);
         const dotPulse = shouldPulse(f.state) ? 'pulse' : '';
         const showConflict = f.isDup && !isProcessing;
+        const profileDisabled = isPhase2 ? 'disabled' : '';
+        const selectedProfile = f.profile || 'general';
+        const selectedCategory = f.category || f.cat || getProfileCategory(selectedProfile);
+        const profileOptionsHtml = getProfileOptions().map(opt =>
+          `<option value="${escHtml(opt.profile)}" ${opt.profile === selectedProfile ? 'selected' : ''}>${escHtml(opt.label)}</option>`
+        ).join('');
+        const confidence = typeof f.profileConfidence === 'number' ? Math.round(f.profileConfidence * 100) + '%' : '-';
+        const confirmCls = f.profileConfirmed ? 'ok' : 'need';
+        const confirmText = f.profileConfirmed ? '已确认' : '确认归属';
 
         html += `<div class="file-row" data-id="${f.id}">
           <div class="col-check">
@@ -548,7 +601,17 @@
             </div>
           </div>
           <div class="col-size">${f.size ? fmtSize(f.size) : '-'}</div>
-          <div class="col-source">${f.cat || '-'}</div>
+          <div class="col-source">
+            <div class="profile-box">
+              <select class="profile-select" data-id="${f.id}" ${profileDisabled}>${profileOptionsHtml}</select>
+              <div class="profile-row">
+                <input class="category-input" data-id="${f.id}" value="${escHtml(selectedCategory)}" ${profileDisabled}>
+                ${!isPhase2 ? `<button class="profile-confirm ${confirmCls}" data-id="${f.id}" title="${escHtml(f.profileReason || '')}">${confirmText}</button>` : `<span class="profile-confirm ${confirmCls}">${confirmText}</span>`}
+              </div>
+              <div class="profile-meta">${escHtml(getProfileLabel(selectedProfile))} · ${confidence}</div>
+              ${f.profileReason ? `<div class="profile-meta" title="${escHtml(f.profileReason)}">${escHtml(f.profileReason).slice(0, 42)}</div>` : ''}
+            </div>
+          </div>
           <div class="col-status">
             <span class="status-badge ${cls}" ${showConflict ? `title="${f.dedupReason || ''}"` : ''}>
               <span class="dot ${statusDot(f.state, f.isDup)} ${dotPulse}"></span>
@@ -593,7 +656,8 @@
       const processing = files.filter(f => !['done', 'error', 'pending'].includes(f.state)).length;
       const selected = files.filter(f => f.checked && !isProcessing).length;
       const unresolvedConflicts = files.filter(f => f.checked && f.isDup && f.state === 'pending').length;
-      const canStart = selected > 0 && unresolvedConflicts === 0;
+      const unconfirmedProfiles = files.filter(f => f.checked && f.state === 'pending' && !f.profileConfirmed).length;
+      const canStart = selected > 0 && unresolvedConflicts === 0 && unconfirmedProfiles === 0;
 
       totalCount.textContent = total;
       successCount.textContent = success;
@@ -630,7 +694,9 @@
       chipDone.textContent = `✅ 成功 (${success})`;
       chipErr.textContent = `❌ 失败 (${fail})`;
 
-      btnStart.textContent = `▶ 开始处理 (${selected} 个文件)`;
+      btnStart.textContent = unconfirmedProfiles > 0
+        ? `▶ 开始处理 (${selected} 个文件，${unconfirmedProfiles} 个未确认)`
+        : `▶ 开始处理 (${selected} 个文件)`;
       btnStart.disabled = !canStart;
     }
 
@@ -693,13 +759,21 @@
          }
          for (const sf of result.files) {
            const ext = getExt(sf.name);
+           const ps = sf.profile_suggestion || {};
            newFiles.push({
              id: makeId(),
              name: sf.name,
              ext: ext,
              size: sf.size,
              path: sf.in_source ? '源目录中已存在' : '新文件',
-             cat: sf.duplicate ? '重名' : '待入库',
+             cat: ps.category || (sf.duplicate ? '重名' : '通用'),
+             category: ps.category || '通用',
+             profile: ps.profile || 'general',
+             scope: ps.scope || 'general',
+             industry: ps.industry || '',
+             profileConfidence: typeof ps.confidence === 'number' ? ps.confidence : 0,
+             profileReason: ps.reason || '',
+             profileConfirmed: false,
              state: 'pending',
              isDup: sf.duplicate,
              checked: !sf.duplicate,
@@ -757,6 +831,12 @@
     async function startProcessing() {
       const selected = files.filter(f => f.checked && f.state === 'pending');
       if (selected.length === 0) return;
+      const unconfirmed = selected.filter(f => !f.profileConfirmed);
+      if (unconfirmed.length > 0) {
+        statusText.textContent = `⚠️ 还有 ${unconfirmed.length} 个文件未确认资料归属，请先点击“确认归属”`;
+        statusBar.classList.add('visible');
+        return;
+      }
 
       isProcessing = true;
       stopFlag = false;
@@ -811,7 +891,17 @@
         if (f._file) {
           try {
             const b64 = await readFileAsBase64(f._file);
-            filesPayload.push({ name: f.name, content: b64 });
+            filesPayload.push({
+              name: f.name,
+              content: b64,
+              category: f.category || f.cat || '通用',
+              profile: f.profile || 'general',
+              scope: f.scope || 'general',
+              industry: f.industry || '',
+              profile_confidence: f.profileConfidence || 0,
+              profile_reason: f.profileReason || '',
+              profile_confirmed: true,
+            });
           } catch (e) {
             console.warn(`读取文件失败 ${f.name}: ${e.message}`);
             f.state = 'error';
@@ -1023,9 +1113,45 @@
         const f = files.find(x => x.id === sel.dataset.id);
         if (f) f.conflictAction = sel.value;
       }
+      const profileSel = e.target.closest('.profile-select');
+      if (profileSel) {
+        const f = files.find(x => x.id === profileSel.dataset.id);
+        const opt = getProfileOption(profileSel.value);
+        if (f) {
+          f.profile = opt.profile;
+          f.scope = opt.scope;
+          f.industry = opt.industry;
+          f.profileConfidence = 1;
+          f.profileReason = `人工选择: ${opt.label}`;
+          f.profileConfirmed = false;
+          f.category = opt.category;
+          f.cat = opt.category;
+          render();
+        }
+      }
+      const categoryInput = e.target.closest('.category-input');
+      if (categoryInput) {
+        const f = files.find(x => x.id === categoryInput.dataset.id);
+        if (f) {
+          f.category = categoryInput.value.trim();
+          f.cat = categoryInput.value.trim();
+          f.profileConfirmed = false;
+          updateStats();
+        }
+      }
     });
 
     fileRows.addEventListener('click', e => {
+      const confirmBtn = e.target.closest('.profile-confirm');
+      if (confirmBtn && !isProcessing) {
+        const f = files.find(x => x.id === confirmBtn.dataset.id);
+        if (f) {
+          f.profileConfirmed = true;
+          updateStats();
+          render();
+        }
+        return;
+      }
       const del = e.target.closest('.del-btn');
       if (del && !isProcessing) {
         const id = del.dataset.id;
@@ -1099,8 +1225,19 @@
     });
 
     // ─── Init ───────────────────────────────────────────────
-    render();
-    statusText.textContent = '📋 已就绪，拖入文件开始';
+    (async function initProfileRegistry() {
+      try {
+        const resp = await fetch('/api/documents/profile-registry');
+        const data = await resp.json();
+        if (data && data.status === 'ok' && Array.isArray(data.profiles) && data.profiles.length > 0) {
+          profileRegistry = data.profiles;
+        }
+      } catch (e) {
+        profileRegistry = [];
+      }
+      render();
+      statusText.textContent = '📋 已就绪，拖入文件开始';
+    })();
 
     // 页面加载时，从后端拉取真实已入库数 + FAISS/Chroma 向量数
     (async function loadServerStats() {

@@ -76,6 +76,17 @@ def _extract_sections(file_path: str) -> list[dict]:
     return result
 
 
+def _load_sidecar_metadata(file_path: str) -> dict:
+    meta_path = Path(file_path).with_suffix(".meta.json")
+    if not meta_path.exists():
+        return {}
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def _update_parent_index(md_paths: list[str]) -> int:
     """增量追加父文档索引，返回新加节数"""
     existing = {}
@@ -87,6 +98,8 @@ def _update_parent_index(md_paths: list[str]) -> int:
         p = Path(fp)
         stem = p.stem
         category = p.parent.name
+        file_meta = _load_sidecar_metadata(fp)
+        meta_category = str(file_meta.get("category") or category or "").strip()
         sections = _extract_sections(fp)
         for idx, sec in enumerate(sections):
             parent_id = f"{stem}__s{idx}"
@@ -94,8 +107,15 @@ def _update_parent_index(md_paths: list[str]) -> int:
                 existing[parent_id] = {
                     "text": sec["text"],
                     "file_name": stem,
-                    "category": category,
+                    "category": meta_category,
                     "section": sec["section"],
+                    "profile": str(file_meta.get("profile", "")),
+                    "scope": str(file_meta.get("scope", "")),
+                    "industry": str(file_meta.get("industry", "")),
+                    "profile_confidence": file_meta.get("profile_confidence", 0),
+                    "profile_reason": str(file_meta.get("profile_reason", "")),
+                    "profile_confirmed": bool(file_meta.get("profile_confirmed", False)),
+                    "profile_source": str(file_meta.get("profile_source", "")),
                 }
                 added += 1
 
@@ -111,6 +131,15 @@ def _chunk_document(file_path: str, category: str, stem: str) -> list[dict]:
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
     text = Path(file_path).read_text(encoding="utf-8")
+    file_meta = _load_sidecar_metadata(file_path)
+    resolved_category = str(file_meta.get("category") or category or "").strip()
+    profile = str(file_meta.get("profile", "")).strip()
+    scope = str(file_meta.get("scope", "")).strip()
+    industry = str(file_meta.get("industry", "")).strip()
+    profile_confidence = file_meta.get("profile_confidence", 0)
+    profile_reason = str(file_meta.get("profile_reason", "")).strip()
+    profile_confirmed = bool(file_meta.get("profile_confirmed", False))
+    profile_source = str(file_meta.get("profile_source", "")).strip()
     lines = text.split("\n")
     current_section = "前言"
     current_texts = []
@@ -145,19 +174,33 @@ def _chunk_document(file_path: str, category: str, stem: str) -> list[dict]:
                 chunks.append({
                     "content": sub,
                     "file_name": stem,
-                    "category": category,
+                    "category": resolved_category,
                     "section": sec_title,
                     "chunk_id": f"{stem}__s{idx}__{i}",
                     "parent_id": f"{stem}__s{idx}",
+                    "profile": profile,
+                    "scope": scope,
+                    "industry": industry,
+                    "profile_confidence": profile_confidence,
+                    "profile_reason": profile_reason,
+                    "profile_confirmed": profile_confirmed,
+                    "profile_source": profile_source,
                 })
         else:
             chunks.append({
                 "content": sec_text,
                 "file_name": stem,
-                "category": category,
+                "category": resolved_category,
                 "section": sec_title,
                 "chunk_id": f"{stem}__s{idx}",
                 "parent_id": f"{stem}__s{idx}",
+                "profile": profile,
+                "scope": scope,
+                "industry": industry,
+                "profile_confidence": profile_confidence,
+                "profile_reason": profile_reason,
+                "profile_confirmed": profile_confirmed,
+                "profile_source": profile_source,
             })
     return chunks
 
@@ -175,6 +218,13 @@ def _add_to_faiss(chunks: list[dict]):
         "file_name": c["file_name"], "category": c["category"],
         "section": c["section"], "chunk_id": c["chunk_id"],
         "parent_id": c["parent_id"],
+        "profile": c.get("profile", ""),
+        "scope": c.get("scope", ""),
+        "industry": c.get("industry", ""),
+        "profile_confidence": c.get("profile_confidence", 0),
+        "profile_reason": c.get("profile_reason", ""),
+        "profile_confirmed": c.get("profile_confirmed", False),
+        "profile_source": c.get("profile_source", ""),
     } for c in chunks]
     ids = [c["chunk_id"] for c in chunks]
 
@@ -259,6 +309,13 @@ def _add_to_chroma(chunks: list[dict]):
         "file_name": c["file_name"], "category": c["category"],
         "section": c["section"], "chunk_id": c["chunk_id"],
         "parent_id": c["parent_id"],
+        "profile": c.get("profile", ""),
+        "scope": c.get("scope", ""),
+        "industry": c.get("industry", ""),
+        "profile_confidence": c.get("profile_confidence", 0),
+        "profile_reason": c.get("profile_reason", ""),
+        "profile_confirmed": c.get("profile_confirmed", False),
+        "profile_source": c.get("profile_source", ""),
     } for c in chunks]
 
     existing_ids = set(collection.get(ids=ids, include=[])["ids"]) if old_count > 0 else set()

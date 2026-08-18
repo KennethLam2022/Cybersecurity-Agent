@@ -615,7 +615,7 @@ def _parse_single_file(file_path: str, task_id: str, skip_layer2: bool = False) 
         return None
 
 
-def _clean_and_save(raw_text: str, file_stem: str, category: str, task_id: str) -> str | None:
+def _clean_and_save(raw_text: str, file_stem: str, category: str, task_id: str, file_meta: dict | None = None) -> str | None:
     try:
         _ensure_preprocessor_imports()
         from llm_cleaner import LlmCleaner
@@ -633,6 +633,20 @@ def _clean_and_save(raw_text: str, file_stem: str, category: str, task_id: str) 
         md_name = file_stem.replace(" ", "_").replace("-", "_") + ".md"
         md_path = cleaned_dir / md_name
         md_path.write_text(cleaned, encoding="utf-8")
+        if file_meta:
+            meta_path = md_path.with_suffix(".meta.json")
+            meta_payload = {
+                "file_name": file_stem,
+                "category": category,
+                "scope": file_meta.get("scope", "general"),
+                "profile": file_meta.get("profile", "general"),
+                "industry": file_meta.get("industry", ""),
+                "profile_confidence": file_meta.get("profile_confidence", 0),
+                "profile_reason": file_meta.get("profile_reason", ""),
+                "profile_confirmed": bool(file_meta.get("profile_confirmed", False)),
+                "profile_source": file_meta.get("profile_source", "manual_confirmed"),
+            }
+            meta_path.write_text(json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8")
         logger.info(f"  ✅ 已保存: {md_path}")
         return str(md_path)
     except Exception as e:
@@ -687,22 +701,29 @@ def _run_processing_task(task_id: str, files: list[dict], category: str):
         for f in files:
             if f.get("conflict_action") != "overwrite":
                 continue
+            file_category = f.get("category", category) or category
             dedup = _get_dedup()
             dr = dedup.check_file("", f["name"])
             if dr.is_duplicate and dr.layer == 1:
                 for mf in dr.matched_files:
                     old_stem = Path(mf).stem if mf.endswith(".md") else mf.rsplit(".", 1)[0]
                     old_stem_normalized = old_stem.replace(" ", "_").replace("-", "_")
-                    cleaned_dir = _PROJECT_ROOT / "RAG_DATA" / "03_cleaned" / category
+                    cleaned_dir = _PROJECT_ROOT / "RAG_DATA" / "03_cleaned" / file_category
                     for ext in (".md",):
                         old_md = cleaned_dir / f"{old_stem_normalized}{ext}"
                         if old_md.exists():
                             old_md.unlink()
+                            old_meta = old_md.with_suffix(".meta.json")
+                            if old_meta.exists():
+                                old_meta.unlink()
                             logger.warning(f"  🗑️ 删除旧版 .md: {old_md.name}")
                             old_stems_to_clear.append(old_stem_normalized)
                     old_md2 = cleaned_dir / f"{old_stem}.md"
                     if old_md2.exists() and old_stem != old_stem_normalized:
                         old_md2.unlink()
+                        old_meta2 = old_md2.with_suffix(".meta.json")
+                        if old_meta2.exists():
+                            old_meta2.unlink()
                         logger.warning(f"  🗑️ 删除旧版 .md: {old_md2.name}")
                         old_stems_to_clear.append(old_stem)
 
@@ -751,9 +772,10 @@ def _run_processing_task(task_id: str, files: list[dict], category: str):
         def _slot_worker(slot_idx: int, batch: list):
             try:
                 md_paths = []
-                for raw_text, file_stem in batch:
+                for raw_text, file_stem, file_meta in batch:
+                    file_category = file_meta.get("category", category) or category
                     logger.info(f"  [Slot {slot_idx}] 开始清洗: {file_stem}")
-                    md_path = _clean_and_save(raw_text, file_stem, category, task_id)
+                    md_path = _clean_and_save(raw_text, file_stem, file_category, task_id, file_meta)
                     if md_path:
                         md_paths.append(md_path)
                         success_count[0] += 1
@@ -797,7 +819,20 @@ def _run_processing_task(task_id: str, files: list[dict], category: str):
                         with staging_locks[i]:
                             full = False
                             if not staging_busy[i] and len(staging_buffers[i]) < _STAGING_BATCH:
-                                staging_buffers[i].append((raw_text, file_stem))
+                                staging_buffers[i].append((
+                                    raw_text,
+                                    file_stem,
+                                    {
+                                        "category": f.get("category", category) or category,
+                                        "profile": f.get("profile", "general"),
+                                        "scope": f.get("scope", "general"),
+                                        "industry": f.get("industry", ""),
+                                        "profile_confidence": f.get("profile_confidence", 0),
+                                        "profile_reason": f.get("profile_reason", ""),
+                                        "profile_confirmed": f.get("profile_confirmed", False),
+                                        "profile_source": f.get("profile_source", "manual_confirmed"),
+                                    },
+                                ))
                                 full = len(staging_buffers[i]) >= _STAGING_BATCH
                                 added = True
                         if full:

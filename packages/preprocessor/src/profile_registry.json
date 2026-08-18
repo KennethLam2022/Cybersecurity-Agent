@@ -1,0 +1,65 @@
+{
+  "version": "2026.08.phase2",
+  "profiles": [
+    {
+      "profile": "general",
+      "scope": "general",
+      "industry": "",
+      "category": "通用",
+      "label": "网络安全通用主干",
+      "keywords": ["网络安全", "等保", "数据安全", "个人信息保护", "应急响应", "供应链安全", "云安全", "APP安全"],
+      "description": "通用网络安全主干资料",
+      "default": true
+    },
+    {
+      "profile": "industry/telecom",
+      "scope": "industry",
+      "industry": "telecom",
+      "category": "04-通信行业标准-运营商",
+      "label": "通信行业扩展",
+      "keywords": ["5G", "通信", "电信", "移动通信", "通信网络", "工信部", "YD/T", "中国移动"],
+      "description": "通信行业扩展资料包",
+      "default": false
+    },
+    {
+      "profile": "industry/finance",
+      "scope": "industry",
+      "industry": "finance",
+      "category": "11-金融行业安全",
+      "label": "金融行业扩展",
+      "keywords": ["金融", "银行", "证券", "保险", "基金", "支付", "清算", "信贷"],
+      "description": "金融行业扩展资料包",
+      "default": false
+    },
+    {
+      "profile": "industry/energy",
+      "scope": "industry",
+      "industry": "energy",
+      "category": "12-能源行业安全",
+      "label": "能源行业扩展",
+      "keywords": ["能源", "电力", "电网", "发电", "输电", "变电", "调度", "油气"],
+      "description": "能源行业扩展资料包",
+      "default": false
+    },
+    {
+      "profile": "industry/healthcare",
+      "scope": "industry",
+      "industry": "healthcare",
+      "category": "13-医疗行业安全",
+      "label": "医疗行业扩展",
+      "keywords": ["医疗", "医院", "病历", "诊疗", "医保", "健康码", "影像", "检验"],
+      "description": "医疗行业扩展资料包",
+      "default": false
+    },
+    {
+      "profile": "industry/government",
+      "scope": "industry",
+      "industry": "government",
+      "category": "14-政务行业安全",
+      "label": "政务行业扩展",
+      "keywords": ["政务", "政府", "公安", "法院", "检察院", "行政审批", "电子政务"],
+      "description": "政务行业扩展资料包",
+      "default": false
+    }
+  ]
+}

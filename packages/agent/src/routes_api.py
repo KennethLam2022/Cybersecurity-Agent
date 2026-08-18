@@ -43,6 +43,7 @@ from app_state import (
     _run_processing_task, _cleanup_staging,
     _build_report_doc, _render_trace_report,
 )
+from profile_classifier import profile_options, suggest_document_profile
 from agent import SystemPromptLoader
 
 router = APIRouter()
@@ -403,6 +404,10 @@ def documents_scan(files: list[UploadFile] = File(...)):
         dup_info = dr.to_dict()
         dup_info["in_source"] = dr.is_duplicate and dr.layer == 1
         dup_info["in_cleaned"] = dr.is_duplicate and dr.layer == 1
+        profile_suggestion = suggest_document_profile(
+            filename=f.filename,
+            category_hint="通用",
+        )
         results.append({
             "name": f.filename,
             "size": len(file_bytes),
@@ -416,6 +421,7 @@ def documents_scan(files: list[UploadFile] = File(...)):
             "matched_files": dr.matched_files[:5],
             "in_source": dup_info["in_source"],
             "in_cleaned": dup_info["in_cleaned"],
+            "profile_suggestion": profile_suggestion,
         })
 
     from deduplicator import extract_standard_id
@@ -449,6 +455,11 @@ def documents_scan(files: list[UploadFile] = File(...)):
     return JSONResponse({"status": "ok", "files": results})
 
 
+@router.get("/api/documents/profile-registry")
+def documents_profile_registry():
+    return JSONResponse({"status": "ok", "profiles": profile_options()})
+
+
 @router.post("/api/documents/start-processing")
 def documents_start(data: dict = Body(...)):
     files = data.get("files", [])
@@ -459,6 +470,8 @@ def documents_start(data: dict = Body(...)):
 
     task_id = uuid.uuid4().hex[:12]
     staging_files = []
+    profiles_by_id = {p["profile"]: p for p in profile_options()}
+    allowed_profiles = set(profiles_by_id)
 
     for f in files:
         name = f.get("name", "")
@@ -472,11 +485,40 @@ def documents_start(data: dict = Body(...)):
         if len(file_bytes) > _MAX_FILE_SIZE:
             logger.warning(f"  ⏭️ 跳过超大文件: {name} ({len(file_bytes)/1024/1024:.1f}MB)")
             continue
+        profile_suggestion = f.get("profile_suggestion") or suggest_document_profile(
+            filename=name,
+            category_hint=f.get("category", category),
+        )
+        selected_profile = f.get("profile") or profile_suggestion.get("profile", "general")
+        if selected_profile not in allowed_profiles:
+            return JSONResponse({"status": "error", "message": f"资料归属 profile 无效: {selected_profile}"})
+        if not bool(f.get("profile_confirmed", False)):
+            return JSONResponse({"status": "error", "message": f"文件未确认资料归属: {name}"})
+        profile_config = profiles_by_id.get(selected_profile, {})
+        final_category = str(
+            f.get("category")
+            or profile_config.get("category")
+            or profile_suggestion.get("category")
+            or category
+            or "通用"
+        ).strip()
         file_dir = _UPLOAD_STAGING / task_id
         file_dir.mkdir(parents=True, exist_ok=True)
         file_path = file_dir / name
         file_path.write_bytes(file_bytes)
-        staging_files.append({"name": name, "path": str(file_path), "conflict_action": action})
+        staging_files.append({
+            "name": name,
+            "path": str(file_path),
+            "conflict_action": action,
+            "profile": selected_profile,
+            "scope": profile_config.get("scope") or f.get("scope") or profile_suggestion.get("scope", "general"),
+            "industry": profile_config.get("industry") or f.get("industry") or profile_suggestion.get("industry", ""),
+            "category": final_category,
+            "profile_confidence": f.get("profile_confidence") or profile_suggestion.get("confidence", 0),
+            "profile_reason": f.get("profile_reason") or profile_suggestion.get("reason", ""),
+            "profile_confirmed": True,
+            "profile_source": "manual_confirmed",
+        })
 
     if not staging_files:
         return JSONResponse({"status": "error", "message": "没有有效的文件"})
