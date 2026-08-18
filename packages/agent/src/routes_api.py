@@ -470,6 +470,7 @@ def documents_profile_extension_propose(data: dict = Body(...)):
             category=data.get("category", ""), keywords=data.get("keywords") or [],
             classifier_aliases=data.get("classifier_aliases") or [],
             description=data.get("description", ""),
+            source_paths=data.get("source_paths") or [],
         )
         return JSONResponse({"status": "ok", "proposal": proposal})
     except ValueError as exc:

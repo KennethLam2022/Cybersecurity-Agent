@@ -272,6 +272,7 @@
       <select id="migrationTargetProfile"></select>
       <input id="migrationTargetCategory" placeholder="分类目录（默认跟随 profile）">
       <button id="btnConfirmMigration">批量确认所选</button>
+      <button id="btnProposeExtension" title="为选中文档创建待确认的行业扩展 Profile">生成行业扩展提案</button>
       <span id="migrationSelectionText" style="font-size:12px;color:var(--t2)">已选 0 个</span>
     </div>
     <table class="migration-table">
@@ -534,6 +535,7 @@
     const migrationTargetProfile = $('migrationTargetProfile');
     const migrationTargetCategory = $('migrationTargetCategory');
     const btnConfirmMigration = $('btnConfirmMigration');
+    const btnProposeExtension = $('btnProposeExtension');
     const migrationSelectionText = $('migrationSelectionText');
 
     const totalCount = $('totalCount');
@@ -900,6 +902,41 @@
       } finally {
         btnConfirmMigration.textContent = '批量确认所选';
         updateMigrationSelectionText();
+      }
+    }
+
+    async function proposeSelectedExtension() {
+      const paths = [...selectedMigrationPaths];
+      if (!paths.length) {
+        statusText.textContent = '⚠️ 请先选择待确认文档';
+        return;
+      }
+      const industry = window.prompt('请输入行业名称，例如“制造业”或“金融科技”');
+      if (!industry || !industry.trim()) return;
+      const keywordText = window.prompt('请输入行业识别关键词，使用逗号分隔（可留空）') || '';
+      const keywords = keywordText.split(/[,，]/).map(item => item.trim()).filter(Boolean);
+      try {
+        const proposalResp = await fetch('/api/documents/profile-extensions/propose', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({industry: industry.trim(), keywords, source_paths: paths}),
+        });
+        const proposalData = await proposalResp.json();
+        if (proposalData.status !== 'ok') throw new Error(proposalData.message || '提案生成失败');
+        const proposal = proposalData.proposal;
+        const summary = `Profile: ${proposal.profile}\n名称: ${proposal.label}\n分类: ${proposal.category}\n关键词: ${(proposal.keywords || []).join('、') || '未填写'}\n\n确认后才会写入扩展配置，是否确认？`;
+        if (!window.confirm(summary)) return;
+        const confirmResp = await fetch('/api/documents/profile-extensions/confirm', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({proposal}),
+        });
+        const confirmData = await confirmResp.json();
+        if (confirmData.status !== 'ok') throw new Error(confirmData.message || '扩展确认失败');
+        statusText.textContent = `✅ 已确认 ${proposal.label}，后续资料可归入 ${proposal.profile}`;
+        selectedMigrationPaths.clear();
+        await loadProfileRegistry();
+        await loadMigrationSummary();
+      } catch (e) {
+        statusText.textContent = '❌ 行业扩展提案失败: ' + e.message;
       }
     }
 
@@ -1395,6 +1432,7 @@
     btnLoadMigration.addEventListener('click', loadMigrationSummary);
     btnApplyMigration.addEventListener('click', applyMigrationSummary);
     btnConfirmMigration.addEventListener('click', confirmSelectedMigration);
+    btnProposeExtension.addEventListener('click', proposeSelectedExtension);
 
     // Stop
     btnStop.addEventListener('click', () => {

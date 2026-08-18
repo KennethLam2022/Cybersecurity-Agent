@@ -37,7 +37,7 @@ def load_profile_extensions() -> list[dict[str, Any]]:
 def propose_profile_extension(*, industry: str, label: str = "", category: str = "",
                               keywords: list[str] | None = None,
                               classifier_aliases: list[str] | None = None,
-                              description: str = "") -> dict[str, Any]:
+                              description: str = "", source_paths: list[str] | None = None) -> dict[str, Any]:
     """Build a proposal without changing the active registry."""
     industry = str(industry or "").strip()
     if not industry:
@@ -54,6 +54,7 @@ def propose_profile_extension(*, industry: str, label: str = "", category: str =
         "keywords": clean_keywords,
         "classifier_aliases": clean_aliases,
         "description": str(description or f"{industry}行业扩展资料包").strip(),
+        "source_paths": [str(path) for path in (source_paths or []) if str(path).strip()],
         "requires_manual_confirmation": True,
     }
 
