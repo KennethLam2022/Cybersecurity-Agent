@@ -1,4 +1,5 @@
 from profile_classifier import (
+    available_profiles,
     enabled_retrieval_profiles,
     profile_for_metadata,
     profile_options,
@@ -13,6 +14,12 @@ def test_profile_registry_exposes_general_and_industry_profiles():
     assert profiles["general"]["scope"] == "general"
     assert "industry/telecom" in profiles
     assert "industry/finance" in profiles
+
+
+def test_profile_classifier_aliases_are_registry_configured():
+    profiles = {p["profile"]: p for p in available_profiles()}
+    assert "5g核心网" in profiles["industry/telecom"].get("classifier_aliases", [])
+    assert "电网安全" in profiles["industry/energy"].get("classifier_aliases", [])
 
 
 def test_finance_document_is_suggested_as_finance_profile():

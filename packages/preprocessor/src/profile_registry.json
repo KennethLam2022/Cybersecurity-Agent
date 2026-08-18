@@ -20,6 +20,7 @@
       "category_aliases": ["04-通信行业标准-运营商", "04-通信行业"],
       "label": "通信行业扩展",
       "keywords": ["5G", "通信", "电信", "移动通信", "通信网络", "工信部", "YD/T", "中国移动"],
+      "classifier_aliases": ["电信网", "运营商", "5g核心网"],
       "description": "通信行业扩展资料包",
       "default": false
     },
@@ -31,6 +32,7 @@
       "category_aliases": ["11-金融行业安全"],
       "label": "金融行业扩展",
       "keywords": ["金融", "银行", "证券", "保险", "基金", "支付", "清算", "信贷"],
+      "classifier_aliases": ["银行业", "证券业", "保险业"],
       "description": "金融行业扩展资料包",
       "default": false
     },
@@ -42,6 +44,7 @@
       "category_aliases": ["12-能源行业安全"],
       "label": "能源行业扩展",
       "keywords": ["能源", "电力", "电网", "发电", "输电", "变电", "调度", "油气"],
+      "classifier_aliases": ["电力系统", "电网安全"],
       "description": "能源行业扩展资料包",
       "default": false
     },

@@ -80,13 +80,11 @@ def _score_profile(text: str, profile: dict[str, Any]) -> tuple[int, list[str]]:
         if keyword.lower() in text:
             score += 2
             hits.append(keyword)
-    # 额外给常见写法少量加分
-    alias_bonus = {
-        "industry/telecom": ["电信网", "运营商", "5g核心网", "中国移动"],
-        "industry/finance": ["银行业", "证券业", "保险业"],
-        "industry/energy": ["电力系统", "电网安全"],
-    }
-    for alias in alias_bonus.get(str(profile.get("profile", "")), []):
+    # 行业特征补充词也由 profile 注册表维护，避免新增行业时修改主流程。
+    for alias in profile.get("classifier_aliases", []):
+        alias = str(alias or "").strip().lower()
+        if not alias:
+            continue
         if alias in text:
             score += 1
             hits.append(alias)
