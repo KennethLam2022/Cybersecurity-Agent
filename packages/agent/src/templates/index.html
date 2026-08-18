@@ -93,50 +93,6 @@ async function init() {
     if (currentConvId) {
         await loadMessages(currentConvId);
     }
-    // 监听管理员配置变更
-    startConfigMonitor();
-}
-
-// ===== 管理员配置变更监听 =====
-let _lastConfigProvider = '';
-let _lastConfigModel = '';
-
-async function startConfigMonitor() {
-    // 获取当前生效配置
-    try {
-        const r = await fetch('/api/llm/config/current');
-        const cfg = await r.json();
-        _lastConfigProvider = cfg.provider || '';
-        _lastConfigModel = cfg.model || '';
-    } catch(e) {}
-    // 每 30 秒轮询检测变更
-    setInterval(async () => {
-        try {
-            const r = await fetch('/api/llm/config/current');
-            const cfg = await r.json();
-            const newP = cfg.provider || '';
-            const newM = cfg.model || '';
-            if (newP && newM && (newP !== _lastConfigProvider || newM !== _lastConfigModel)) {
-                _lastConfigProvider = newP;
-                _lastConfigModel = newM;
-                showConfigChangeTip(newP, newM);
-            }
-        } catch(e) {}
-    }, 30000);
-}
-
-function showConfigChangeTip(provider, model) {
-    const oldTip = document.getElementById('configChangeTip');
-    if (oldTip) oldTip.remove();
-    const tip = document.createElement('div');
-    tip.id = 'configChangeTip';
-    tip.style.cssText = 'position:fixed;top:16px;right:16px;z-index:9999;background:#1a73e8;color:#fff;padding:16px 20px;border-radius:10px;font-size:14px;box-shadow:0 4px 20px rgba(0,0,0,.2);max-width:360px;animation:slideIn .3s ease;';
-    tip.innerHTML = `<div style="font-weight:600;margin-bottom:4px;">🔄 模型已更换</div>
-<div style="font-size:13px;opacity:.9;">管理员已将对话模型切换为 <strong>${provider}</strong> / <strong>${model}</strong></div>
-<button onclick="this.parentElement.remove()" style="margin-top:8px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">知道了</button>`;
-    document.body.appendChild(tip);
-    // 10秒后自动消失
-    setTimeout(() => { const el = document.getElementById('configChangeTip'); if (el) el.remove(); }, 10000);
 }
 
 // 时间分组工具
