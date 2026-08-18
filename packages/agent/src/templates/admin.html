@@ -552,7 +552,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
         <input id="itemId" type="hidden" value="">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
           <input id="itemQuery" placeholder="查询语句" style="padding:6px 10px;border:1px solid var(--b2);border-radius:4px;font-size:12px;background:var(--bg1);color:var(--t1)">
-          <input id="itemExpected" placeholder="期望匹配的关键词/来源" style="padding:6px 10px;border:1px solid var(--b2);border-radius:4px;font-size:12px;background:var(--bg1);color:var(--t1)">
+          <input id="itemExpected" placeholder="期望证据：来源、文档ID或关键词（支持 JSON）" style="padding:6px 10px;border:1px solid var(--b2);border-radius:4px;font-size:12px;background:var(--bg1);color:var(--t1)">
         </div>
         <div style="display:flex;gap:8px;margin-bottom:8px">
           <input id="itemCategory" placeholder="分类 (可选)" style="flex:1;padding:6px 10px;border:1px solid var(--b2);border-radius:4px;font-size:12px;background:var(--bg1);color:var(--t1)">
@@ -573,7 +573,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <!-- 测试集表格 -->
       <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
         <table class="data-table" style="width:100%;font-size:12px;border-collapse:collapse">
-          <thead><tr><th>ID</th><th>查询</th><th>期望来源</th><th>Profile</th><th>分类</th><th>难度</th><th>操作</th></tr></thead>
+          <thead><tr><th>ID</th><th>查询</th><th>期望证据</th><th>Profile</th><th>分类</th><th>难度</th><th>操作</th></tr></thead>
           <tbody id="testSetBody"></tbody>
         </table>
       </div>
@@ -594,7 +594,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
     <div class="chart-card" style="margin-top:12px">
       <div class="chart-title">检索质量明细</div>
       <div style="overflow-x:auto"><table class="data-table" id="retrievalTable" style="width:100%;font-size:12px;border-collapse:collapse">
-        <thead><tr><th>查询</th><th>期望来源</th><th>Profile</th><th>R@5</th><th>R@10</th><th>MRR</th><th>时间</th></tr></thead>
+        <thead><tr><th>查询</th><th>期望证据</th><th>Profile</th><th>R@5</th><th>R@10</th><th>MRR</th><th>时间</th></tr></thead>
         <tbody></tbody>
       </table></div>
     </div>
@@ -3270,7 +3270,7 @@ async function loadRetrievalEval() {
     const tbody = document.querySelector('#retrievalTable tbody');
     tbody.innerHTML = items.map(i => `<tr>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${i.query}">${i.query}</td>
-      <td style="font-size:11px">${i.expected_source||''}</td>
+      <td style="font-size:11px">${escHtml(retrievalExpectationLabel(i.expected_source))}</td>
       <td style="font-size:11px">${escHtml(profileLabel(i.profile))}</td>
       <td style="color:${i.recall_5?'var(--g)':'var(--r)'};font-weight:600">${i.recall_5?'✅':'❌'}</td>
       <td style="color:${i.recall_10?'var(--g)':'var(--r)'};font-weight:600">${i.recall_10?'✅':'❌'}</td>
@@ -3717,7 +3717,7 @@ async function loadTestSetItems() {
       <tr>
         <td>${i.id}</td>
         <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(i.query)}">${escHtml(i.query)}</td>
-        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(i.expected)}">${escHtml(i.expected)}</td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(i.expected)}">${escHtml(retrievalExpectationLabel(i.expected))}</td>
         <td style="font-size:11px">${escHtml(profileLabel(i.profile))}</td>
         <td>${escHtml(i.category || '-')}</td>
         <td>${difficultyBadge(i.difficulty)}</td>
@@ -3901,6 +3901,23 @@ async function loadRetrievalProfileOptions() {
 function profileLabel(profile) {
   const option = retrievalProfileOptions.find(p => p.profile === (profile || 'general'));
   return option ? option.label : (profile || 'general');
+}
+
+function retrievalExpectationLabel(value) {
+  if (!value) return '';
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    if (parsed && typeof parsed === 'object') {
+      const parts = [];
+      if (parsed.relevant_doc_ids?.length) parts.push('文档ID: ' + parsed.relevant_doc_ids.join(', '));
+      if (parsed.relevant_sources?.length) parts.push('来源: ' + parsed.relevant_sources.join(', '));
+      if (parsed.relevant_terms?.length) parts.push('关键词: ' + parsed.relevant_terms.join(', '));
+      return parts.join(' · ') || '未配置证据';
+    }
+  } catch (e) {
+    // Legacy pipe-delimited expectations remain readable as keywords.
+  }
+  return String(value).replace(/\|/g, '、');
 }
 
 async function saveItem() {
