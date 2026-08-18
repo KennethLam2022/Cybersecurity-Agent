@@ -60,6 +60,24 @@ def seed_agent_eval_cases():
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+@router.post("/api/agent-eval/preflight")
+def agent_eval_preflight(data: dict | None = None):
+    from agent_eval.preflight import build_preflight
+
+    payload = data or {}
+    profile = payload.get("profile") or "general"
+    cases = agent.memory.get_agent_eval_cases(profile=profile)
+    if not cases and profile == "general":
+        _seed_builtin_cases()
+        cases = agent.memory.get_agent_eval_cases(profile=profile)
+    judge_requested = bool(payload.get("judge", False))
+    judge = _get_backend_eval_llm() if judge_requested else None
+    return {"ok": True, "preflight": build_preflight(
+        agent, cases, profile, repetitions=payload.get("repetitions", 1),
+        judge_requested=judge_requested, judge_available=judge is not None,
+    )}
+
+
 @router.post("/api/agent-eval/run")
 def run_agent_eval(data: dict | None = None):
     try:
@@ -77,7 +95,17 @@ def run_agent_eval(data: dict | None = None):
         if not cases:
             return JSONResponse({"error": "没有可运行的 Agent Evaluation 用例"}, status_code=400)
         repetitions = max(1, min(int(payload.get("repetitions") or 1), 5))
+        from agent_eval.preflight import build_preflight
+
         judge = _get_backend_eval_llm() if payload.get("judge", False) else None
+        preflight = build_preflight(
+            agent, cases, profile, repetitions=repetitions,
+            judge_requested=bool(payload.get("judge", False)), judge_available=judge is not None,
+        )
+        if payload.get("dry_run", False):
+            return {"ok": True, "dry_run": True, "preflight": preflight}
+        if not preflight["ready"]:
+            return JSONResponse({"error": "评测运行前检查未通过", "preflight": preflight}, status_code=400)
         exporter = build_langfuse_exporter()
         return {"ok": True, **run_agent_evaluation(
             agent, cases, profile=profile, judge=judge, exporter=exporter, repetitions=repetitions

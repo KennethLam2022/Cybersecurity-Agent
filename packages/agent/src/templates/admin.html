@@ -747,6 +747,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
           <option value="general">网络安全通用主干</option>
         </select>
         <button onclick="seedAgentEvalCases()" style="padding:6px 14px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">📦 导入主干集</button>
+        <button onclick="preflightAgentEval()" style="padding:6px 14px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">✓ 检查运行条件</button>
         <button id="btnRunAgentEval" onclick="runAgentEval()" style="padding:7px 16px;background:var(--a);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px">▶ 运行 Agent 评测</button>
         <span id="agentEvalStatus" style="font-size:12px;color:var(--t2)"></span>
       </div>
@@ -3754,6 +3755,22 @@ async function seedAgentEvalCases() {
     if (data.error) { showToast('❌ ' + data.error, ''); return; }
     showToast('✅ 已导入 ' + data.count + ' 条通用主干用例');
   } catch (e) { showToast('❌ ' + e.message, ''); }
+}
+
+async function preflightAgentEval() {
+  const profile = document.getElementById('agentEvalProfile').value || 'general';
+  const status = document.getElementById('agentEvalStatus');
+  status.textContent = '正在检查运行条件...';
+  try {
+    const response = await fetch('/api/agent-eval/preflight', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({profile})});
+    const data = await response.json();
+    const check = data.preflight || {};
+    if (!check.ready) {
+      status.textContent = '❌ 检查未通过：' + (check.errors || []).join('；');
+      return;
+    }
+    status.textContent = `✅ 可运行：${check.case_count} 条用例，预计调用 Agent ${check.estimated_agent_calls} 次，模型 ${check.model || '未识别'}`;
+  } catch (e) { status.textContent = '检查失败：' + e.message; }
 }
 
 async function runAgentEval() {
