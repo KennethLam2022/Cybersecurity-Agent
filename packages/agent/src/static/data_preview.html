@@ -260,7 +260,7 @@
     <div class="mini-stat">总量 <strong id="migrationTotal">0</strong></div>
     <div class="mini-stat">待确认 <strong id="migrationPending">0</strong></div>
     <div class="mini-stat">通用 <strong id="migrationGeneral">0</strong></div>
-    <div class="mini-stat">通信扩展 <strong id="migrationTelecom">0</strong></div>
+    <div class="mini-stat" id="migrationProfileStats">扩展 <strong>0</strong></div>
     <div class="mini-stat">待确认清单 <strong id="migrationReviewList">0</strong></div>
   </div>
 
@@ -531,7 +531,7 @@
     const migrationTotal = $('migrationTotal');
     const migrationPending = $('migrationPending');
     const migrationGeneral = $('migrationGeneral');
-    const migrationTelecom = $('migrationTelecom');
+    const migrationProfileStats = $('migrationProfileStats');
     const migrationReviewList = $('migrationReviewList');
     const migrationPanel = $('migrationPanel');
     const migrationRows = $('migrationRows');
@@ -791,7 +791,7 @@
       const total = summary?.total ?? 0;
       const pending = summary?.pending ?? 0;
       const general = summary?.summary?.general ?? 0;
-      const telecom = summary?.summary?.['industry/telecom'] ?? 0;
+      const profileCounts = summary?.summary || {};
       const records = Array.isArray(summary?.records) ? summary.records : [];
       const reviewCount = records.filter(r => r.needs_review).length;
       migrationRecords = records.filter(r => r.needs_review).slice(0, 30);
@@ -800,7 +800,12 @@
       migrationTotal.textContent = total;
       migrationPending.textContent = pending;
       migrationGeneral.textContent = general;
-      migrationTelecom.textContent = telecom;
+      const extensionStats = Object.entries(profileCounts)
+        .filter(([profile]) => profile !== 'general' && profile !== 'pending')
+        .map(([profile, count]) => `${escHtml(getProfileLabel(profile))} <strong>${Number(count) || 0}</strong>`);
+      migrationProfileStats.innerHTML = extensionStats.length
+        ? extensionStats.join(' · ')
+        : '扩展 <strong>0</strong>';
       migrationReviewList.textContent = reviewCount;
       renderMigrationRows();
     }
