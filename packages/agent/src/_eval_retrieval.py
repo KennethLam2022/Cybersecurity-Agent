@@ -66,6 +66,11 @@ INDUSTRY_TELECOM_TEST_SET = [
 TEST_SET = GENERAL_TEST_SET
 
 
+def _item_profile(item: dict, default: str = "general") -> str:
+    profile = str(item.get("profile") or default).strip()
+    return "industry/telecom" if profile == "telecom" else (profile or "general")
+
+
 def get_test_set(profile: str = "general") -> list[dict]:
     """返回评测集；行业专项必须显式指定 profile。"""
     if profile in ("industry/telecom", "telecom"):
@@ -73,18 +78,23 @@ def get_test_set(profile: str = "general") -> list[dict]:
     return list(GENERAL_TEST_SET)
 
 
-def evaluate():
+def evaluate(profile: str = "general"):
     memory = ConversationMemory()
     retriever = CyberRetriever(use_hybrid=True)
+    test_set = get_test_set(profile)
+    evaluation_profile = _item_profile({"profile": profile})
 
-    results_summary = {"total": len(TEST_SET), "pass": 0, "fail": 0, "items": []}
+    results_summary = {
+        "evaluation_profile": evaluation_profile,
+        "total": len(test_set), "pass": 0, "fail": 0, "items": []
+    }
     all_recall_5, all_recall_10, all_mrr = [], [], []
 
-    for item in TEST_SET:
+    for item in test_set:
         query = item["query"]
         expected = item["expected"]
 
-        docs = retriever.search(query, top_k=10, use_rerank=True)
+        docs = retriever.search(query, top_k=10, use_rerank=True, profiles={evaluation_profile})
 
         recall_5, recall_10 = 0, 0
         mrr = 0.0
@@ -128,6 +138,7 @@ def evaluate():
         results_summary["items"].append({
             "query": query,
             "expected": expected,
+            "profile": evaluation_profile,
             "recall_5": recall_5,
             "recall_10": recall_10,
             "mrr": round(mrr, 3),
@@ -148,7 +159,8 @@ def evaluate():
     logger.info("")
     logger.info("=" * 50)
     logger.info(f"检索质量跑分完成")
-    logger.info(f"  测试集: {len(TEST_SET)} 条")
+    logger.info(f"  profile: {evaluation_profile}")
+    logger.info(f"  测试集: {len(test_set)} 条")
     logger.info(
         f"  通过率: {results_summary['pass']}/{results_summary['total']} ({results_summary['pass']/results_summary['total']*100:.0f}%)")
     logger.info(f"  平均 Recall@5:  {avg_recall_5:.1f}%")
@@ -200,13 +212,19 @@ def evaluate_with_items(items: list, memory) -> dict:
     from retriever import CyberRetriever
 
     retriever = CyberRetriever(use_hybrid=True)
-    results_summary = {"total": len(items), "pass": 0, "fail": 0, "items": []}
+    profiles = sorted({_item_profile(item) for item in items})
+    results_summary = {
+        "evaluation_profile": profiles[0] if len(profiles) == 1 else "mixed",
+        "profiles": profiles,
+        "total": len(items), "pass": 0, "fail": 0, "items": []
+    }
     all_recall_5, all_recall_10, all_mrr = [], [], []
 
     for item in items:
         query = item["query"]
         expected = item.get("expected", "")
-        docs = retriever.search(query, top_k=10, use_rerank=True)
+        item_profile = _item_profile(item)
+        docs = retriever.search(query, top_k=10, use_rerank=True, profiles={item_profile})
 
         recall_5, recall_10 = 0, 0
         mrr = 0.0
@@ -249,6 +267,7 @@ def evaluate_with_items(items: list, memory) -> dict:
         results_summary["items"].append({
             "query": query,
             "expected": expected,
+            "profile": item_profile,
             "recall_5": recall_5,
             "recall_10": recall_10,
             "mrr": round(mrr, 4),
@@ -266,11 +285,12 @@ def evaluate_with_items(items: list, memory) -> dict:
     return results_summary
 
 
-def evaluate_single_query(agent, query: str, expected: str) -> dict:
+def evaluate_single_query(agent, query: str, expected: str, profile: str = "general") -> dict:
     """单条检索质量跑分（复用 agent 现有的 retriever）"""
     from datetime import datetime
     retriever = agent.retriever
-    docs = retriever.search(query, top_k=10, use_rerank=True)
+    item_profile = _item_profile({"profile": profile})
+    docs = retriever.search(query, top_k=10, use_rerank=True, profiles={item_profile})
 
     recall_5, recall_10 = 0, 0
     mrr = 0.0
@@ -305,6 +325,7 @@ def evaluate_single_query(agent, query: str, expected: str) -> dict:
     return {
         "query": query,
         "expected": expected,
+        "profile": item_profile,
         "recall_5": recall_5,
         "recall_10": recall_10,
         "mrr": mrr,
@@ -319,8 +340,10 @@ def _eval_mode(items, retriever, use_rerank: bool, use_hybrid: bool,
     for item in items:
         query = item["query"]
         expected = item.get("expected", "")
+        item_profile = _item_profile(item)
         docs = retriever.search(query, top_k=10, use_rerank=use_rerank,
-                                use_hybrid=use_hybrid, sources=sources)
+                                use_hybrid=use_hybrid, sources=sources,
+                                profiles={item_profile})
         recall_5, mrr = 0, 0.0
         first_rank = None
         for rank, d in enumerate(docs[:10], 1):
@@ -348,6 +371,8 @@ def _eval_mode_bm25_only(items: list, retriever, top_k=10) -> dict:
         query = item["query"]
         expected = item.get("expected", "")
         docs = retriever._bm25_search(query, top_k * 2) or []
+        from retriever import _filter_by_enabled_profiles
+        docs = _filter_by_enabled_profiles(docs, {_item_profile(item)})
 
         recall_5, mrr = 0, 0.0
         first_rank = None
@@ -417,8 +442,11 @@ def evaluate_with_items_compare(items: list, memory) -> dict:
     rerank_mrr = sum(all_results["hybrid_rerank"]["mrrs"]) / len(items)
     bm25_mrr = sum(all_results["bm25_only"]["mrrs"]) / len(items)
 
+    profiles = sorted({_item_profile(item) for item in items})
     summary = {
         "count": len(items),
+        "evaluation_profile": profiles[0] if len(profiles) == 1 else "mixed",
+        "profiles": profiles,
         "faiss_only_recall_5": round(base_r5, 3),
         "faiss_only_mrr": round(base_mrr, 3),
         "bm25_only_recall_5": round(bm25_r5, 3),
@@ -439,6 +467,7 @@ def evaluate_with_items_compare(items: list, memory) -> dict:
         summary["items"].append({
             "query": item["query"],
             "expected": item.get("expected", ""),
+            "profile": _item_profile(item),
             "faiss_only_recall_5": all_results["faiss_only"]["recall_5s"][i],
             "faiss_only_mrr": all_results["faiss_only"]["mrrs"][i],
             "bm25_only_recall_5": all_results["bm25_only"]["recall_5s"][i],

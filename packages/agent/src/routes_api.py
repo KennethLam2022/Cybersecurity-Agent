@@ -1332,6 +1332,7 @@ def add_retrieval_eval_item(data: dict):
     try:
         query = data.get("query", "").strip()
         expected = data.get("expected", "").strip()
+        profile = data.get("profile", "general")
         category = data.get("category", "")
         difficulty = data.get("difficulty", "medium")
         if not query or not expected:
@@ -1388,7 +1389,7 @@ def retrieval_eval_run_single(data: dict):
         if not query or not expected:
             return JSONResponse({"error": "query 和 expected 不能为空"}, status_code=400)
         from _eval_retrieval import evaluate_single_query
-        result = evaluate_single_query(agent, query, expected)
+        result = evaluate_single_query(agent, query, expected, profile=profile)
         return JSONResponse(result)
     except Exception as e:
         logger.error(f"run-single 失败: {e}")
