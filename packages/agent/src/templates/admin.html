@@ -241,6 +241,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <div class="tab-item" data-tab="indexing" onclick="switchTab('indexing')">入库质量</div>
       <div class="tab-item" data-tab="retrieval" onclick="switchTab('retrieval')">检索质量</div>
       <div class="tab-item" data-tab="e2e" onclick="switchTab('e2e')">综合质量</div>
+      <div class="tab-item" data-tab="agentEval" onclick="switchTab('agentEval')">Agent 评测</div>
     </div>
     <div class="tab-content active" id="tabDetail">
       <div class="empty-state" id="detailEmpty">
@@ -733,6 +734,37 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <div id="e2eEmpty" class="empty-state">
         <span style="font-size:48px;opacity:.3">🔬</span>
         <div style="margin-top:12px;color:var(--t2);font-size:13px">点击上方「运行综合质量评测」开始</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent Evaluation Tab -->
+  <div class="tab-content" id="tabAgentEval">
+    <div style="padding:20px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:600;color:var(--t1)">Agent Evaluation 主干集</span>
+        <select id="agentEvalProfile" style="padding:6px 10px;border:1px solid var(--b2);border-radius:6px;font-size:12px;background:var(--bg1);color:var(--t1)">
+          <option value="general">网络安全通用主干</option>
+        </select>
+        <button onclick="seedAgentEvalCases()" style="padding:6px 14px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">📦 导入主干集</button>
+        <button id="btnRunAgentEval" onclick="runAgentEval()" style="padding:7px 16px;background:var(--a);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px">▶ 运行 Agent 评测</button>
+        <span id="agentEvalStatus" style="font-size:12px;color:var(--t2)"></span>
+      </div>
+      <div class="stat-grid" id="agentEvalStats" style="display:none">
+        <div class="stat-card"><span class="num" id="agentEvalTotal">--</span><span class="lbl">用例数</span></div>
+        <div class="stat-card"><span class="num" id="agentEvalPassed" style="color:var(--g)">--</span><span class="lbl">通过</span></div>
+        <div class="stat-card"><span class="num" id="agentEvalFailed" style="color:var(--r)">--</span><span class="lbl">失败</span></div>
+        <div class="stat-card"><span class="num" id="agentEvalRate">--</span><span class="lbl">通过率</span></div>
+      </div>
+      <div id="agentEvalProfileSummary" style="margin:10px 0;font-size:12px;color:var(--t2)"></div>
+      <div class="chart-card" style="margin-top:12px">
+        <div class="chart-title">逐例结果与轨迹</div>
+        <div style="overflow-x:auto;max-height:520px;overflow-y:auto">
+          <table class="data-table" style="width:100%;font-size:11px;border-collapse:collapse">
+            <thead><tr><th>Case</th><th>Profile</th><th>类型</th><th>状态</th><th>轨迹</th><th>安全</th><th>来源</th><th>耗时</th><th>错误</th></tr></thead>
+            <tbody id="agentEvalResultsBody"><tr><td colspan="9" style="text-align:center;color:var(--t2);padding:18px">暂无 Agent Evaluation 结果</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -1436,6 +1468,11 @@ function switchTab(name) {
   }
   if (name === 'e2e') {
     loadE2eEval();
+    return;
+  }
+  if (name === 'agentEval') {
+    loadRetrievalProfileOptions();
+    loadAgentEval();
     return;
   }
   // 强制所有 ECharts 实例重新计算尺寸（解决 display:none 容器初始化导致变形）
@@ -3661,6 +3698,82 @@ async function loadTestSetItems() {
   }
 }
 
+// ============================================================
+// Agent Evaluation MVP
+// ============================================================
+
+function renderAgentEval(run, results) {
+  const summary = run.summary || {};
+  document.getElementById('agentEvalStats').style.display = 'grid';
+  document.getElementById('agentEvalTotal').textContent = summary.total ?? results.length;
+  document.getElementById('agentEvalPassed').textContent = summary.passed ?? '--';
+  document.getElementById('agentEvalFailed').textContent = summary.failed ?? '--';
+  document.getElementById('agentEvalRate').textContent = ((summary.pass_rate || 0) * 100).toFixed(0) + '%';
+  const profiles = summary.profile_counts || {};
+  document.getElementById('agentEvalProfileSummary').textContent = 'Profile 分布：' + Object.entries(profiles)
+    .map(([profile, count]) => `${profileLabel(profile)} ${count}条`).join(' · ');
+  const body = document.getElementById('agentEvalResultsBody');
+  body.innerHTML = results.map(item => {
+    const m = item.metrics || {};
+    const trace = item.trace || {};
+    const status = item.status === 'passed' ? '通过' : (item.status === 'failed' ? '失败' : '错误');
+    const color = item.status === 'passed' ? 'var(--g)' : 'var(--r)';
+    return `<tr>
+      <td>${escHtml(item.case_key || '')}</td><td>${escHtml(profileLabel(item.profile || 'general'))}</td>
+      <td>${escHtml(item.case_type || '')}</td><td style="color:${color};font-weight:600">${status}</td>
+      <td>${m.trajectory_pass === undefined ? '--' : (m.trajectory_pass ? '通过' : '失败')} · ${(trace.steps || []).map(s => s.step).join(' → ')}</td>
+      <td>${m.safety_pass === undefined ? '--' : (m.safety_pass ? '通过' : '失败')}</td>
+      <td>${m.source_hit === undefined ? '--' : (m.source_hit ? '命中' : '未命中')}</td>
+      <td>${item.elapsed_ms || 0}ms</td><td style="color:var(--r)">${escHtml(item.error || '')}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadAgentEval() {
+  try {
+    const response = await fetch('/api/agent-eval/runs?limit=1');
+    const data = await response.json();
+    const run = (data.items || [])[0];
+    if (!run) {
+      document.getElementById('agentEvalStatus').textContent = '尚未运行';
+      return;
+    }
+    const resultResponse = await fetch('/api/agent-eval/runs/' + encodeURIComponent(run.run_id) + '/results');
+    const resultData = await resultResponse.json();
+    renderAgentEval(run, resultData.items || []);
+    document.getElementById('agentEvalStatus').textContent = '最近运行：' + (run.started_at || '');
+  } catch (e) {
+    document.getElementById('agentEvalStatus').textContent = '加载失败：' + e.message;
+  }
+}
+
+async function seedAgentEvalCases() {
+  try {
+    const response = await fetch('/api/agent-eval/cases/seed', {method:'POST'});
+    const data = await response.json();
+    if (data.error) { showToast('❌ ' + data.error, ''); return; }
+    showToast('✅ 已导入 ' + data.count + ' 条通用主干用例');
+  } catch (e) { showToast('❌ ' + e.message, ''); }
+}
+
+async function runAgentEval() {
+  const button = document.getElementById('btnRunAgentEval');
+  const profile = document.getElementById('agentEvalProfile').value || 'general';
+  button.disabled = true;
+  button.textContent = '⏳ 运行中...';
+  document.getElementById('agentEvalStatus').textContent = '正在执行，请稍候...';
+  try {
+    const response = await fetch('/api/agent-eval/run', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({profile})});
+    const data = await response.json();
+    if (data.error) { showToast('❌ ' + data.error, ''); return; }
+    const resultResponse = await fetch('/api/agent-eval/runs/' + encodeURIComponent(data.run_id) + '/results');
+    const resultData = await resultResponse.json();
+    renderAgentEval({summary:data.summary, started_at:new Date().toISOString()}, resultData.items || []);
+    document.getElementById('agentEvalStatus').textContent = '✅ 运行完成';
+  } catch (e) { showToast('❌ ' + e.message, ''); }
+  finally { button.disabled = false; button.textContent = '▶ 运行 Agent 评测'; }
+}
+
 function difficultyBadge(d) {
   const m = {easy:'简单', medium:'中等', hard:'困难'};
   const c = {easy:'var(--g)', medium:'var(--y)', hard:'var(--r)'};
@@ -3677,7 +3790,7 @@ async function loadRetrievalProfileOptions() {
     const d = await r.json();
     if (!r.ok || !Array.isArray(d.profiles) || !d.profiles.length) return;
     retrievalProfileOptions = d.profiles;
-    for (const id of ['itemProfile', 'retrievalGenerateProfile', 'compareProfile', 'e2eGenerateProfile']) {
+    for (const id of ['itemProfile', 'retrievalGenerateProfile', 'compareProfile', 'e2eGenerateProfile', 'agentEvalProfile']) {
       const select = document.getElementById(id);
       const selected = select.value || 'general';
       select.innerHTML = retrievalProfileOptions.map(p =>
