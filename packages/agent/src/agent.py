@@ -1368,6 +1368,7 @@ class CyberAgent:
         temperature: float = 0.1,
         category: str = "user",
         skip_memory: bool = False,
+        profiles: Optional[set[str] | list[str] | tuple[str, ...]] = None,
     ) -> dict:
         """执行一次问答
 
@@ -1520,6 +1521,7 @@ class CyberAgent:
             metadata_filter=query_plan.metadata_filter(),
             rerank_query=query_plan.standalone_query or query,
             use_chroma_where=True,
+            profiles=profiles,
         )
         search_time = time.time() - t0
         logger.info(f"检索完成: {len(docs)} 条 ({search_time:.2f}s)")
@@ -1544,7 +1546,9 @@ class CyberAgent:
         if not docs:
             # 尝试用通用 taxonomy 配置里的宽泛查询做二次检索。
             for fq in fallback_queries("default"):
-                fallback_docs = self.retriever.search(fq, top_k=5, use_rerank=False)
+                fallback_docs = self.retriever.search(
+                    fq, top_k=5, use_rerank=False, profiles=profiles
+                )
                 if fallback_docs:
                     logger.info(f"降级检索成功: 「{fq}」→ {len(fallback_docs)} 条")
                     docs = fallback_docs
@@ -1783,6 +1787,7 @@ class CyberAgent:
         conversation_id: Optional[str] = None,
         temperature: float = 0.1,
         category: str = "user",
+        profiles: Optional[set[str] | list[str] | tuple[str, ...]] = None,
     ):
         """流式问答 — 异步生成器，分阶段 yield 事件
 
@@ -1934,6 +1939,7 @@ class CyberAgent:
                 metadata_filter=query_plan.metadata_filter(),
                 rerank_query=query_plan.standalone_query or query,
                 use_chroma_where=True,
+                profiles=profiles,
             ),
         )
         t_search = time.time() - t0_sr
@@ -1961,7 +1967,9 @@ class CyberAgent:
                 t0_fb = time.time()
                 fallback_docs = await loop.run_in_executor(
                     None,
-                    lambda q=fq: self.retriever.search(q, top_k=5, use_rerank=False),
+                    lambda q=fq: self.retriever.search(
+                        q, top_k=5, use_rerank=False, profiles=profiles
+                    ),
                 )
                 t_search += time.time() - t0_fb
                 if fallback_docs:

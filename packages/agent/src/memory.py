@@ -338,6 +338,7 @@ class ConversationMemory:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     query TEXT NOT NULL,
                     domain TEXT DEFAULT '',
+                    profile TEXT DEFAULT 'general',
                     difficulty TEXT DEFAULT '中等',
                     style TEXT DEFAULT 'plain',
                     is_active INTEGER DEFAULT 1,
@@ -350,6 +351,10 @@ class ConversationMemory:
                     conn.execute(f"ALTER TABLE prompt_versions ADD COLUMN {col} TEXT DEFAULT ''")
                 except sqlite3.OperationalError:
                     pass
+            try:
+                conn.execute("ALTER TABLE e2e_eval_items ADD COLUMN profile TEXT DEFAULT 'general'")
+            except sqlite3.OperationalError:
+                pass
 
     def create_conversation(self, title: str = "新对话", category: str = "user") -> dict:
         conv_id = str(uuid.uuid4())[:8]
@@ -1561,31 +1566,36 @@ class ConversationMemory:
     def get_e2e_eval_items(self, include_inactive: bool = False) -> list:
         with sqlite3.connect(self._db_path) as conn:
             if include_inactive:
-                rows = conn.execute("SELECT * FROM e2e_eval_items ORDER BY id ASC").fetchall()
+                rows = conn.execute(
+                    "SELECT id, query, domain, profile, difficulty, style, is_active, created_at "
+                    "FROM e2e_eval_items ORDER BY id ASC").fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM e2e_eval_items WHERE is_active=1 ORDER BY id ASC").fetchall()
-        cols = ["id", "query", "domain", "difficulty", "style", "is_active", "created_at"]
+                    "SELECT id, query, domain, profile, difficulty, style, is_active, created_at "
+                    "FROM e2e_eval_items WHERE is_active=1 ORDER BY id ASC").fetchall()
+        cols = ["id", "query", "domain", "profile", "difficulty", "style", "is_active", "created_at"]
         items = [dict(zip(cols, r)) for r in rows]
         for i in items:
             i["created_at"] = self._utc_to_local(i.get("created_at", ""))
         return items
 
     def add_e2e_eval_item(self, query: str, domain: str = "",
-                          difficulty: str = "中等", style: str = "plain") -> int:
+                          difficulty: str = "中等", style: str = "plain",
+                          profile: str = "general") -> int:
         with sqlite3.connect(self._db_path) as conn:
             cur = conn.execute(
-                "INSERT INTO e2e_eval_items (query, domain, difficulty, style) VALUES (?, ?, ?, ?)",
-                (query, domain, difficulty, style)
+                "INSERT INTO e2e_eval_items (query, domain, profile, difficulty, style) VALUES (?, ?, ?, ?, ?)",
+                (query, domain, profile, difficulty, style)
             )
             return cur.lastrowid
 
     def update_e2e_eval_item(self, item_id: int, query: str, domain: str,
-                             difficulty: str, style: str, is_active: int) -> bool:
+                             difficulty: str, style: str, is_active: int,
+                             profile: str = "general") -> bool:
         with sqlite3.connect(self._db_path) as conn:
             cur = conn.execute(
-                "UPDATE e2e_eval_items SET query=?, domain=?, difficulty=?, style=?, is_active=? WHERE id=?",
-                (query, domain, difficulty, style, is_active, item_id)
+                "UPDATE e2e_eval_items SET query=?, domain=?, profile=?, difficulty=?, style=?, is_active=? WHERE id=?",
+                (query, domain, profile, difficulty, style, is_active, item_id)
             )
             return cur.rowcount > 0
 
@@ -1601,16 +1611,26 @@ class ConversationMemory:
             return count
 
     def batch_import_e2e_eval_items(self, items: list) -> int:
-        """批量导入: items=[(query, domain, difficulty, style), ...]"""
+        """批量导入，兼容旧四列元组和新版带 profile 的字典。"""
         count = 0
         with sqlite3.connect(self._db_path) as conn:
             for row in items:
                 try:
+                    if isinstance(row, dict):
+                        query = row.get("query", "")
+                        domain = row.get("domain", "")
+                        profile = row.get("profile", "general")
+                        difficulty = row.get("difficulty", "中等")
+                        style = row.get("style", "plain")
+                    else:
+                        query = row[0]
+                        domain = row[1] if len(row) > 1 else ""
+                        difficulty = row[2] if len(row) > 2 else "中等"
+                        style = row[3] if len(row) > 3 else "plain"
+                        profile = row[4] if len(row) > 4 else "general"
                     conn.execute(
-                        "INSERT INTO e2e_eval_items (query, domain, difficulty, style) VALUES (?, ?, ?, ?)",
-                        (row[0], row[1] if len(row) > 1 else "",
-                         row[2] if len(row) > 2 else "中等",
-                         row[3] if len(row) > 3 else "plain")
+                        "INSERT INTO e2e_eval_items (query, domain, profile, difficulty, style) VALUES (?, ?, ?, ?, ?)",
+                        (query, domain, profile, difficulty, style)
                     )
                     count += 1
                 except Exception:

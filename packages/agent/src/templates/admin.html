@@ -653,6 +653,9 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
         <span style="font-size:13px;font-weight:600;color:var(--t1)">🔍 关键词生成测试集：</span>
         <input id="e2eKeyword" value="网络安全 等保 数据安全" style="flex:1;min-width:180px;padding:6px 10px;border:1px solid var(--b2);border-radius:6px;font-size:13px;background:var(--bg1);color:var(--t1)">
+        <select id="e2eGenerateProfile" style="padding:6px 10px;border:1px solid var(--b2);border-radius:6px;font-size:12px;background:var(--bg1);color:var(--t1)">
+          <option value="general">网络安全通用主干</option>
+        </select>
         <button onclick="generateE2eEval()" style="padding:6px 16px;background:var(--a);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">🎲 生成测试集</button>
         <button onclick="seedDefaultE2e()" style="padding:6px 16px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">📦 默认30题</button>
         <button onclick="toggleE2eTestSetPanel()" style="padding:6px 16px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">📋 管理测试集</button>
@@ -665,7 +668,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
         </div>
         <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
           <table class="data-table" style="width:100%;font-size:12px;border-collapse:collapse">
-            <thead><tr><th>ID</th><th>查询语句</th><th>领域</th><th>难度</th><th>风格</th><th>操作</th></tr></thead>
+            <thead><tr><th>ID</th><th>查询语句</th><th>Profile</th><th>领域</th><th>难度</th><th>风格</th><th>操作</th></tr></thead>
             <tbody id="e2eTestSetBody"></tbody>
           </table>
         </div>
@@ -3540,12 +3543,14 @@ async function runE2eEval() {
 }
 
 async function generateE2eEval() {
+  await loadRetrievalProfileOptions();
   const kw = document.getElementById('e2eKeyword').value.trim() || '网络安全 等保 数据安全';
+  const profile = document.getElementById('e2eGenerateProfile').value || 'general';
   const btn = document.querySelector('#tabE2e button[onclick*="generateE2eEval"]');
   const orig = btn.textContent;
   btn.disabled = true; btn.textContent = '⏳ 生成中...';
   try {
-    const r = await fetch('/api/stats/e2e-eval/generate-items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({keywords:kw})});
+    const r = await fetch('/api/stats/e2e-eval/generate-items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({keywords:kw, profile})});
     const d = await r.json();
     if (d.error) { showToast('❌ '+d.error, ''); return; }
     showToast(`✅ 生成 ${d.count} 条综合质量评测测试用例`);
@@ -3586,7 +3591,7 @@ async function loadE2eTestSetItems() {
     document.getElementById('e2eTestSetCount').textContent = items.length;
     const tbody = document.getElementById('e2eTestSetBody');
     if (items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--t2);padding:16px">暂无测试用例，请先"生成测试集"或"默认30题"</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--t2);padding:16px">暂无测试用例，请先"生成测试集"或"默认30题"</td></tr>';
       return;
     }
     const diffMap = {'基础':'基础','中等':'中等','困难':'困难'};
@@ -3596,6 +3601,7 @@ async function loadE2eTestSetItems() {
       return `<tr>
         <td>${i.id}</td>
         <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(i.query)}">${escHtml(i.query)}</td>
+        <td style="font-size:11px">${escHtml(profileLabel(i.profile))}</td>
         <td style="font-size:11px">${escHtml(i.domain || '-')}</td>
         <td><span style="font-size:10px;padding:1px 6px;border-radius:4px;background:${diffColor[diff]||diffColor['中等']};color:#fff">${diffMap[diff]||diff}</span></td>
         <td style="font-size:11px">${i.style === 'role' ? '角色扮演' : '自然语言'}</td>
@@ -3603,7 +3609,7 @@ async function loadE2eTestSetItems() {
       </tr>`;
     }).join('');
   } catch(e) {
-    document.getElementById('e2eTestSetBody').innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--r);padding:16px">加载失败: ${e.message}</td></tr>`;
+    document.getElementById('e2eTestSetBody').innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--r);padding:16px">加载失败: ${e.message}</td></tr>`;
   }
 }
 
@@ -3663,7 +3669,7 @@ async function loadRetrievalProfileOptions() {
     const d = await r.json();
     if (!r.ok || !Array.isArray(d.profiles) || !d.profiles.length) return;
     retrievalProfileOptions = d.profiles;
-    for (const id of ['itemProfile', 'retrievalGenerateProfile', 'compareProfile']) {
+    for (const id of ['itemProfile', 'retrievalGenerateProfile', 'compareProfile', 'e2eGenerateProfile']) {
       const select = document.getElementById(id);
       const selected = select.value || 'general';
       select.innerHTML = retrievalProfileOptions.map(p =>

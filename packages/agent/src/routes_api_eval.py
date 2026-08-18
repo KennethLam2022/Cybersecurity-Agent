@@ -69,6 +69,7 @@ def add_e2e_eval_item(data: dict):
             domain=data.get("domain", ""),
             difficulty=data.get("difficulty", "中等"),
             style=data.get("style", "plain"),
+            profile=data.get("profile", "general"),
         )
         return JSONResponse({"id": item_id, "success": True})
     except Exception as e:
@@ -88,6 +89,7 @@ def update_e2e_eval_item(data: dict):
             data.get("difficulty", "中等"),
             data.get("style", "plain"),
             data.get("is_active", 1),
+            profile=data.get("profile", "general"),
         )
         return JSONResponse({"success": ok})
     except Exception as e:
@@ -107,8 +109,16 @@ def delete_e2e_eval_item(item_id: int):
 def seed_e2e_eval_items():
     try:
         from eval_e2e import QUESTIONS
-        items = [(q["query"], q["domain"], q["difficulty"], q.get("style", "plain"))
-                 for q in QUESTIONS]
+        items = [
+            {
+                "query": q["query"],
+                "domain": q["domain"],
+                "difficulty": q["difficulty"],
+                "style": q.get("style", "plain"),
+                "profile": q.get("profile", "general"),
+            }
+            for q in QUESTIONS
+        ]
         count = agent.memory.batch_import_e2e_eval_items(items)
         return {"seeded": count, "success": True}
     except Exception as e:
@@ -118,6 +128,7 @@ def seed_e2e_eval_items():
 @router.post("/api/stats/e2e-eval/generate-items")
 def e2e_eval_generate_items(data: dict = None):
     keywords = (data or {}).get("keywords", "网络安全 等保 数据安全")
+    profile = (data or {}).get("profile", "general")
     eval_llm = _get_backend_eval_llm()
 
     prompt = f"""你是一个网络安全 RAG 系统综合质量评估专家。根据以下关键词，生成 20 条综合质量评测测试用例。
@@ -164,11 +175,13 @@ def e2e_eval_generate_items(data: dict = None):
     saved = 0
     for item in items:
         try:
+            item["profile"] = profile
             agent.memory.add_e2e_eval_item(
                 query=item.get("query", ""),
                 domain=item.get("domain", ""),
                 difficulty=item.get("difficulty", "中等"),
                 style=item.get("style", "plain"),
+                profile=profile,
             )
             saved += 1
         except Exception:
@@ -203,6 +216,7 @@ def e2e_eval_run(data: dict = None):
             questions.append({
                 "id": f"E{prefix}{i:02d}",
                 "domain": item.get("domain", "通用"),
+                "profile": item.get("profile", "general"),
                 "difficulty": item.get("difficulty", "中等"),
                 "query": item["query"],
                 "style": item.get("style", "plain"),

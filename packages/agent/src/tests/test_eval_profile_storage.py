@@ -1,5 +1,6 @@
 import sqlite3
 
+import eval_e2e
 from memory import ConversationMemory
 
 
@@ -55,6 +56,69 @@ def test_retrieval_compare_history_records_profile(tmp_path):
     assert data["items"][0]["profile"] == "industry/telecom"
     assert data["items"][0]["context"]["taxonomy_version"] == "test-taxonomy"
     assert data["summary"]["profile_counts"] == {"industry/telecom": 1}
+
+
+def test_e2e_eval_items_persist_profile_and_keep_old_import_format(tmp_path):
+    memory = ConversationMemory(str(tmp_path / "eval.db"))
+
+    memory.add_e2e_eval_item(
+        "核心网安全控制有哪些要求", "行业安全", "中等", "plain",
+        profile="industry/telecom",
+    )
+    memory.batch_import_e2e_eval_items([
+        ("通用网络安全控制要求", "等保合规", "基础", "plain"),
+    ])
+
+    profiles = {item["query"]: item["profile"] for item in memory.get_e2e_eval_items()}
+
+    assert profiles["核心网安全控制有哪些要求"] == "industry/telecom"
+    assert profiles["通用网络安全控制要求"] == "general"
+
+
+def test_e2e_evaluation_passes_question_profile_to_agent(tmp_path, monkeypatch):
+    class FakeAgent:
+        llm = None
+
+        def __init__(self):
+            self.profile_calls = []
+
+        def ask(self, query, profiles=None):
+            self.profile_calls.append((query, profiles))
+            return {
+                "answer": "基于检索结果给出控制建议",
+                "sources": [{"title": "安全控制指南"}],
+                "retrieved_docs": [{"content": "控制要求"}],
+                "stats": {},
+            }
+
+    def score(*args, **kwargs):
+        return {"score": 1.0, "reason": "test"}
+
+    monkeypatch.setattr(eval_e2e, "eval_context_precision", score)
+    monkeypatch.setattr(eval_e2e, "eval_context_recall", score)
+    monkeypatch.setattr(eval_e2e, "eval_faithfulness", score)
+    monkeypatch.setattr(eval_e2e, "eval_relevancy", score)
+    monkeypatch.setattr(eval_e2e, "eval_hallucination", score)
+
+    agent = FakeAgent()
+    results = eval_e2e.run_evaluation(
+        agent,
+        [
+            {"id": "G01", "domain": "通用", "difficulty": "基础", "query": "通用题"},
+            {
+                "id": "F01", "domain": "金融安全", "profile": "industry/finance",
+                "difficulty": "中等", "query": "金融题",
+            },
+        ],
+        use_llm=False,
+        output_file=tmp_path / "e2e.json",
+    )
+
+    assert agent.profile_calls == [
+        ("通用题", {"general"}),
+        ("金融题", {"industry/finance"}),
+    ]
+    assert [item["profile"] for item in results] == ["general", "industry/finance"]
 
 
 def test_existing_eval_item_table_is_migrated_without_column_misalignment(tmp_path):

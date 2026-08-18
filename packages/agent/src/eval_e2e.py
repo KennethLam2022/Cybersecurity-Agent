@@ -213,11 +213,11 @@ def run_evaluation(
                 original_llm = getattr(agent, 'llm', None)
                 agent.llm = answer_llm
                 try:
-                    result = agent.ask(query)
+                    result = agent.ask(query, profiles={q.get("profile", "general")})
                 finally:
                     agent.llm = original_llm
             else:
-                result = agent.ask(query)
+                result = agent.ask(query, profiles={q.get("profile", "general")})
             elapsed = time.time() - t0
 
             answer = result.get("answer", "")
@@ -233,6 +233,7 @@ def run_evaluation(
             entry = {
                 "id": q["id"],
                 "domain": q["domain"],
+                "profile": q.get("profile", "general"),
                 "difficulty": q["difficulty"],
                 "query": query,
                 "style": q.get("style", "plain"),
@@ -267,6 +268,7 @@ def run_evaluation(
             entry = {
                 "id": q["id"],
                 "domain": q["domain"],
+                "profile": q.get("profile", "general"),
                 "difficulty": q["difficulty"],
                 "query": query,
                 "style": q.get("style", "plain"),
@@ -729,17 +731,18 @@ def _db(db_path: str):
     try:
         with _db(db_path) as conn:
             rows = conn.execute(
-                "SELECT query, domain, difficulty, style FROM e2e_eval_items WHERE is_active=1 ORDER BY id ASC"
+                "SELECT query, domain, profile, difficulty, style FROM e2e_eval_items WHERE is_active=1 ORDER BY id ASC"
             ).fetchall()
         if not rows:
             logger.info("  [WARN] DB 中无测试题，回退硬编码测试集")
             return QUESTIONS
         questions = []
-        for i, (query, domain, difficulty, style) in enumerate(rows, 1):
+        for i, (query, domain, profile, difficulty, style) in enumerate(rows, 1):
             prefix = domain[:2] if len(domain) >= 2 else "ZZ"
             questions.append({
                 "id": f"E{prefix.upper()}{i:02d}",
                 "domain": domain or "通用",
+                "profile": profile or "general",
                 "difficulty": difficulty or "中等",
                 "query": query,
                 "style": style or "plain",
