@@ -1549,23 +1549,25 @@ class ConversationMemory:
             i["created_at"] = self._utc_to_local(i.get("created_at", ""))
         return items
 
-    def add_retrieval_eval_item(self, query: str, expected: str,
+    def add_retrieval_eval_item(self, query: str, expected,
                                 category: str = "", difficulty: str = "medium",
                                 profile: str = "general") -> int:
+        from retrieval_eval_contract import serialize_retrieval_expectation
         with sqlite3.connect(self._db_path) as conn:
             cur = conn.execute(
                 "INSERT INTO retrieval_eval_items (query, expected, profile, category, difficulty) VALUES (?, ?, ?, ?, ?)",
-                (query, expected, profile, category, difficulty)
+                (query, serialize_retrieval_expectation(expected), profile, category, difficulty)
             )
             return cur.lastrowid
 
-    def update_retrieval_eval_item(self, item_id: int, query: str, expected: str,
+    def update_retrieval_eval_item(self, item_id: int, query: str, expected,
                                    category: str, difficulty: str, is_active: int,
                                    profile: str = "general") -> bool:
+        from retrieval_eval_contract import serialize_retrieval_expectation
         with sqlite3.connect(self._db_path) as conn:
             cur = conn.execute(
                 "UPDATE retrieval_eval_items SET query=?, expected=?, profile=?, category=?, difficulty=?, is_active=? WHERE id=?",
-                (query, expected, profile, category, difficulty, is_active, item_id)
+                (query, serialize_retrieval_expectation(expected), profile, category, difficulty, is_active, item_id)
             )
             return cur.rowcount > 0
 
@@ -1583,6 +1585,7 @@ class ConversationMemory:
 
     def batch_import_retrieval_eval_items(self, items: list) -> int:
         """批量导入测试用例，兼容旧四列元组和新版带 profile 的字典。"""
+        from retrieval_eval_contract import serialize_retrieval_expectation
         count = 0
         with sqlite3.connect(self._db_path) as conn:
             for row in items:
@@ -1601,7 +1604,7 @@ class ConversationMemory:
                         profile = row[4] if len(row) > 4 else "general"
                     conn.execute(
                         "INSERT INTO retrieval_eval_items (query, expected, profile, category, difficulty) VALUES (?, ?, ?, ?, ?)",
-                        (query, expected, profile, category, difficulty)
+                        (query, serialize_retrieval_expectation(expected), profile, category, difficulty)
                     )
                     count += 1
                 except Exception:

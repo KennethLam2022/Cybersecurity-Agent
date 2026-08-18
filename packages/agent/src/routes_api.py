@@ -1358,7 +1358,9 @@ def get_retrieval_eval_items():
 def add_retrieval_eval_item(data: dict):
     try:
         query = data.get("query", "").strip()
-        expected = data.get("expected", "").strip()
+        expected = data.get("expected", "")
+        if isinstance(expected, str):
+            expected = expected.strip()
         profile = data.get("profile", "general")
         category = data.get("category", "")
         difficulty = data.get("difficulty", "medium")
@@ -1376,10 +1378,13 @@ def update_retrieval_eval_item(data: dict):
         item_id = data.get("id")
         if not item_id:
             return JSONResponse({"error": "id 不能为空"}, status_code=400)
+        expected = data.get("expected", "")
+        if isinstance(expected, str):
+            expected = expected.strip()
         ok = agent.memory.update_retrieval_eval_item(
             item_id,
             data.get("query", ""),
-            data.get("expected", ""),
+            expected,
             data.get("category", ""),
             data.get("difficulty", "medium"),
             data.get("is_active", 1),

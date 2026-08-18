@@ -8,6 +8,7 @@
 from memory import ConversationMemory
 from retriever import CyberRetriever
 from trace_observability import build_runtime_context
+from retrieval_eval_contract import match_retrieval_expectation
 import sys
 import os
 import json
@@ -106,9 +107,7 @@ def evaluate(profile: str = "general"):
         first_rank = None
 
         for rank, d in enumerate(docs[:10], 1):
-            content = (d.get("file_name", "") + " " + d.get("content", "")).lower()
-            expected_lower = expected.lower()
-            matched = any(kw.strip().lower() in content for kw in expected_lower.split("|"))
+            matched = match_retrieval_expectation(d, expected)
 
             if matched:
                 if rank <= 5:
@@ -183,14 +182,16 @@ def generate_test_set_from_keywords(keywords: str, llm=None) -> list:
 关键词：{keywords}
 
 要求：
-1. 每条包含 query（查询语句）、expected（期望匹配的关键词，用 | 分隔）、category（分类）
+1. 每条包含 query、expected、category；expected 必须是结构化对象：
+   {{"relevant_doc_ids": [], "relevant_sources": [], "relevant_terms": [], "match_mode": "any"}}
+   已知文档 ID 或来源时优先填写 relevant_doc_ids / relevant_sources，无法确定时才使用 relevant_terms。
 2. 覆盖不同角度和难度
 3. 必须围绕关键词展开，不要忽略关键词
 4. query 用中文，长度不超过 60 字
 
 只输出 JSON 数组，不要多余文字，格式：
 [
-  {{"query": "等保三级对访问控制有什么要求", "expected": "等保|等级保护", "category": "等保"}},
+  {{"query": "等保三级对访问控制有什么要求", "expected": {{"relevant_sources": ["等级保护"], "relevant_terms": ["等保", "等级保护"], "match_mode": "any"}}, "category": "等保"}},
   ...
 ]"""
 
@@ -240,7 +241,7 @@ def evaluate_with_items(items: list, memory) -> dict:
 
         for rank, d in enumerate(docs[:10], 1):
             content = (d.get("file_name", "") + " " + d.get("content", "")).lower()
-            matched = any(kw.strip().lower() in content for kw in expected.lower().split("|"))
+            matched = match_retrieval_expectation(d, expected)
             if matched:
                 if rank <= 5:
                     recall_5 = 1
@@ -308,8 +309,7 @@ def evaluate_single_query(agent, query: str, expected: str, profile: str = "gene
     first_rank = None
 
     for rank, d in enumerate(docs[:10], 1):
-        content = (d.get("file_name", "") + " " + d.get("content", "")).lower()
-        matched = any(kw.strip().lower() in content for kw in expected.lower().split("|"))
+        matched = match_retrieval_expectation(d, expected)
         if matched:
             if rank <= 5:
                 recall_5 = 1
@@ -360,8 +360,7 @@ def _eval_mode(items, retriever, use_rerank: bool, use_hybrid: bool,
         recall_5, mrr = 0, 0.0
         first_rank = None
         for rank, d in enumerate(docs[:10], 1):
-            content = (d.get("file_name", "") + " " + d.get("content", "")).lower()
-            if any(kw.strip().lower() in content for kw in expected.lower().split("|")):
+            if match_retrieval_expectation(d, expected):
                 if rank <= 5:
                     recall_5 = 1
                 if first_rank is None:
@@ -391,7 +390,7 @@ def _eval_mode_bm25_only(items: list, retriever, top_k=10) -> dict:
         first_rank = None
         for rank, d in enumerate(docs[:10], 1):
             content = (d.get("file_name", "") + " " + d.get("content", "")).lower()
-            if any(kw.strip().lower() in content for kw in expected.lower().split("|")):
+            if match_retrieval_expectation(d, expected):
                 if rank <= 5:
                     recall_5 = 1
                 if first_rank is None:
