@@ -199,8 +199,8 @@ Cybersecurity-Agent/
 ├── packages/
 │   ├── agent/              FastAPI 服务、聊天界面、后台页面、评测接口
 │   ├── preprocessor/       文档解析、清洗、去重、切片、索引构建与检索
-│   ├── agent-core/         TypeScript 侧核心模块
-│   └── shared/             共享类型定义
+│   ├── agent-core/         早期 TypeScript 方案归档，不参与当前发布构建
+│   └── shared/             早期 TypeScript 共享类型归档
 ├── scripts/                辅助脚本
 ├── agent_data/             本地运行数据
 ├── start-agent.bat         Windows 一键启动脚本
@@ -219,11 +219,14 @@ Cybersecurity-Agent/
 # 运行 Python 测试
 python -m pytest packages\agent\src\tests
 
+# 发布前构建校验（当前发布产物为 Python/FastAPI 服务）
+pnpm build
+
 # 检查 FAISS / Chroma 状态
 python packages\preprocessor\src\check_faiss.py
 
-# 运行 Node 工作区 lint
-pnpm -r lint
+# 运行源码校验
+pnpm lint
 ```
 
 评测入口主要包括：

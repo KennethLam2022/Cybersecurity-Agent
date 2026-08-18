@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter web-app dev",
-    "build": "pnpm --filter agent-core build && pnpm --filter web-app build",
-    "lint": "pnpm -r lint"
+    "dev": "python packages/agent/src/main.py",
+    "build": "python -m compileall -q packages/agent/src packages/preprocessor/src",
+    "test": "python -m pytest packages/agent/src/tests -q",
+    "lint": "python -m compileall -q packages/agent/src packages/preprocessor/src"
   },
   "engines": {
     "node": ">=18"
