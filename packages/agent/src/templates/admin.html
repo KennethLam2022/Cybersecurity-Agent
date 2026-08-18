@@ -762,8 +762,8 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
         <div class="chart-title">逐例结果与轨迹</div>
         <div style="overflow-x:auto;max-height:520px;overflow-y:auto">
           <table class="data-table" style="width:100%;font-size:11px;border-collapse:collapse">
-            <thead><tr><th>Case</th><th>Profile</th><th>类型</th><th>状态</th><th>轨迹</th><th>安全</th><th>来源</th><th>耗时</th><th>错误</th></tr></thead>
-            <tbody id="agentEvalResultsBody"><tr><td colspan="9" style="text-align:center;color:var(--t2);padding:18px">暂无 Agent Evaluation 结果</td></tr></tbody>
+            <thead><tr><th>Case</th><th>Profile</th><th>类型</th><th>状态</th><th>轨迹</th><th>安全</th><th>来源</th><th>耗时</th><th>错误</th><th>详情</th></tr></thead>
+            <tbody id="agentEvalResultsBody"><tr><td colspan="10" style="text-align:center;color:var(--t2);padding:18px">暂无 Agent Evaluation 结果</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -3704,6 +3704,7 @@ async function loadTestSetItems() {
 // ============================================================
 
 function renderAgentEval(run, results) {
+  window.agentEvalResults = results;
   const summary = run.summary || {};
   document.getElementById('agentEvalStats').style.display = 'grid';
   document.getElementById('agentEvalTotal').textContent = summary.total ?? results.length;
@@ -3726,8 +3727,25 @@ function renderAgentEval(run, results) {
       <td>${m.safety_pass === undefined ? '--' : (m.safety_pass ? '通过' : '失败')}</td>
       <td>${m.source_hit === undefined ? '--' : (m.source_hit ? '命中' : '未命中')}</td>
       <td>${item.elapsed_ms || 0}ms</td><td style="color:var(--r)">${escHtml(item.error || '')}</td>
+      <td><button onclick="showAgentEvalDetail(${results.indexOf(item)})" style="padding:2px 8px;background:var(--b2);color:var(--t1);border:none;border-radius:3px;cursor:pointer;font-size:11px">详情</button></td>
     </tr>`;
   }).join('');
+}
+
+function showAgentEvalDetail(index) {
+  const item = (window.agentEvalResults || [])[index] || {};
+  const metrics = item.metrics || {};
+  const trace = item.trace || {};
+  const failedChecks = Object.entries(metrics).filter(([key, value]) => value === false)
+    .map(([key]) => key).join('、') || '无';
+  document.getElementById('caseDetailTitle').textContent = 'Agent 评测详情 · ' + (item.case_key || '');
+  document.getElementById('caseDetailBody').innerHTML = `
+    <div style="margin-bottom:12px"><strong>问题</strong><div style="white-space:pre-wrap;margin-top:4px">${escHtml(item.query || '')}</div></div>
+    <div style="margin-bottom:12px"><strong>测试期望</strong><pre style="white-space:pre-wrap;background:var(--bg);padding:8px;border-radius:6px">${escHtml(JSON.stringify(item.expected || {}, null, 2))}</pre></div>
+    <div style="margin-bottom:12px"><strong>Agent 回答</strong><div style="white-space:pre-wrap;background:var(--bg);padding:8px;border-radius:6px">${escHtml(item.answer || '')}</div></div>
+    <div style="margin-bottom:12px"><strong>失败检查项</strong><div style="color:var(--r);margin-top:4px">${escHtml(failedChecks)}</div></div>
+    <div><strong>执行轨迹</strong><pre style="white-space:pre-wrap;background:var(--bg);padding:8px;border-radius:6px">${escHtml(JSON.stringify(trace, null, 2))}</pre></div>`;
+  document.getElementById('caseDetailModal').style.display = 'flex';
 }
 
 async function loadAgentEval() {

@@ -36,6 +36,8 @@ def test_agent_eval_case_run_and_result_round_trip(tmp_path):
     assert run["context"]["taxonomy_version"] == "test"
     assert result["metrics"]["source_hit"] == 1
     assert result["trace"]["schema_version"] == EVAL_TRACE_SCHEMA_VERSION
+    assert result["expected"] == {"expected_sources": ["数据安全法"]}
+    assert result["domain"] == "数据安全"
 
 
 def test_agent_eval_trace_projection_is_stable_and_ordered():

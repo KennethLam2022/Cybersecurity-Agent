@@ -1820,21 +1820,25 @@ class ConversationMemory:
     def get_agent_eval_results(self, run_id: str) -> list[dict]:
         with sqlite3.connect(self._db_path) as conn:
             rows = conn.execute("""
-                SELECT id, run_id, case_id, case_key, profile, case_type, query_text, answer_text,
-                       trace_json, metrics_json, status, elapsed_ms, error, created_at
-                FROM agent_eval_results WHERE run_id=? ORDER BY id ASC
+                SELECT r.id, r.run_id, r.case_id, r.case_key, r.profile, r.case_type, r.query_text, r.answer_text,
+                       r.trace_json, r.metrics_json, r.status, r.elapsed_ms, r.error, r.created_at,
+                       c.domain, c.expected_json, c.risk_tags_json
+                FROM agent_eval_results r
+                LEFT JOIN agent_eval_cases c ON c.id=r.case_id
+                WHERE r.run_id=? ORDER BY r.id ASC
             """, (run_id,)).fetchall()
         items = []
         for row in rows:
             item = dict(zip((
                 "id", "run_id", "case_id", "case_key", "profile", "case_type", "query", "answer",
                 "trace_json", "metrics_json", "status", "elapsed_ms", "error", "created_at",
+                "domain", "expected_json", "risk_tags_json",
             ), row))
-            for field in ("trace_json", "metrics_json"):
+            for field in ("trace_json", "metrics_json", "expected_json", "risk_tags_json"):
                 try:
                     item[field.removesuffix("_json")] = json.loads(item.pop(field) or "{}")
                 except (TypeError, ValueError):
-                    item[field.removesuffix("_json")] = {}
+                    item[field.removesuffix("_json")] = [] if field == "risk_tags_json" else {}
             item["created_at"] = self._utc_to_local(item.get("created_at", ""))
             items.append(item)
         return items
