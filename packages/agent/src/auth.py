@@ -61,6 +61,7 @@ def validate_llm_url(url: str) -> bool:
 _ADMIN_PREFIXES = {
     "/api/documents/",
     "/api/llm/configs/",
+    "/api/agent-eval/",
 }
 
 _ADMIN_ROUTES = [
