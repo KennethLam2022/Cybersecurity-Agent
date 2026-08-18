@@ -4,7 +4,8 @@ from e2e_eval_contract import evaluate_e2e_gates, summarize_e2e_gates
 def _result(**overrides):
     result = {"auto_status": "有来源(2条)", "sources": [{"file_name": "policy.pdf"}],
               "scores": {name: {"score": 0.8} for name in (
-                  "context_precision", "context_recall", "faithfulness", "relevancy", "hallucination")}}
+                  "context_precision", "context_recall", "faithfulness", "relevancy")}}
+    result["scores"]["hallucination"] = {"score": 0.2}
     result.update(overrides)
     return result
 
