@@ -1,4 +1,4 @@
-import type { StandardEntry } from '@cybersec/shared/types.js'
+import type { StandardEntry } from '@cybersec/shared/types'
 import { djbhStandards } from './djbh-data.js'
 import { dataSecurityStandards } from './data-security-data.js'
 

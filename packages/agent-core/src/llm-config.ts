@@ -1,5 +1,5 @@
 import { ChatOpenAI } from '@langchain/openai'
-import type { LLMConfig } from '@cybersec/shared/types.js'
+import type { LLMConfig } from '@cybersec/shared/types'
 
 export function createChatModel(config: LLMConfig) {
   if (!config.baseUrl || !config.apiKey || !config.model) {

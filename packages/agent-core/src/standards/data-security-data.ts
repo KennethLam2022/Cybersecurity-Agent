@@ -1,4 +1,4 @@
-import type { StandardEntry } from '@cybersec/shared/types.js'
+import type { StandardEntry } from '@cybersec/shared/types'
 
 export const dataSecurityStandards: StandardEntry[] = [
   {
