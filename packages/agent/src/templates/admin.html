@@ -311,6 +311,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
               <div class="stat-card"><span class="num" id="promptPassRate">--</span><span class="lbl">通过率</span></div>
               <div class="stat-card"><span class="num" id="promptTotal">--</span><span class="lbl">测试总数</span></div>
             </div>
+            <div id="promptTestContractSummary" style="display:none;margin:0 0 16px;padding:10px 12px;border:1px solid var(--b);border-radius:6px;font-size:12px;color:var(--t2)"></div>
             <div class="chart-card" style="margin-bottom:16px">
               <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
                 <span id="testListTitleFull">📋 测试用例列表</span>
@@ -2107,7 +2108,7 @@ async function loadLatestPromptResult() {
     statusEl.textContent = `📋 上次测试 (${latest.passed||0}/${latest.total||0})`;
     statusEl.style.color = (latest.pass_rate||0) >= 80 ? 'green' : (latest.pass_rate||0) >= 60 ? 'orange' : 'red';
 
-    document.getElementById('promptWeightedScore').textContent = (latest.weighted_score || 0) + '%';
+    document.getElementById('promptWeightedScore').textContent = asScorePercent(latest.weighted_score) + '%';
     document.getElementById('promptOverallScore').textContent = (latest.overall_score || 0) + '%';
     document.getElementById('promptPassRate').textContent = (latest.pass_rate || 0) + '%';
     document.getElementById('promptTotal').textContent = latest.total || 0;
@@ -2607,6 +2608,7 @@ async function runSingleTest(itemId) {
     const scores = result.scores || {};
     const scoreKeys = Object.keys(scores);
     console.log('[Debug] scores keys:', scoreKeys, 'values:', JSON.stringify(scores));
+    renderPromptContractSummary(result.checks || {});
     if (scoreKeys.length > 0) {
       const avg = result.avg_score || 0;
       const weighted = result.weighted_score || 0;
@@ -2645,6 +2647,28 @@ async function runSingleTest(itemId) {
     // 刷新测试列表
     await loadDefaultSet();
   } catch(e) { showToast('❌ '+e.message); }
+}
+
+function asScorePercent(value) {
+  const score = Number(value) || 0;
+  // Compatibility for records persisted by the old batch endpoint, which multiplied a percentage by 100.
+  return score > 100 ? score / 100 : score;
+}
+
+function renderPromptContractSummary(checks) {
+  const el = document.getElementById('promptTestContractSummary');
+  const entries = Object.entries(checks || {});
+  if (!el || entries.length === 0) {
+    if (el) el.style.display = 'none';
+    return;
+  }
+  const label = {passed: '通过', failed: '失败', not_applicable: '不适用'};
+  const color = {passed: 'var(--g)', failed: 'var(--r)', not_applicable: 'var(--t2)'};
+  el.innerHTML = entries.map(([name, check]) => {
+    const status = check.status || 'not_applicable';
+    return `<span style="display:inline-block;margin:2px 12px 2px 0;color:${color[status] || 'var(--t2)'}" title="${escHtml(check.detail || '')}">${escHtml(name)}：${label[status] || status}</span>`;
+  }).join('');
+  el.style.display = 'block';
 }
 
 // ---- 运行全部测试 ----
@@ -2827,11 +2851,12 @@ async function refreshAfterRun() {
     const isElastic = latest.variant_type || latest.consistency_score !== undefined || (results[0]&&results[0].variant_type);
     if (!isElastic) {
       // 全量结果
-      document.getElementById('promptWeightedScore').textContent=(latest.weighted_score||0)+'%';
+      document.getElementById('promptWeightedScore').textContent=asScorePercent(latest.weighted_score)+'%';
       document.getElementById('promptOverallScore').textContent=(latest.overall_score||0)+'%';
       document.getElementById('promptPassRate').textContent=(latest.pass_rate||0)+'%';
       document.getElementById('promptTotal').textContent=latest.total||0;
       if(latest.dimension_scores&&Object.keys(latest.dimension_scores).length>0){renderPromptContribution(latest.dimension_scores);renderPromptRadar(latest.dimension_scores);}
+      renderPromptContractSummary((latest.results || [])[0]?.checks || {});
       document.getElementById('promptTestResultFull').style.display='block';
     } else {
       // 弹性结果
@@ -2845,7 +2870,7 @@ async function refreshAfterRun() {
     }
     const se=document.getElementById('promptTestStatus'); se.textContent=`📋 最新 (${latest.passed||0}/${latest.total||0})`; se.style.color=latest.pass_rate>=80?'green':latest.pass_rate>=60?'orange':'red';
     // 同时更新工作台统计数据
-    document.getElementById('wsWeightedScore').textContent=(latest.weighted_score||0)+'%';
+    document.getElementById('wsWeightedScore').textContent=asScorePercent(latest.weighted_score)+'%';
     document.getElementById('wsOverallScore').textContent=(latest.overall_score||0)+'%';
     document.getElementById('wsPassRate').textContent=(latest.pass_rate||0)+'%';
     document.getElementById('wsTotal').textContent=latest.total||0;
@@ -3011,7 +3036,7 @@ async function loadPromptHistory() {
   try { const r=await fetch('/api/prompt/test/history?limit=20'); const d=await r.json(); const h=d.history; if(!h||!h.length)return;
     if(promptHistoryChart)promptHistoryChart.dispose();
     const dates=h.map(x=>new Date(x.timestamp).toLocaleDateString('zh-CN')).reverse();
-    const weighted=h.map(x=>x.weighted_score).reverse();
+    const weighted=h.map(x=>asScorePercent(x.weighted_score)).reverse();
     const passRate=h.map(x=>x.pass_rate).reverse();
     promptHistoryChart=makeChart('promptHistoryChart',{title:{text:'历史评测趋势',textStyle:{fontSize:14,fontWeight:600}},tooltip:{trigger:'axis'},legend:{data:['加权总分','总体得分','通过率'],textStyle:{fontSize:11,color:'#888'},bottom:0},grid:{left:40,right:20,top:30,bottom:30},xAxis:{type:'category',data:dates,axisLabel:{fontSize:11,color:'#888'},axisLine:{lineStyle:{color:'#333'}}},yAxis:{type:'value',min:0,max:100,name:'分数(%)',axisLabel:{fontSize:11,color:'#888',formatter:v=>v+'%'},splitLine:{lineStyle:{color:'#ddd'}}},series:[{name:'加权总分',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:weighted,lineStyle:{width:2,color:'#e94560'},itemStyle:{color:'#e94560'}},{name:'总体得分',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:h.map(x=>x.overall_score).reverse(),lineStyle:{width:2,color:'#3498db'},itemStyle:{color:'#3498db'}},{name:'通过率',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:passRate,lineStyle:{width:2,color:'#27ae60'},itemStyle:{color:'#27ae60'}}]});
     // 同步渲染工作台全量历史趋势
