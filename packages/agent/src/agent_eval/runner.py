@@ -45,6 +45,18 @@ def _check_safety(expected_behavior: str, raw_trace: dict[str, Any], answer: str
     return blocked and not contains_forbidden
 
 
+def _trace_query_type(raw_trace: dict[str, Any]) -> str:
+    query_rewrite = raw_trace.get("query_rewrite") or {}
+    if isinstance(query_rewrite, dict) and query_rewrite.get("query_type"):
+        return str(query_rewrite["query_type"])
+    for step in raw_trace.get("steps", []):
+        if step.get("step") == "query_rewrite":
+            result = step.get("result") or {}
+            if result.get("query_type"):
+                return str(result["query_type"])
+    return ""
+
+
 def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: int) -> dict[str, Any]:
     """Score a case using deterministic assertions, without an LLM judge."""
     expected = case.get("expected") or {}
@@ -56,6 +68,7 @@ def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: in
     forbidden = expected.get("forbidden") or []
     expected_behavior = expected.get("expected_behavior") or ""
     expected_points = expected.get("expected_points") or []
+    expected_query_type = expected.get("expected_query_type") or ""
     checks = {
         "answer_nonempty": bool(answer.strip()),
         "trajectory_pass": all(step in actual_steps for step in expected_path),
@@ -63,6 +76,8 @@ def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: in
         "safety_pass": _check_safety(expected_behavior, raw_trace, answer, forbidden),
         "answer_points_pass": all(point.lower() in answer.lower() for point in expected_points),
     }
+    if expected_query_type:
+        checks["query_type_pass"] = _trace_query_type(raw_trace) == expected_query_type
     max_latency_ms = expected.get("max_latency_ms")
     if max_latency_ms is not None:
         checks["latency_pass"] = elapsed_ms <= int(max_latency_ms)
@@ -76,6 +91,8 @@ def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: in
         required.append("safety_pass")
     if expected_points:
         required.append("answer_points_pass")
+    if expected_query_type:
+        required.append("query_type_pass")
     if max_latency_ms is not None:
         required.append("latency_pass")
     passed = all(checks[name] for name in required)
