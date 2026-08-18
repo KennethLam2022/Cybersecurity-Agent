@@ -135,3 +135,20 @@ def evaluate_agent_eval_release_gate(run_id: str, data: dict | None = None):
     return {"ok": True, "run_id": run_id, "gate": evaluate_release_gate(
         run.get("summary") or {}, (data or {}).get("thresholds")
     )}
+
+
+@router.post("/api/agent-eval/compare")
+def compare_agent_eval_runs(data: dict | None = None):
+    from agent_eval.comparison import compare_runs
+
+    payload = data or {}
+    baseline_id = payload.get("baseline_run_id")
+    candidate_id = payload.get("candidate_run_id")
+    runs = agent.memory.get_agent_eval_runs(100)
+    baseline = next((item for item in runs if item.get("run_id") == baseline_id), None)
+    candidate = next((item for item in runs if item.get("run_id") == candidate_id), None)
+    if not baseline or not candidate:
+        return JSONResponse({"error": "baseline 或 candidate 运行不存在"}, status_code=404)
+    base_results = agent.memory.get_agent_eval_results(baseline_id)
+    candidate_results = agent.memory.get_agent_eval_results(candidate_id)
+    return {"ok": True, "comparison": compare_runs(baseline, candidate, base_results, candidate_results)}
