@@ -76,10 +76,11 @@ def run_agent_eval(data: dict | None = None):
             cases = cases[:limit]
         if not cases:
             return JSONResponse({"error": "没有可运行的 Agent Evaluation 用例"}, status_code=400)
+        repetitions = max(1, min(int(payload.get("repetitions") or 1), 5))
         judge = _get_backend_eval_llm() if payload.get("judge", False) else None
         exporter = build_langfuse_exporter()
         return {"ok": True, **run_agent_evaluation(
-            agent, cases, profile=profile, judge=judge, exporter=exporter
+            agent, cases, profile=profile, judge=judge, exporter=exporter, repetitions=repetitions
         )}
     except Exception as exc:
         logger.exception("Agent Evaluation 运行失败")

@@ -159,6 +159,11 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     passed = sum(1 for result in results if result.get("metrics", {}).get("task_success"))
     profile_counts = Counter(result.get("profile") or "general" for result in results)
     type_counts = Counter(result.get("case_type") or "answer_quality" for result in results)
+    latencies = sorted(int(result.get("elapsed_ms") or 0) for result in results)
+    case_statuses = {}
+    for result in results:
+        case_statuses.setdefault(result.get("case_key", ""), set()).add(result.get("status"))
+    flaky_cases = sum(1 for statuses in case_statuses.values() if len(statuses) > 1)
     judge_results = [result.get("metrics", {}).get("judge") for result in results
                      if result.get("metrics", {}).get("judge")]
     judge_avg = {}
@@ -168,9 +173,12 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
             judge_avg[key] = round(sum(values) / len(values), 4)
     return {
         "total": total,
+        "case_count": len(case_statuses),
         "passed": passed,
         "failed": total - passed,
         "pass_rate": round(passed / total, 4) if total else 0,
+        "p95_latency_ms": latencies[max(0, int(len(latencies) * 0.95) - 1)] if latencies else 0,
+        "flaky_rate": round(flaky_cases / len(case_statuses), 4) if case_statuses else 0,
         "profile_counts": dict(profile_counts),
         "case_type_counts": dict(type_counts),
         "judge_count": len(judge_results),
@@ -180,39 +188,42 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 def run_agent_evaluation(agent: Any, cases: list[dict[str, Any]],
                          profile: str = "general", judge: Any = None,
-                         exporter: Any = None) -> dict[str, Any]:
+                         exporter: Any = None, repetitions: int = 1) -> dict[str, Any]:
     """Run cases, persist reproducible artifacts, and return a compact run result."""
     memory = agent.memory
     context = build_runtime_context(getattr(memory, "_db_path", None))
     run_id = memory.create_agent_eval_run(profile=profile, context=context)
     persisted_results = []
     try:
-        for case in cases:
-            started = time.perf_counter()
-            try:
-                response, query = _run_case(agent, case)
-                elapsed_ms = round((time.perf_counter() - started) * 1000)
-                metrics = evaluate_case(case, response, elapsed_ms)
-                result = {
-                    "query": query,
-                    "answer": response.get("answer") or "",
-                    "trace": normalize_trace(((response.get("stats") or {}).get("trace") or response.get("trace"))),
-                    "metrics": metrics,
-                    "status": "passed" if metrics["task_success"] else "failed",
-                    "elapsed_ms": elapsed_ms,
-                }
-                if judge is not None:
-                    result["metrics"]["judge"] = judge_case(judge, case, response, result["trace"])
-            except Exception as exc:
-                elapsed_ms = round((time.perf_counter() - started) * 1000)
-                result = {
-                    "query": _query_text(case), "answer": "", "trace": normalize_trace(None),
-                    "metrics": {"task_success": False}, "status": "error",
-                    "elapsed_ms": elapsed_ms, "error": str(exc),
-                }
-            memory.save_agent_eval_result(run_id, case, result)
-            persisted_results.append({**result, "profile": case.get("profile") or "general",
-                                      "case_type": case.get("case_type") or "answer_quality"})
+        for repeat_index in range(max(1, min(int(repetitions), 5))):
+            for case in cases:
+                started = time.perf_counter()
+                try:
+                    response, query = _run_case(agent, case)
+                    elapsed_ms = round((time.perf_counter() - started) * 1000)
+                    metrics = evaluate_case(case, response, elapsed_ms)
+                    result = {
+                        "query": query,
+                        "answer": response.get("answer") or "",
+                        "trace": normalize_trace(((response.get("stats") or {}).get("trace") or response.get("trace"))),
+                        "metrics": metrics,
+                        "status": "passed" if metrics["task_success"] else "failed",
+                        "elapsed_ms": elapsed_ms,
+                        "repeat_index": repeat_index + 1,
+                    }
+                    if judge is not None:
+                        result["metrics"]["judge"] = judge_case(judge, case, response, result["trace"])
+                except Exception as exc:
+                    elapsed_ms = round((time.perf_counter() - started) * 1000)
+                    result = {
+                        "query": _query_text(case), "answer": "", "trace": normalize_trace(None),
+                        "metrics": {"task_success": False}, "status": "error",
+                        "elapsed_ms": elapsed_ms, "error": str(exc), "repeat_index": repeat_index + 1,
+                    }
+                memory.save_agent_eval_result(run_id, case, result)
+                persisted_results.append({**result, "profile": case.get("profile") or "general",
+                                          "case_key": case.get("case_key") or case.get("id") or "",
+                                          "case_type": case.get("case_type") or "answer_quality"})
         summary = _summary(persisted_results)
         memory.complete_agent_eval_run(run_id, summary)
         run = {"run_id": run_id, "summary": summary, "results": persisted_results}

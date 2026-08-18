@@ -82,3 +82,20 @@ def test_runner_keeps_independent_judge_scores_separate(tmp_path):
     assert run["summary"]["judge_avg"]["faithfulness"] == 0.8
     assert run["results"][0]["metrics"]["task_success"] is True
     assert run["results"][0]["metrics"]["judge"]["safety_pass"] is True
+
+
+def test_runner_reports_repeatability_and_p95_latency(tmp_path):
+    memory = ConversationMemory(str(tmp_path / "repeat.db"))
+    case = {
+        "case_key": "GEN-REPEAT-001", "profile": "general", "case_type": "answer_quality",
+        "query": "如何开展安全风险评估？", "expected": {},
+    }
+    memory.upsert_agent_eval_case(case)
+    case = memory.get_agent_eval_cases()[0]
+
+    run = run_agent_evaluation(FakeAgent(memory), [case], repetitions=2)
+
+    assert run["summary"]["total"] == 2
+    assert run["summary"]["case_count"] == 1
+    assert run["summary"]["flaky_rate"] == 0
+    assert run["summary"]["p95_latency_ms"] >= 0
