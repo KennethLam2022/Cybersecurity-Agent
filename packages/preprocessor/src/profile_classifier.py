@@ -20,7 +20,16 @@ _REGISTRY_PATH = Path(__file__).with_name("profile_registry.json")
 
 @lru_cache(maxsize=1)
 def load_profile_registry() -> dict[str, Any]:
-    return json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
+    registry = json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
+    try:
+        from profile_extensions import load_profile_extensions
+        existing = {item.get("profile") for item in registry.get("profiles", [])}
+        registry["profiles"].extend(
+            item for item in load_profile_extensions() if item.get("profile") not in existing
+        )
+    except (ImportError, OSError, ValueError):
+        pass
+    return registry
 
 
 def available_profiles() -> list[dict[str, Any]]:

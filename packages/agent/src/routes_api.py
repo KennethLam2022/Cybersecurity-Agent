@@ -44,6 +44,7 @@ from app_state import (
     _build_report_doc, _render_trace_report,
 )
 from profile_classifier import profile_options, suggest_document_profile
+from profile_extensions import confirm_profile_extension, propose_profile_extension
 from profile_migration import apply_profile_migration, confirm_profile_migration, scan_profile_migration
 from agent import SystemPromptLoader
 
@@ -459,6 +460,31 @@ def documents_scan(files: list[UploadFile] = File(...)):
 @router.get("/api/documents/profile-registry")
 def documents_profile_registry():
     return JSONResponse({"status": "ok", "profiles": profile_options()})
+
+
+@router.post("/api/documents/profile-extensions/propose")
+def documents_profile_extension_propose(data: dict = Body(...)):
+    try:
+        proposal = propose_profile_extension(
+            industry=data.get("industry", ""), label=data.get("label", ""),
+            category=data.get("category", ""), keywords=data.get("keywords") or [],
+            classifier_aliases=data.get("classifier_aliases") or [],
+            description=data.get("description", ""),
+        )
+        return JSONResponse({"status": "ok", "proposal": proposal})
+    except ValueError as exc:
+        return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
+
+
+@router.post("/api/documents/profile-extensions/confirm")
+def documents_profile_extension_confirm(data: dict = Body(...)):
+    try:
+        stored = confirm_profile_extension(data.get("proposal") or {})
+        from profile_classifier import load_profile_registry
+        load_profile_registry.cache_clear()
+        return JSONResponse({"status": "ok", "profile": stored})
+    except ValueError as exc:
+        return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
 
 
 @router.get("/api/documents/profile-migration/summary")
