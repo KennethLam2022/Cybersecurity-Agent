@@ -1,4 +1,5 @@
 from retrieval_eval_contract import (
+    is_negative_expectation,
     match_retrieval_expectation,
     normalize_retrieval_expectation,
     serialize_retrieval_expectation,
@@ -25,3 +26,10 @@ def test_expectation_can_be_persisted_as_json():
 
     assert '"relevant_sources"' in stored
     assert normalize_retrieval_expectation(stored)["relevant_sources"] == ["policy.pdf"]
+
+
+def test_negative_expectation_is_explicit_and_serializable():
+    expected = {"expect_no_match": True, "relevant_sources": ["finance-policy.pdf"]}
+
+    assert is_negative_expectation(expected)
+    assert normalize_retrieval_expectation(serialize_retrieval_expectation(expected))["expect_no_match"]

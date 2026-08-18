@@ -8,7 +8,7 @@
 from memory import ConversationMemory
 from retriever import CyberRetriever
 from trace_observability import build_runtime_context
-from retrieval_eval_contract import match_retrieval_expectation
+from retrieval_eval_contract import is_negative_expectation, match_retrieval_expectation
 import sys
 import os
 import json
@@ -120,6 +120,11 @@ def evaluate(profile: str = "general"):
                     mrr = 1.0 / rank
                 if rank == 1:
                     top1_match_after_rerank = 1
+
+        if is_negative_expectation(expected):
+            has_forbidden_match = any(match_retrieval_expectation(d, expected) for d in docs[:10])
+            recall_5 = recall_10 = 0 if has_forbidden_match else 1
+            mrr = 0.0
 
         all_recall_5.append(recall_5)
         all_recall_10.append(recall_10)
@@ -253,6 +258,11 @@ def evaluate_with_items(items: list, memory) -> dict:
                 if rank == 1:
                     top1_match = 1
 
+        if is_negative_expectation(expected):
+            has_forbidden_match = any(match_retrieval_expectation(d, expected) for d in docs[:10])
+            recall_5 = recall_10 = 0 if has_forbidden_match else 1
+            mrr = 0.0
+
         all_recall_5.append(recall_5)
         all_recall_10.append(recall_10)
         all_mrr.append(mrr)
@@ -321,6 +331,11 @@ def evaluate_single_query(agent, query: str, expected: str, profile: str = "gene
             if rank == 1:
                 top1_match = 1
 
+    if is_negative_expectation(expected):
+        has_forbidden_match = any(match_retrieval_expectation(d, expected) for d in docs[:10])
+        recall_5 = recall_10 = 0 if has_forbidden_match else 1
+        mrr = 0.0
+
     faiss_count = len(retriever._faiss_db.index_to_docstore_id) if retriever._faiss_db else 0
     chroma_count = len(retriever._chroma_collection.get(include=[])[
                        "ids"]) if retriever._chroma_collection else 0
@@ -366,6 +381,10 @@ def _eval_mode(items, retriever, use_rerank: bool, use_hybrid: bool,
                 if first_rank is None:
                     first_rank = rank
                     mrr = 1.0 / rank
+        if is_negative_expectation(expected):
+            has_forbidden_match = any(match_retrieval_expectation(d, expected) for d in docs[:10])
+            recall_5 = 0 if has_forbidden_match else 1
+            mrr = 0.0
         recall_5s.append(recall_5)
         mrrs.append(mrr)
     return {"recall_5s": recall_5s, "mrrs": mrrs}
@@ -396,6 +415,10 @@ def _eval_mode_bm25_only(items: list, retriever, top_k=10) -> dict:
                 if first_rank is None:
                     first_rank = rank
                     mrr = 1.0 / rank
+        if is_negative_expectation(expected):
+            has_forbidden_match = any(match_retrieval_expectation(d, expected) for d in docs[:10])
+            recall_5 = 0 if has_forbidden_match else 1
+            mrr = 0.0
         recall_5s.append(recall_5)
         mrrs.append(mrr)
     return {"recall_5s": recall_5s, "mrrs": mrrs}

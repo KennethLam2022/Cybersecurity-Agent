@@ -28,6 +28,7 @@ def normalize_retrieval_expectation(expected: Any) -> dict[str, Any]:
         "relevant_sources": [str(v) for v in value.get("relevant_sources") or []],
         "relevant_terms": [str(v) for v in value.get("relevant_terms") or []],
         "match_mode": value.get("match_mode", "any"),
+        "expect_no_match": bool(value.get("expect_no_match") or value.get("negative")),
     }
 
 
@@ -79,3 +80,7 @@ def expectation_evidence(doc: dict[str, Any], expected: Any) -> dict[str, Any]:
         "expectation": normalized,
         "doc_ids": sorted(_doc_identifiers(doc)),
     }
+
+
+def is_negative_expectation(expected: Any) -> bool:
+    return normalize_retrieval_expectation(expected)["expect_no_match"]
