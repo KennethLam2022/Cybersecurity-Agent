@@ -1068,7 +1068,7 @@ def prompt_test_run_all(data: dict = Body(...)):
         "pass_rate": round(passed / total * 100, 1),
         "dimension_scores": dim_avg,
         "difficulty_scores": diff_avg,
-        "weighted_score": round(weighted_score * 100, 1),
+        "weighted_score": round(weighted_score, 1),
         "overall_score": overall_score,
         "version": active_v,
         "results": results,

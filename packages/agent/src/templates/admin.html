@@ -302,7 +302,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
         <div class="prompt-view active" id="promptViewFull">
           <div style="background:#f0f7ff;border-left:3px solid var(--a);padding:12px 16px;border-radius:8px;margin-bottom:16px">
             <div style="font-size:13px;font-weight:600;color:var(--a);margin-bottom:4px">🔬 全量测试 — 是什么？</div>
-            <div style="font-size:12px;line-height:1.7;color:var(--t2)">基于内置 31 条（或 AI 生成的）测试用例，从 <strong style="color:var(--t)">8 个维度（合规/数据安全/APP安全/应急响应/供应链安全/安全运营/通用/权限控制）</strong>对当前 System Prompt 进行全面评测。每条用例独立评分，支持<strong style="color:var(--t)">单条运行 ▶、编辑 ✏️、失败修复 🔧</strong>。底部图表展示各维度综合表现和历史趋势。</div>
+            <div style="font-size:12px;line-height:1.7;color:var(--t2)">基于当前测试集（内置或 AI 生成）的用例，对当前 System Prompt 进行确定性行为评测。每条用例按<strong style="color:var(--t)">来源标注、禁止内容、拒答与重定向、首答完整、知识准确</strong>等适用维度独立评分；不适用项会明确标记。支持<strong style="color:var(--t)">单条运行 ▶、编辑 ✏️、失败修复 🔧</strong>。</div>
           </div>
           <div id="promptTestResultFull">
             <div class="stat-grid">
@@ -2286,7 +2286,7 @@ function renderPromptContribution(dimScores) {
 
   // 维度名中文映射
   const dimNames = {
-    '来源标注': '来源标注', '品牌禁止': '品牌禁止', '越狱拦截': '越狱拦截', '偏题检测': '偏题检测',
+    '来源标注': '来源标注', '禁止内容': '禁止内容', '拒答与重定向': '拒答与重定向', '品牌禁止': '品牌禁止', '越狱拦截': '越狱拦截', '偏题检测': '偏题检测',
     '首答完整': '首答完整', '知识准确': '知识准确', 'output_format': '输出格式', '响应效率': '响应效率',
     'context_precision': '上下文精确度', 'context_recall': '上下文召回率',
     'faithfulness': '忠实度', 'relevancy': '切题度', 'hallucination': '幻觉',
@@ -2329,7 +2329,7 @@ function renderPromptRadar(dimScores) {
   if (promptRadarChart) promptRadarChart.dispose();
   // 维度名中文映射
   const dimNames = {
-    '来源标注': '来源标注', '品牌禁止': '品牌禁止', '越狱拦截': '越狱拦截', '偏题检测': '偏题检测',
+    '来源标注': '来源标注', '禁止内容': '禁止内容', '拒答与重定向': '拒答与重定向', '品牌禁止': '品牌禁止', '越狱拦截': '越狱拦截', '偏题检测': '偏题检测',
     '首答完整': '首答完整', '知识准确': '知识准确', 'output_format': '输出格式', '响应效率': '响应效率',
     'context_precision': '上下文精确度', 'context_recall': '上下文召回率',
     'faithfulness': '忠实度', 'relevancy': '切题度', 'hallucination': '幻觉',
@@ -2637,7 +2637,10 @@ async function runSingleTest(itemId) {
     document.getElementById('wsTotal').textContent = document.getElementById('promptTotal').textContent;
     // 更新测试状态栏
     const se=document.getElementById('promptTestStatus');
-    se.textContent=`📋 最近 (#${itemId}) ${result.passed?'✅ 通过':'❌ 未通过'}`;
+    const failed = result.failed_dimensions || [];
+    const notApplicable = result.not_applicable_dimensions || [];
+    const statusDetail = failed.length ? ` · 失败：${failed.join('、')}` : (notApplicable.length ? ` · 不适用：${notApplicable.join('、')}` : '');
+    se.textContent=`📋 最近 (#${itemId}) ${result.passed?'✅ 通过':'❌ 未通过'}${statusDetail}`;
     se.style.color=result.passed?'green':'red';
     // 刷新测试列表
     await loadDefaultSet();
@@ -3010,9 +3013,9 @@ async function loadPromptHistory() {
     const dates=h.map(x=>new Date(x.timestamp).toLocaleDateString('zh-CN')).reverse();
     const weighted=h.map(x=>x.weighted_score).reverse();
     const passRate=h.map(x=>x.pass_rate).reverse();
-    promptHistoryChart=makeChart('promptHistoryChart',{title:{text:'历史评测趋势',textStyle:{fontSize:14,fontWeight:600}},tooltip:{trigger:'axis'},legend:{data:['加权总分','总体得分','通过率'],textStyle:{fontSize:11,color:'#888'},bottom:0},grid:{left:40,right:20,top:30,bottom:30},xAxis:{type:'category',data:dates,axisLabel:{fontSize:11,color:'#888'},axisLine:{lineStyle:{color:'#333'}}},yAxis:{type:'value',min:0,max:100,name:'分数(%)',axisLabel:{fontSize:11,color:'#888',formatter:v=>v+'%'},splitLine:{lineStyle:{color:'#ddd'}}},series:[{name:'加权总分',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:weighted.map(v=>v*100),lineStyle:{width:2,color:'#e94560'},itemStyle:{color:'#e94560'}},{name:'总体得分',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:h.map(x=>x.overall_score).reverse(),lineStyle:{width:2,color:'#3498db'},itemStyle:{color:'#3498db'}},{name:'通过率',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:passRate,lineStyle:{width:2,color:'#27ae60'},itemStyle:{color:'#27ae60'}}]});
+    promptHistoryChart=makeChart('promptHistoryChart',{title:{text:'历史评测趋势',textStyle:{fontSize:14,fontWeight:600}},tooltip:{trigger:'axis'},legend:{data:['加权总分','总体得分','通过率'],textStyle:{fontSize:11,color:'#888'},bottom:0},grid:{left:40,right:20,top:30,bottom:30},xAxis:{type:'category',data:dates,axisLabel:{fontSize:11,color:'#888'},axisLine:{lineStyle:{color:'#333'}}},yAxis:{type:'value',min:0,max:100,name:'分数(%)',axisLabel:{fontSize:11,color:'#888',formatter:v=>v+'%'},splitLine:{lineStyle:{color:'#ddd'}}},series:[{name:'加权总分',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:weighted,lineStyle:{width:2,color:'#e94560'},itemStyle:{color:'#e94560'}},{name:'总体得分',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:h.map(x=>x.overall_score).reverse(),lineStyle:{width:2,color:'#3498db'},itemStyle:{color:'#3498db'}},{name:'通过率',type:'line',smooth:true,symbol:'circle',symbolSize:8,data:passRate,lineStyle:{width:2,color:'#27ae60'},itemStyle:{color:'#27ae60'}}]});
     // 同步渲染工作台全量历史趋势
-    const wsData = weighted.map(v=>v*100);
+    const wsData = weighted;
     const wsMin = Math.max(0, Math.min(...wsData) - 5);
     const wsMax = Math.min(100, Math.max(...wsData) + 5);
     makeChart('wsFullTrend',{grid:{left:40,right:20,top:6,bottom:24},xAxis:{type:'category',data:dates,axisLabel:{fontSize:10,color:'#888'},axisLine:{lineStyle:{color:'#333'}}},yAxis:{type:'value',min:wsMin,max:wsMax,axisLabel:{fontSize:10,color:'#888',formatter:v=>v+'%'},splitLine:{lineStyle:{color:'#ddd'}}},series:[{name:'加权总分',type:'line',data:wsData,smooth:true,symbol:'circle',symbolSize:6,lineStyle:{width:2,color:'#e94560'},itemStyle:{color:'#e94560'}},{name:'通过率',type:'line',data:passRate,smooth:true,symbol:'circle',symbolSize:6,lineStyle:{width:2,color:'#34c759'},itemStyle:{color:'#34c759'}}],tooltip:{trigger:'axis'},legend:{data:['加权总分','通过率'],textStyle:{fontSize:10,color:'#888'},bottom:0}});
