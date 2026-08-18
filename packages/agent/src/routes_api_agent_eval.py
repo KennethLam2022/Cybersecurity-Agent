@@ -123,3 +123,15 @@ def get_agent_eval_runs(limit: int = 20):
 @router.get("/api/agent-eval/runs/{run_id}/results")
 def get_agent_eval_run_results(run_id: str):
     return {"run_id": run_id, "items": agent.memory.get_agent_eval_results(run_id)}
+
+
+@router.post("/api/agent-eval/runs/{run_id}/gate")
+def evaluate_agent_eval_release_gate(run_id: str, data: dict | None = None):
+    from agent_eval.release_gate import evaluate_release_gate
+
+    run = next((item for item in agent.memory.get_agent_eval_runs(100) if item.get("run_id") == run_id), None)
+    if not run:
+        return JSONResponse({"error": "评测运行不存在"}, status_code=404)
+    return {"ok": True, "run_id": run_id, "gate": evaluate_release_gate(
+        run.get("summary") or {}, (data or {}).get("thresholds")
+    )}

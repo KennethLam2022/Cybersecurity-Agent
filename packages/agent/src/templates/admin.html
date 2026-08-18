@@ -748,6 +748,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
         </select>
         <button onclick="seedAgentEvalCases()" style="padding:6px 14px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">📦 导入主干集</button>
         <button onclick="preflightAgentEval()" style="padding:6px 14px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">✓ 检查运行条件</button>
+        <button onclick="checkAgentEvalGate()" style="padding:6px 14px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">⚑ 检查发布门禁</button>
         <button id="btnRunAgentEval" onclick="runAgentEval()" style="padding:7px 16px;background:var(--a);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px">▶ 运行 Agent 评测</button>
         <span id="agentEvalStatus" style="font-size:12px;color:var(--t2)"></span>
       </div>
@@ -3805,6 +3806,21 @@ async function preflightAgentEval() {
     }
     status.textContent = `✅ 可运行：${check.case_count} 条用例，预计调用 Agent ${check.estimated_agent_calls} 次，模型 ${check.model || '未识别'}`;
   } catch (e) { status.textContent = '检查失败：' + e.message; }
+}
+
+async function checkAgentEvalGate() {
+  const status = document.getElementById('agentEvalStatus');
+  status.textContent = '正在检查最近一次评测的发布门禁...';
+  try {
+    const runsResponse = await fetch('/api/agent-eval/runs?limit=1');
+    const runsData = await runsResponse.json();
+    const run = (runsData.items || [])[0];
+    if (!run) { status.textContent = '暂无评测结果，不能检查发布门禁'; return; }
+    const response = await fetch('/api/agent-eval/runs/' + encodeURIComponent(run.run_id) + '/gate', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    const data = await response.json();
+    const gate = data.gate || {};
+    status.textContent = gate.passed ? '✅ 发布门禁通过' : '❌ 发布阻塞：' + (gate.reasons || []).join('；');
+  } catch (e) { status.textContent = '门禁检查失败：' + e.message; }
 }
 
 async function runAgentEval() {
