@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app_state import agent, logger, _get_backend_eval_llm
 
@@ -152,3 +152,16 @@ def compare_agent_eval_runs(data: dict | None = None):
     base_results = agent.memory.get_agent_eval_results(baseline_id)
     candidate_results = agent.memory.get_agent_eval_results(candidate_id)
     return {"ok": True, "comparison": compare_runs(baseline, candidate, base_results, candidate_results)}
+
+
+@router.get("/api/agent-eval/runs/{run_id}/report")
+def export_agent_eval_report(run_id: str):
+    from agent_eval.release_gate import evaluate_release_gate
+    from agent_eval.report import render_agent_eval_report
+
+    run = next((item for item in agent.memory.get_agent_eval_runs(100) if item.get("run_id") == run_id), None)
+    if not run:
+        return JSONResponse({"error": "评测运行不存在"}, status_code=404)
+    run["gate"] = evaluate_release_gate(run.get("summary") or {})
+    report = render_agent_eval_report(run, agent.memory.get_agent_eval_results(run_id))
+    return HTMLResponse(report, headers={"Content-Disposition": f'attachment; filename="agent_eval_{run_id}.html"'})
