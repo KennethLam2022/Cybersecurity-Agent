@@ -1,4 +1,9 @@
-from profile_classifier import profile_options, suggest_document_profile
+from profile_classifier import (
+    enabled_retrieval_profiles,
+    profile_for_metadata,
+    profile_options,
+    suggest_document_profile,
+)
 
 
 def test_profile_registry_exposes_general_and_industry_profiles():
@@ -33,3 +38,20 @@ def test_unknown_document_falls_back_to_general_with_manual_review():
     assert suggestion["profile"] == "general"
     assert suggestion["scope"] == "general"
     assert suggestion["review_required"] is True
+
+
+def test_legacy_categories_resolve_to_configured_profiles():
+    assert profile_for_metadata(category="01-国家法律") == "general"
+    assert profile_for_metadata(category="04-通信行业") == "industry/telecom"
+    assert profile_for_metadata(category="上传文档") == "pending"
+
+
+def test_retrieval_profiles_default_to_general(monkeypatch):
+    monkeypatch.delenv("CYBER_AGENT_RETRIEVAL_PROFILES", raising=False)
+    monkeypatch.delenv("CYBER_AGENT_SOURCE_PROFILES", raising=False)
+    assert enabled_retrieval_profiles() == {"general"}
+
+
+def test_retrieval_profiles_can_enable_industry_extensions(monkeypatch):
+    monkeypatch.setenv("CYBER_AGENT_RETRIEVAL_PROFILES", "general,industry/telecom")
+    assert enabled_retrieval_profiles() == {"general", "industry/telecom"}

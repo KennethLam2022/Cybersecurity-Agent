@@ -8,6 +8,7 @@ category for manual confirmation in the backend upload cards.
 from __future__ import annotations
 
 import json
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -38,6 +39,31 @@ def profile_options() -> list[dict[str, str]]:
         }
         for p in available_profiles()
     ]
+
+
+def profile_for_metadata(profile: str = "", category: str = "") -> str:
+    """Resolve a stored document profile, including legacy category-only data."""
+    known_profiles = {str(p.get("profile", "")) for p in available_profiles()}
+    explicit_profile = str(profile or "").strip()
+    if explicit_profile in known_profiles:
+        return explicit_profile
+
+    normalized_category = str(category or "").strip()
+    for item in available_profiles():
+        aliases = [item.get("category", ""), *(item.get("category_aliases") or [])]
+        if normalized_category and normalized_category in {str(a).strip() for a in aliases}:
+            return str(item.get("profile", "general"))
+    return "pending"
+
+
+def enabled_retrieval_profiles() -> set[str]:
+    """Return explicitly enabled retrieval profiles; the default is the general core."""
+    raw = os.getenv(
+        "CYBER_AGENT_RETRIEVAL_PROFILES",
+        os.getenv("CYBER_AGENT_SOURCE_PROFILES", "general"),
+    )
+    profiles = {item.strip() for item in raw.split(",") if item.strip()}
+    return profiles or {"general"}
 
 
 def _normalize_text(*parts: str) -> str:

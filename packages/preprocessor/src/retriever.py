@@ -38,6 +38,7 @@ from metadata_filter import (
     normalize_filter_spec,
 )
 from security_taxonomy import infer_categories_from_text
+from profile_classifier import available_profiles, enabled_retrieval_profiles, profile_for_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,31 @@ _FAISS_DIR = os.path.join(str(_RAG / "04_vector_store" / "faiss_index"))
 _CHROMA_DIR = os.path.join(str(_RAG / "04_vector_store" / "chroma_db"))
 
 _RETRIEVE_MULTIPLIER = 5
+
+
+def _profile_metadata(doc: dict) -> dict:
+    """Normalize profile metadata for new and legacy index entries."""
+    normalized = dict(doc)
+    profile = profile_for_metadata(
+        str(normalized.get("profile", "")),
+        str(normalized.get("category", "")),
+    )
+    configs = {str(item.get("profile", "")): item for item in available_profiles()}
+    config = configs.get(profile, {})
+    normalized["profile"] = profile
+    normalized["scope"] = str(normalized.get("scope") or config.get("scope") or "unknown")
+    normalized["industry"] = str(normalized.get("industry") or config.get("industry") or "")
+    return normalized
+
+
+def _filter_by_enabled_profiles(docs: list[dict], profiles: set[str]) -> list[dict]:
+    if "all" in profiles:
+        return [_profile_metadata(doc) for doc in docs]
+    return [
+        normalized
+        for normalized in (_profile_metadata(doc) for doc in docs)
+        if normalized["profile"] in profiles
+    ]
 
 # ---- 熔断器（简单版，专给Reranker用） ----
 
@@ -269,6 +295,9 @@ class CyberRetriever:
                 "section": pdata["section"],
                 "chunk_id": pid,
                 "parent_id": pid,
+                "profile": pdata.get("profile", ""),
+                "scope": pdata.get("scope", ""),
+                "industry": pdata.get("industry", ""),
                 "score": 99.0,
                 "rerank_score": None,
                 "source": "parent_injection",
@@ -366,6 +395,9 @@ class CyberRetriever:
                 "section": pdata["section"],
                 "chunk_id": pid,
                 "parent_id": pid,
+                "profile": pdata.get("profile", ""),
+                "scope": pdata.get("scope", ""),
+                "industry": pdata.get("industry", ""),
             })
 
         self._bm25 = BM25Okapi(texts)
@@ -505,6 +537,9 @@ class CyberRetriever:
                 "section": parent_data["section"],
                 "chunk_id": pid,
                 "parent_id": pid,
+                "profile": parent_data.get("profile", ""),
+                "scope": parent_data.get("scope", ""),
+                "industry": parent_data.get("industry", ""),
                 "score": score if not use_rerank_score else None,
                 "rerank_score": score if use_rerank_score else None,
                 "source": src,
@@ -524,6 +559,7 @@ class CyberRetriever:
         use_hybrid: Optional[bool] = None,
         metadata_filter: Optional[MetadataFilterSpec | dict] = None,
         use_chroma_where: bool = False,
+        profiles: Optional[set[str] | list[str] | tuple[str, ...]] = None,
     ) -> list[dict]:
         """执行检索
 
@@ -537,6 +573,7 @@ class CyberRetriever:
           use_hybrid:   是否启用 BM25 + 向量混合检索（默认跟随实例配置）
           metadata_filter: 可选元数据过滤条件，默认与规则提取条件合并
           use_chroma_where: 是否将高置信 category 条件下推到 Chroma where
+          profiles: 允许检索的资料 profile；未传时读取环境配置，默认只允许 general
 
         返回：
           [{"content", "file_name", "category", "section",
@@ -545,6 +582,7 @@ class CyberRetriever:
         if use_hybrid is None:
             use_hybrid = self._use_hybrid
 
+        enabled_profiles = set(profiles) if profiles is not None else enabled_retrieval_profiles()
         filter_spec = merge_filter_specs(infer_metadata_filter_from_query(query), metadata_filter)
         seen = {}
         candidate_k = top_k * _RETRIEVE_MULTIPLIER
@@ -555,6 +593,8 @@ class CyberRetriever:
             "chroma_where": None,
             "chroma_where_fallback": False,
             "metadata_filter_fallback": False,
+            "enabled_profiles": sorted(enabled_profiles),
+            "profile_filter_fallback": False,
         }
 
         # ---- FAISS 召回 ----
@@ -575,6 +615,9 @@ class CyberRetriever:
                             "section": doc.metadata.get("section", ""),
                             "chunk_id": cid,
                             "parent_id": doc.metadata.get("parent_id", ""),
+                            "profile": doc.metadata.get("profile", ""),
+                            "scope": doc.metadata.get("scope", ""),
+                            "industry": doc.metadata.get("industry", ""),
                             "score": round(score, 4),
                             "rerank_score": None,
                             "source": "faiss",
@@ -614,6 +657,9 @@ class CyberRetriever:
                             "section": meta.get("section", ""),
                             "chunk_id": cid,
                             "parent_id": meta.get("parent_id", ""),
+                            "profile": meta.get("profile", ""),
+                            "scope": meta.get("scope", ""),
+                            "industry": meta.get("industry", ""),
                             "score": round(results["distances"][0][j], 4),
                             "rerank_score": None,
                             "source": "chroma",
@@ -647,6 +693,17 @@ class CyberRetriever:
         # ---------------------------------
         trace["counts"]["merged"] = len(docs)
 
+        # --- Profile scope filter: generic core is isolated from industry extensions by default. ---
+        before_profile = len(docs)
+        docs = _filter_by_enabled_profiles(docs, enabled_profiles)
+        trace["counts"]["after_profile_filter"] = len(docs)
+        trace["profile_filter_excluded"] = before_profile - len(docs)
+        if not docs:
+            logger.info(f"Profile 过滤后无候选: enabled={sorted(enabled_profiles)}")
+            self.last_trace = trace
+            return []
+        # -------------------------------------------------------------------------------
+
         # --- 负向检索：否定句式扣分 ---
         has_neg, neg_kw = self._detect_negation(query)
         if has_neg:
@@ -675,8 +732,9 @@ class CyberRetriever:
             # --- 父节注入：从 parent_texts.json 直接注入匹配文档的技术节 ---
             injected = self._inject_parent_sections(docs, doc_ids)
             if injected:
-                docs.extend(injected)
-                logger.info(f"父节注入: {len(injected)} 条")
+                allowed_injected = _filter_by_enabled_profiles(injected, enabled_profiles)
+                docs.extend(allowed_injected)
+                logger.info(f"父节注入: {len(allowed_injected)}/{len(injected)} 条通过 profile 过滤")
         # ------------------------
 
         # 过滤废弃文档（_deprecated 路径 + ⚠️ 标记）
@@ -726,6 +784,7 @@ class CyberRetriever:
         metadata_filter: Optional[MetadataFilterSpec | dict] = None,
         rerank_query: Optional[str] = None,
         use_chroma_where: bool = False,
+        profiles: Optional[set[str] | list[str] | tuple[str, ...]] = None,
     ) -> list[dict]:
         """多 Query 召回后统一融合、过滤、重排和父文档聚合。"""
         unique_queries = []
@@ -751,6 +810,7 @@ class CyberRetriever:
                 use_hybrid=use_hybrid,
                 metadata_filter=filter_spec,
                 use_chroma_where=use_chroma_where,
+                profiles=profiles,
             )
             branch_results.append(docs)
             branch_traces.append(dict(self.last_trace))
