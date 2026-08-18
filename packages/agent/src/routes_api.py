@@ -44,7 +44,7 @@ from app_state import (
     _build_report_doc, _render_trace_report,
 )
 from profile_classifier import profile_options, suggest_document_profile
-from profile_migration import apply_profile_migration, scan_profile_migration
+from profile_migration import apply_profile_migration, confirm_profile_migration, scan_profile_migration
 from agent import SystemPromptLoader
 
 router = APIRouter()
@@ -480,6 +480,32 @@ def documents_profile_migration_apply(data: dict = Body(default={})):
     except Exception as e:
         logger.warning(f"profile 迁移后刷新 retriever 失败: {e}")
     return JSONResponse({"status": "ok", **result})
+
+
+@router.post("/api/documents/profile-migration/confirm")
+def documents_profile_migration_confirm(data: dict = Body(...)):
+    paths = data.get("paths") or []
+    profile = str(data.get("profile") or "").strip()
+    category = data.get("category")
+    if not paths:
+        return JSONResponse({"status": "error", "message": "没有选择待确认文档"})
+    if not profile:
+        return JSONResponse({"status": "error", "message": "没有选择 profile"})
+    try:
+        result = confirm_profile_migration(
+            paths=[str(p) for p in paths],
+            profile=profile,
+            category=str(category).strip() if category else None,
+            update_vector_stores=bool(data.get("update_vector_stores", True)),
+        )
+        try:
+            agent.refresh_retriever()
+        except Exception as e:
+            logger.warning(f"profile 批量确认后刷新 retriever 失败: {e}")
+        return JSONResponse({"status": "ok", **result})
+    except Exception as e:
+        logger.warning(f"profile 批量确认失败: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
 
 
 @router.post("/api/documents/start-processing")

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
@@ -67,6 +66,27 @@ def _write_sidecar(md_path: Path, record: ProfileMigrationRecord) -> None:
         "migration_path": record.path,
     }
     meta_path.write_text(json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _profile_config(profile: str) -> dict[str, Any]:
+    for item in available_profiles():
+        if item.get("profile") == profile:
+            return item
+    raise ValueError(f"unknown profile: {profile}")
+
+
+def _resolve_cleaned_md_path(path_value: str) -> Path:
+    candidate = Path(path_value).resolve()
+    cleaned = _CLEANED_DIR.resolve()
+    if candidate.suffix.lower() != ".md":
+        raise ValueError("only markdown cleaned documents can be calibrated")
+    try:
+        candidate.relative_to(cleaned)
+    except ValueError as exc:
+        raise ValueError("document path is outside cleaned data directory") from exc
+    if not candidate.exists():
+        raise FileNotFoundError(str(candidate))
+    return candidate
 
 
 def _known_general_dir(name: str) -> bool:
@@ -225,6 +245,52 @@ def apply_profile_migration(limit: int | None = None, update_vector_stores: bool
         "faiss_updated": faiss_updated,
         "chroma_updated": chroma_updated,
         "pending": sum(1 for rec in records if rec.needs_review),
+    }
+
+
+def confirm_profile_migration(
+    *,
+    paths: list[str],
+    profile: str,
+    category: str | None = None,
+    update_vector_stores: bool = True,
+) -> dict[str, Any]:
+    profile_cfg = _profile_config(profile)
+    resolved_paths = [_resolve_cleaned_md_path(p) for p in paths]
+    final_category = str(category or profile_cfg.get("category") or "通用").strip()
+
+    records = [
+        ProfileMigrationRecord(
+            path=str(md_path),
+            file_name=md_path.stem,
+            category=final_category,
+            profile=profile,
+            scope=str(profile_cfg.get("scope", "general")),
+            industry=str(profile_cfg.get("industry", "")),
+            confidence=1.0,
+            reason=f"人工批量确认: {profile_cfg.get('label', profile)}",
+            confirmed=True,
+            source="manual_confirmed",
+            needs_review=False,
+        )
+        for md_path in resolved_paths
+    ]
+
+    written = 0
+    for rec in records:
+        _write_sidecar(Path(rec.path), rec)
+        written += 1
+
+    parent_updated = faiss_updated = chroma_updated = 0
+    if update_vector_stores and records:
+        parent_updated, faiss_updated, chroma_updated = _update_vector_store_metadata(records)
+
+    return {
+        "total": len(records),
+        "written_sidecars": written,
+        "parent_updated": parent_updated,
+        "faiss_updated": faiss_updated,
+        "chroma_updated": chroma_updated,
     }
 
 

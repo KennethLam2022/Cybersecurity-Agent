@@ -32,6 +32,17 @@
   .migration-bar .btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--b); background: var(--bg); color: var(--t); font-size: 12px; cursor: pointer; }
   .migration-bar .btn.primary { border-color: var(--a); background: #0071e312; color: var(--a); }
   .migration-bar .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .migration-panel { display: none; margin: -12px 0 24px; background: var(--card); border: 1px solid var(--b); border-radius: 10px; overflow: hidden; }
+  .migration-panel.visible { display: block; }
+  .migration-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 12px; background: var(--bg); border-bottom: 1px solid var(--b); }
+  .migration-toolbar select,.migration-toolbar input { border: 1px solid var(--b); border-radius: 6px; padding: 5px 8px; font-size: 12px; background: var(--card); color: var(--t); }
+  .migration-toolbar button { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--a); background: #0071e312; color: var(--a); font-size: 12px; cursor: pointer; }
+  .migration-toolbar button:disabled { opacity: .45; cursor: not-allowed; }
+  .migration-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .migration-table th,.migration-table td { padding: 8px 10px; border-bottom: 1px solid #f0f0f2; text-align: left; vertical-align: top; }
+  .migration-table th { color: var(--t2); font-weight: 600; background: #fafafa; }
+  .migration-table td.path { max-width: 320px; color: var(--t2); word-break: break-all; }
+  .migration-table td.reason { color: var(--t2); max-width: 260px; }
 
   .stat-bar { display: flex; gap: 14px; margin-bottom: 24px; }
   .stat-item { flex: 1; background: var(--card); border: 1px solid var(--b); border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; gap: 14px; }
@@ -253,6 +264,30 @@
     <div class="mini-stat">待确认清单 <strong id="migrationReviewList">0</strong></div>
   </div>
 
+  <div class="migration-panel" id="migrationPanel">
+    <div class="migration-toolbar">
+      <label style="display:flex;align-items:center;gap:6px;color:var(--t2);font-size:12px">
+        <input type="checkbox" id="migrationSelectAll" style="accent-color:var(--a)"> 全选当前列表
+      </label>
+      <select id="migrationTargetProfile"></select>
+      <input id="migrationTargetCategory" placeholder="分类目录（默认跟随 profile）">
+      <button id="btnConfirmMigration">批量确认所选</button>
+      <span id="migrationSelectionText" style="font-size:12px;color:var(--t2)">已选 0 个</span>
+    </div>
+    <table class="migration-table">
+      <thead>
+        <tr>
+          <th style="width:34px"></th>
+          <th>文件</th>
+          <th>当前建议</th>
+          <th>原因</th>
+          <th>路径</th>
+        </tr>
+      </thead>
+      <tbody id="migrationRows"></tbody>
+    </table>
+  </div>
+
   <!-- 统计栏 -->
   <div class="stat-bar">
     <div class="stat-item">
@@ -455,6 +490,8 @@
     let totalBatches = 0;          // 总批次数
     let totalSelectedQ = 0;        // 总文件数（用于进度条）
     let profileRegistry = [];
+    let migrationRecords = [];
+    let selectedMigrationPaths = new Set();
     const FALLBACK_PROFILES = [
       { profile: 'general', label: '网络安全通用主干', category: '通用', scope: 'general', industry: '', description: '通用网络安全主干资料' },
       { profile: 'industry/telecom', label: '通信行业扩展', category: '04-通信行业标准-运营商', scope: 'industry', industry: 'telecom', description: '通信行业扩展资料包' },
@@ -496,6 +533,13 @@
     const migrationGeneral = $('migrationGeneral');
     const migrationTelecom = $('migrationTelecom');
     const migrationReviewList = $('migrationReviewList');
+    const migrationPanel = $('migrationPanel');
+    const migrationRows = $('migrationRows');
+    const migrationSelectAll = $('migrationSelectAll');
+    const migrationTargetProfile = $('migrationTargetProfile');
+    const migrationTargetCategory = $('migrationTargetCategory');
+    const btnConfirmMigration = $('btnConfirmMigration');
+    const migrationSelectionText = $('migrationSelectionText');
 
     const totalCount = $('totalCount');
     const successCount = $('successCount');
@@ -535,6 +579,13 @@
     function getProfileCategory(profile) {
       const opt = getProfileOption(profile);
       return opt ? opt.category : '通用';
+    }
+
+    function renderProfileTargetOptions() {
+      migrationTargetProfile.innerHTML = getProfileOptions().map(opt =>
+        `<option value="${escHtml(opt.profile)}">${escHtml(opt.label)}</option>`
+      ).join('');
+      migrationTargetCategory.placeholder = '分类目录（默认跟随 profile）';
     }
 
     // ─── Helpers ────────────────────────────────────────────
@@ -743,11 +794,42 @@
       const telecom = summary?.summary?.['industry/telecom'] ?? 0;
       const records = Array.isArray(summary?.records) ? summary.records : [];
       const reviewCount = records.filter(r => r.needs_review).length;
+      migrationRecords = records.filter(r => r.needs_review).slice(0, 30);
+      const visiblePaths = new Set(migrationRecords.map(r => r.path));
+      selectedMigrationPaths = new Set([...selectedMigrationPaths].filter(p => visiblePaths.has(p)));
       migrationTotal.textContent = total;
       migrationPending.textContent = pending;
       migrationGeneral.textContent = general;
       migrationTelecom.textContent = telecom;
       migrationReviewList.textContent = reviewCount;
+      renderMigrationRows();
+    }
+
+    function renderMigrationRows() {
+      migrationPanel.classList.toggle('visible', migrationRecords.length > 0);
+      if (migrationRecords.length === 0) {
+        migrationRows.innerHTML = '';
+        updateMigrationSelectionText();
+        return;
+      }
+      migrationRows.innerHTML = migrationRecords.map(rec => {
+        const checked = selectedMigrationPaths.has(rec.path) ? 'checked' : '';
+        const confidence = typeof rec.confidence === 'number' ? `${Math.round(rec.confidence * 100)}%` : '-';
+        return `<tr>
+          <td><input type="checkbox" class="migration-check" data-path="${escHtml(rec.path)}" ${checked}></td>
+          <td><strong>${escHtml(rec.file_name)}</strong><div style="color:var(--t2);margin-top:2px">${escHtml(rec.category || '')}</div></td>
+          <td>${escHtml(getProfileLabel(rec.profile))}<div style="color:var(--t2);margin-top:2px">${escHtml(rec.profile)} · ${confidence}</div></td>
+          <td class="reason">${escHtml(rec.reason || '')}</td>
+          <td class="path">${escHtml(rec.path)}</td>
+        </tr>`;
+      }).join('');
+      migrationSelectAll.checked = migrationRecords.length > 0 && migrationRecords.every(r => selectedMigrationPaths.has(r.path));
+      updateMigrationSelectionText();
+    }
+
+    function updateMigrationSelectionText() {
+      migrationSelectionText.textContent = `已选 ${selectedMigrationPaths.size} 个`;
+      btnConfirmMigration.disabled = selectedMigrationPaths.size === 0;
     }
 
     async function loadMigrationSummary() {
@@ -778,6 +860,7 @@
         const data = await resp.json();
         if (data.status === 'ok') {
           statusText.textContent = `✅ 存量 profile 校准完成：${data.written_sidecars || 0} 个文件`;
+          selectedMigrationPaths.clear();
           await loadMigrationSummary();
         } else {
           statusText.textContent = `❌ 存量 profile 校准失败: ${data.message || '未知错误'}`;
@@ -787,6 +870,35 @@
       } finally {
         btnApplyMigration.disabled = false;
         btnApplyMigration.textContent = '应用存量校准';
+      }
+    }
+
+    async function confirmSelectedMigration() {
+      const paths = [...selectedMigrationPaths];
+      if (paths.length === 0) return;
+      const profile = migrationTargetProfile.value;
+      const category = migrationTargetCategory.value.trim() || getProfileCategory(profile);
+      try {
+        btnConfirmMigration.disabled = true;
+        btnConfirmMigration.textContent = '确认中...';
+        const resp = await fetch('/api/documents/profile-migration/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paths, profile, category, update_vector_stores: true }),
+        });
+        const data = await resp.json();
+        if (data.status === 'ok') {
+          statusText.textContent = `✅ 已确认 ${data.written_sidecars || 0} 份存量资料归属`;
+          selectedMigrationPaths.clear();
+          await loadMigrationSummary();
+        } else {
+          statusText.textContent = `❌ 批量确认失败: ${data.message || '未知错误'}`;
+        }
+      } catch (e) {
+        statusText.textContent = '❌ 批量确认请求失败: ' + e.message;
+      } finally {
+        btnConfirmMigration.textContent = '批量确认所选';
+        updateMigrationSelectionText();
       }
     }
 
@@ -1245,6 +1357,28 @@
       }
     });
 
+    migrationRows.addEventListener('change', e => {
+      const cb = e.target.closest('.migration-check');
+      if (!cb) return;
+      if (cb.checked) selectedMigrationPaths.add(cb.dataset.path);
+      else selectedMigrationPaths.delete(cb.dataset.path);
+      migrationSelectAll.checked = migrationRecords.length > 0 && migrationRecords.every(r => selectedMigrationPaths.has(r.path));
+      updateMigrationSelectionText();
+    });
+
+    migrationSelectAll.addEventListener('change', () => {
+      if (migrationSelectAll.checked) {
+        for (const rec of migrationRecords) selectedMigrationPaths.add(rec.path);
+      } else {
+        for (const rec of migrationRecords) selectedMigrationPaths.delete(rec.path);
+      }
+      renderMigrationRows();
+    });
+
+    migrationTargetProfile.addEventListener('change', () => {
+      migrationTargetCategory.value = getProfileCategory(migrationTargetProfile.value);
+    });
+
     // Batch action
     batchAction.addEventListener('change', () => {
       const action = batchAction.value;
@@ -1259,6 +1393,7 @@
     btnStart.addEventListener('click', startProcessing);
     btnLoadMigration.addEventListener('click', loadMigrationSummary);
     btnApplyMigration.addEventListener('click', applyMigrationSummary);
+    btnConfirmMigration.addEventListener('click', confirmSelectedMigration);
 
     // Stop
     btnStop.addEventListener('click', () => {
@@ -1314,6 +1449,8 @@
       } catch (e) {
         profileRegistry = [];
       }
+      renderProfileTargetOptions();
+      migrationTargetCategory.value = getProfileCategory(migrationTargetProfile.value);
       render();
       statusText.textContent = '📋 已就绪，拖入文件开始';
       loadMigrationSummary();
