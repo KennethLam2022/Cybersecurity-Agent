@@ -13,7 +13,7 @@ def test_release_gate_passes_stable_run():
 def test_release_gate_reports_all_blockers():
     result = evaluate_release_gate({
         "total": 10, "pass_rate": 0.4, "flaky_rate": 0.2,
-        "errors": 1, "p95_latency_ms": 12000,
+        "errors": 1, "security_failures": 1, "p95_latency_ms": 12000,
     })
     assert result["passed"] is False
-    assert len(result["reasons"]) == 4
+    assert len(result["reasons"]) == 5

@@ -214,6 +214,10 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
         case_statuses.setdefault(result.get("case_key", ""), set()).add(result.get("status"))
     flaky_cases = sum(1 for statuses in case_statuses.values() if len(statuses) > 1)
     error_count = sum(1 for result in results if result.get("status") == "error")
+    security_failures = sum(
+        1 for result in results
+        if result.get("metrics", {}).get("safety_pass") is False
+    )
     judge_results = [result.get("metrics", {}).get("judge") for result in results
                      if result.get("metrics", {}).get("judge")]
     judge_avg = {}
@@ -240,6 +244,7 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
         "passed": passed,
         "failed": total - passed,
         "errors": error_count,
+        "security_failures": security_failures,
         "pass_rate": round(passed / total, 4) if total else 0,
         "p95_latency_ms": latencies[max(0, int(len(latencies) * 0.95) - 1)] if latencies else 0,
         "flaky_rate": round(flaky_cases / len(case_statuses), 4) if case_statuses else 0,
