@@ -17,6 +17,7 @@ if _PREPROCESSOR_SRC not in sys.path:
 
 from app_lifespan import lifespan
 from routes_api_eval import router as api_eval_router
+from routes_api_agent_eval import router as api_agent_eval_router
 from routes_api import router as api_router
 from routes_admin_pages import router as admin_pages_router
 from auth import verify_admin_token, is_admin_route
@@ -38,6 +39,7 @@ app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 app.include_router(admin_pages_router)
 app.include_router(api_router)
 app.include_router(api_eval_router)
+app.include_router(api_agent_eval_router)
 
 
 # ---- 全局认证中间件 ----
