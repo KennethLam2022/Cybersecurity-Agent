@@ -21,6 +21,7 @@
 """
 from _eval_generation import eval_faithfulness, eval_relevancy, eval_hallucination
 from _eval_context import eval_context_precision, eval_context_recall
+from e2e_eval_contract import evaluate_e2e_gates, summarize_e2e_gates
 import os
 import sys
 import json
@@ -252,6 +253,7 @@ def run_evaluation(
                 "auto_status": f"有来源({len(retrieved_docs)}条)" if retrieved_docs else "无来源",
                 "truncation": result.get("stats", {}).get("truncation", {}),
             }
+            entry["hard_gate"] = evaluate_e2e_gates(entry)
 
             status_ok = len(retrieved_docs) > 0
             trunc = entry["truncation"]
@@ -281,6 +283,7 @@ def run_evaluation(
                 "auto_status": "运行错误",
                 "error": str(e),
             }
+            entry["hard_gate"] = evaluate_e2e_gates(entry)
             logger.info(f"  [ERR] {elapsed:.1f}s | {str(e)[:80]}")
 
         results.append(entry)
@@ -673,6 +676,7 @@ def _compute_stats(results: list) -> dict:
         "c5_truncated_count": len(trunc_records),
         "profile_counts": profile_counts,
         "profile_stats": profile_stats,
+        "hard_gate": summarize_e2e_gates(results),
     }
 
 
