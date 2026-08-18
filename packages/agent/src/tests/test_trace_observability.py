@@ -22,6 +22,18 @@ def test_trace_envelope_contains_runtime_context():
     assert trace["outcome_detail"]["returned_count"] == 3
 
 
+def test_eval_trace_projection_keeps_requested_profiles():
+    from agent_eval.trace_schema import normalize_trace
+
+    trace = normalize_trace({
+        "trace_id": "trace-profile",
+        "context": {"profiles": ["general", "industry/finance"]},
+        "steps": [],
+    })
+
+    assert trace["context"]["profiles"] == ["general", "industry/finance"]
+
+
 def test_retrieval_counts_supports_single_and_multi_trace_shapes():
     single = {
         "retrieval": {

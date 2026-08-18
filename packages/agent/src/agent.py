@@ -1404,6 +1404,7 @@ class CyberAgent:
             path="chat.sync",
             db_path=getattr(self.memory, "_db_path", None),
         )
+        trace_data["context"]["profiles"] = sorted({str(profile) for profile in (profiles or [])})
 
         # ---- 用户越狱检测 ----
         conv_history = self.memory.get_history(conversation_id)
@@ -1916,6 +1917,7 @@ class CyberAgent:
             path="chat.stream",
             db_path=getattr(self.memory, "_db_path", None),
         )
+        trace_data["context"]["profiles"] = sorted({str(profile) for profile in (profiles or [])})
         add_trace_step(
             trace_data,
             "query_rewrite",
