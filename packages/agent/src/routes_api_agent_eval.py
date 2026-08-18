@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from app_state import agent, logger
+from app_state import agent, logger, _get_backend_eval_llm
 
 
 router = APIRouter()
@@ -75,7 +75,8 @@ def run_agent_eval(data: dict | None = None):
             cases = cases[:limit]
         if not cases:
             return JSONResponse({"error": "没有可运行的 Agent Evaluation 用例"}, status_code=400)
-        return {"ok": True, **run_agent_evaluation(agent, cases, profile=profile)}
+        judge = _get_backend_eval_llm() if payload.get("judge", False) else None
+        return {"ok": True, **run_agent_evaluation(agent, cases, profile=profile, judge=judge)}
     except Exception as exc:
         logger.exception("Agent Evaluation 运行失败")
         return JSONResponse({"error": str(exc)}, status_code=500)

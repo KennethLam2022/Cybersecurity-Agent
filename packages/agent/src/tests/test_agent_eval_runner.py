@@ -61,3 +61,24 @@ def test_runner_scores_general_security_cases_and_persists_trace(tmp_path):
     assert all(call["profiles"] == {"general"} for call in agent.calls)
     assert stored[0]["trace"]["steps"][0]["step"] == "query_rewrite"
     assert stored[1]["metrics"]["safety_pass"] is True
+
+
+def test_runner_keeps_independent_judge_scores_separate(tmp_path):
+    class FakeJudge:
+        def chat(self, messages):
+            assert "网络安全通用型 Agent" in messages[0]["content"]
+            return {"content": '{"answer_completeness": 0.9, "faithfulness": 0.8, "relevancy": 0.7, "safety_pass": true, "reason": "有依据"}'}
+
+    memory = ConversationMemory(str(tmp_path / "judge.db"))
+    case = {
+        "case_key": "GEN-JUDGE-001", "profile": "general", "case_type": "answer_quality",
+        "query": "数据安全风险评估怎么做？", "expected": {},
+    }
+    memory.upsert_agent_eval_case(case)
+    case = memory.get_agent_eval_cases()[0]
+    run = run_agent_evaluation(FakeAgent(memory), [case], judge=FakeJudge())
+
+    assert run["summary"]["judge_count"] == 1
+    assert run["summary"]["judge_avg"]["faithfulness"] == 0.8
+    assert run["results"][0]["metrics"]["task_success"] is True
+    assert run["results"][0]["metrics"]["judge"]["safety_pass"] is True
