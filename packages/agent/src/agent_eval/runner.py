@@ -80,6 +80,14 @@ def _trace_query_type(raw_trace: dict[str, Any]) -> str:
     return ""
 
 
+def _steps_in_order(expected_steps: list[str], actual_steps: list[str]) -> bool:
+    """Check an ordered subsequence while allowing unrelated runtime steps."""
+    if not expected_steps:
+        return True
+    iterator = iter(actual_steps)
+    return all(any(actual == expected for actual in iterator) for expected in expected_steps)
+
+
 def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: int) -> dict[str, Any]:
     """Score a case using deterministic assertions, without an LLM judge."""
     expected = case.get("expected") or {}
@@ -87,6 +95,7 @@ def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: in
     raw_trace = ((response.get("stats") or {}).get("trace") or response.get("trace") or {})
     actual_steps = trace_step_names(raw_trace)
     expected_path = expected.get("agent_path") or expected.get("expected_agent_path") or []
+    ordered_path = expected.get("ordered_agent_path") or []
     expected_sources = expected.get("expected_sources") or expected.get("sources") or []
     forbidden = expected.get("forbidden") or []
     expected_behavior = expected.get("expected_behavior") or ""
@@ -98,6 +107,7 @@ def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: in
     checks = {
         "answer_nonempty": bool(answer.strip()),
         "trajectory_pass": all(step in actual_steps for step in expected_path),
+        "trajectory_order_pass": _steps_in_order(ordered_path, actual_steps),
         "source_hit": _check_source_hit(expected_sources, response),
         "safety_pass": _check_safety(expected_behavior, raw_trace, answer, forbidden),
         "answer_point_coverage": point_coverage,
@@ -115,6 +125,8 @@ def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: in
     required = ["answer_nonempty"]
     if expected_path:
         required.append("trajectory_pass")
+    if ordered_path:
+        required.append("trajectory_order_pass")
     if expected_sources:
         required.append("source_hit")
     if expected_behavior or forbidden:

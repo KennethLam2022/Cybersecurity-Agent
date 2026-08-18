@@ -124,3 +124,18 @@ def test_runner_reports_configurable_point_coverage_and_memory(tmp_path):
     assert run["results"][0]["metrics"]["answer_point_coverage"] == 1.0
     assert run["results"][0]["metrics"]["memory_pass"] is True
     assert run["summary"]["memory_pass_rate"] == 1.0
+
+
+def test_runner_requires_ordered_trace_path_when_configured(tmp_path):
+    memory = ConversationMemory(str(tmp_path / "ordered-trace.db"))
+    case = {
+        "case_key": "TRACE-ORDER-001", "profile": "general", "case_type": "retrieval",
+        "query": "数据分类分级应如何开展？",
+        "expected": {"ordered_agent_path": ["retrieval", "query_rewrite"]},
+    }
+    memory.upsert_agent_eval_case(case)
+    run = run_agent_evaluation(FakeAgent(memory), memory.get_agent_eval_cases())
+
+    metrics = run["results"][0]["metrics"]
+    assert metrics["trajectory_order_pass"] is False
+    assert metrics["task_success"] is False
