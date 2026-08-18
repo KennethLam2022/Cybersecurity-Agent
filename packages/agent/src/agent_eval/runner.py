@@ -179,7 +179,8 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def run_agent_evaluation(agent: Any, cases: list[dict[str, Any]],
-                         profile: str = "general", judge: Any = None) -> dict[str, Any]:
+                         profile: str = "general", judge: Any = None,
+                         exporter: Any = None) -> dict[str, Any]:
     """Run cases, persist reproducible artifacts, and return a compact run result."""
     memory = agent.memory
     context = build_runtime_context(getattr(memory, "_db_path", None))
@@ -214,7 +215,12 @@ def run_agent_evaluation(agent: Any, cases: list[dict[str, Any]],
                                       "case_type": case.get("case_type") or "answer_quality"})
         summary = _summary(persisted_results)
         memory.complete_agent_eval_run(run_id, summary)
-        return {"run_id": run_id, "summary": summary, "results": persisted_results}
+        run = {"run_id": run_id, "summary": summary, "results": persisted_results}
+        if exporter is not None:
+            run["langfuse_exported"] = bool(exporter.export_run(run))
+            if getattr(exporter, "last_error", ""):
+                run["langfuse_error"] = exporter.last_error
+        return run
     except Exception:
         memory.complete_agent_eval_run(run_id, _summary(persisted_results), status="error")
         raise

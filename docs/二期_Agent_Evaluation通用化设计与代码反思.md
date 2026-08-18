@@ -387,3 +387,33 @@ GET  /api/agent-eval/report
 
 关键原则：先评测，再重构；先通用主干，再行业扩展；先可观测，再自动优化。
 
+## 12. Langfuse 接入结论（2026-08-18）
+
+### 12.1 当前评测能力判断
+
+当前 Agent Evaluation 已具备通用主干测试集、profile 隔离、标准化 Trace、规则评分、可选 LLM Judge、SQLite 持久化与后台结果查看，适合作为开发期 MVP 和基线框架。
+
+但在以下能力完成前，不将其单独作为发布门禁：
+
+- 以真实知识库和真实 Agent 跑完主干 30 条基线；
+- 以语义评分替代单纯字符串包含，降低中文同义表达误判；
+- 完成多轮记忆、稳定性（pass@k / flaky rate）、P95 延迟、Token/成本统计；
+- 完成失败样本的人工复核闭环与 Judge 校准。
+
+### 12.2 Langfuse 定位
+
+Langfuse 适合作为可选的观测、实验、评分趋势和人工复核协作平台，不替代本地网络安全评测框架。
+
+- 本地 Runner 和网络安全规则仍是发布门禁的事实来源；
+- Langfuse 记录 Trace、步骤、profile、Prompt/Taxonomy/知识库版本、规则分、Judge 分与人工分；
+- 网络安全 taxonomy、profile、权威来源规则、禁止内容规则、行业扩展包和人工文档确认仍由本系统维护；
+- 仅在自托管或经过批准的数据边界内导出，默认关闭，并对问题、回答、来源片段和个人/敏感信息执行最小化与脱敏；
+- Langfuse 不可用时不得阻塞聊天、入库、评测或发布门禁。
+
+### 12.3 实施顺序
+
+1. 增加默认关闭、失败即忽略的 Langfuse Exporter；
+2. 先导出 Agent Evaluation run 与逐例 Trace/规则分；
+3. 使用真实 Agent 建立 30 条通用主干 baseline；
+4. 再接入 Langfuse Dataset/Experiment、Annotation Queue 和 CI 回归；
+5. 最后由人工复核结果校准 Judge 与发布阈值。

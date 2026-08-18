@@ -64,6 +64,7 @@ def seed_agent_eval_cases():
 def run_agent_eval(data: dict | None = None):
     try:
         from agent_eval.runner import run_agent_evaluation
+        from agent_eval.langfuse_exporter import build_langfuse_exporter
 
         payload = data or {}
         profile = payload.get("profile") or "general"
@@ -76,7 +77,10 @@ def run_agent_eval(data: dict | None = None):
         if not cases:
             return JSONResponse({"error": "没有可运行的 Agent Evaluation 用例"}, status_code=400)
         judge = _get_backend_eval_llm() if payload.get("judge", False) else None
-        return {"ok": True, **run_agent_evaluation(agent, cases, profile=profile, judge=judge)}
+        exporter = build_langfuse_exporter()
+        return {"ok": True, **run_agent_evaluation(
+            agent, cases, profile=profile, judge=judge, exporter=exporter
+        )}
     except Exception as exc:
         logger.exception("Agent Evaluation 运行失败")
         return JSONResponse({"error": str(exc)}, status_code=500)
