@@ -278,6 +278,7 @@ class ConversationMemory:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     query TEXT NOT NULL,
                     expected_source TEXT DEFAULT '',
+                    profile TEXT DEFAULT 'general',
                     recall_5 INTEGER DEFAULT 0,
                     recall_10 INTEGER DEFAULT 0,
                     mrr REAL DEFAULT 0,
@@ -293,6 +294,7 @@ class ConversationMemory:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     query TEXT NOT NULL,
                     expected_source TEXT DEFAULT '',
+                    profile TEXT DEFAULT 'general',
                     faiss_only_recall_5 INTEGER DEFAULT 0,
                     faiss_only_mrr REAL DEFAULT 0,
                     bm25_only_recall_5 INTEGER DEFAULT 0,
@@ -310,12 +312,19 @@ class ConversationMemory:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     query TEXT NOT NULL,
                     expected TEXT NOT NULL,
+                    profile TEXT DEFAULT 'general',
                     category TEXT DEFAULT '',
                     difficulty TEXT DEFAULT 'medium',
                     is_active INTEGER DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # ---- profile 字段迁移：历史评测记录默认属于通用主干 ----
+            for table in ("retrieval_eval", "eval_comparison", "retrieval_eval_items"):
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN profile TEXT DEFAULT 'general'")
+                except sqlite3.OperationalError:
+                    pass
             # ---- e2e_eval_items 综合质量评测测试集表 ----
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS e2e_eval_items (
@@ -1339,22 +1348,25 @@ class ConversationMemory:
 
     def save_retrieval_eval(self, query: str, expected_source: str,
                             recall_5: int, recall_10: int, mrr: float,
-                            faiss_count: int, chroma_count: int, rerank_top1_match: int):
+                            faiss_count: int, chroma_count: int, rerank_top1_match: int,
+                            profile: str = "general"):
         """保存一次检索质量评估结果"""
         with sqlite3.connect(self._db_path) as conn:
             conn.execute("""
-                INSERT INTO retrieval_eval (query, expected_source, recall_5, recall_10, mrr,
+                INSERT INTO retrieval_eval (query, expected_source, profile, recall_5, recall_10, mrr,
                     faiss_count, chroma_count, rerank_top1_match)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (query, expected_source, recall_5, recall_10, mrr,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (query, expected_source, profile, recall_5, recall_10, mrr,
                   faiss_count, chroma_count, rerank_top1_match))
 
     def get_retrieval_eval(self, limit: int = 100) -> dict:
         """获取检索质量评估的汇总统计"""
         with sqlite3.connect(self._db_path) as conn:
             rows = conn.execute(
-                "SELECT * FROM retrieval_eval ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-        cols = ["id", "query", "expected_source", "recall_5", "recall_10", "mrr",
+                """SELECT id, query, expected_source, profile, recall_5, recall_10, mrr,
+                          faiss_count, chroma_count, rerank_top1_match, eval_at
+                   FROM retrieval_eval ORDER BY id DESC LIMIT ?""", (limit,)).fetchall()
+        cols = ["id", "query", "expected_source", "profile", "recall_5", "recall_10", "mrr",
                 "faiss_count", "chroma_count", "rerank_top1_match", "eval_at"]
         items = [dict(zip(cols, r)) for r in rows]
         for i in items:
@@ -1365,6 +1377,10 @@ class ConversationMemory:
         avg_recall_5 = sum(i["recall_5"] for i in items) / total
         avg_recall_10 = sum(i["recall_10"] for i in items) / total
         avg_mrr = sum(i["mrr"] for i in items) / total
+        profile_counts = {}
+        for item in items:
+            profile = item.get("profile") or "general"
+            profile_counts[profile] = profile_counts.get(profile, 0) + 1
         return {
             "items": items,
             "summary": {
@@ -1372,6 +1388,7 @@ class ConversationMemory:
                 "avg_recall_5": round(avg_recall_5, 3),
                 "avg_recall_10": round(avg_recall_10, 3),
                 "avg_mrr": round(avg_mrr, 3),
+                "profile_counts": profile_counts,
             }
         }
 
@@ -1379,18 +1396,19 @@ class ConversationMemory:
                              faiss_only_recall_5: int, faiss_only_mrr: float,
                              bm25_only_recall_5: int, bm25_only_mrr: float,
                              hybrid_no_rerank_recall_5: int, hybrid_no_rerank_mrr: float,
-                             hybrid_rerank_recall_5: int, hybrid_rerank_mrr: float):
+                             hybrid_rerank_recall_5: int, hybrid_rerank_mrr: float,
+                             profile: str = "general"):
         """保存一次检索模式对比结果"""
         with sqlite3.connect(self._db_path) as conn:
             conn.execute("""
                 INSERT INTO eval_comparison
-                    (query, expected_source,
+                    (query, expected_source, profile,
                      faiss_only_recall_5, faiss_only_mrr,
                      bm25_only_recall_5, bm25_only_mrr,
                      hybrid_no_rerank_recall_5, hybrid_no_rerank_mrr,
                      hybrid_rerank_recall_5, hybrid_rerank_mrr)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (query, expected_source,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (query, expected_source, profile,
                   faiss_only_recall_5, faiss_only_mrr,
                   bm25_only_recall_5, bm25_only_mrr,
                   hybrid_no_rerank_recall_5, hybrid_no_rerank_mrr,
@@ -1400,8 +1418,13 @@ class ConversationMemory:
         """获取检索模式对比的汇总统计"""
         with sqlite3.connect(self._db_path) as conn:
             rows = conn.execute(
-                "SELECT * FROM eval_comparison ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-        cols = ["id", "query", "expected_source",
+                """SELECT id, query, expected_source, profile,
+                          faiss_only_recall_5, faiss_only_mrr,
+                          bm25_only_recall_5, bm25_only_mrr,
+                          hybrid_no_rerank_recall_5, hybrid_no_rerank_mrr,
+                          hybrid_rerank_recall_5, hybrid_rerank_mrr, eval_at
+                   FROM eval_comparison ORDER BY id DESC LIMIT ?""", (limit,)).fetchall()
+        cols = ["id", "query", "expected_source", "profile",
                 "faiss_only_recall_5", "faiss_only_mrr",
                 "bm25_only_recall_5", "bm25_only_mrr",
                 "hybrid_no_rerank_recall_5", "hybrid_no_rerank_mrr",
@@ -1415,6 +1438,10 @@ class ConversationMemory:
             return {"items": [], "summary": {"count": 0}}
 
         def _avg(key): return round(sum(i[key] for i in items) / total, 3)
+        profile_counts = {}
+        for item in items:
+            profile = item.get("profile") or "general"
+            profile_counts[profile] = profile_counts.get(profile, 0) + 1
         return {
             "items": items,
             "summary": {
@@ -1432,6 +1459,7 @@ class ConversationMemory:
                 "rerank_gain_recall_5": round(_avg("hybrid_rerank_recall_5") - _avg("hybrid_no_rerank_recall_5"), 3),
                 "hybrid_gain_mrr": round(_avg("hybrid_no_rerank_mrr") - _avg("faiss_only_mrr"), 3),
                 "rerank_gain_mrr": round(_avg("hybrid_rerank_mrr") - _avg("hybrid_no_rerank_mrr"), 3),
+                "profile_counts": profile_counts,
             }
         }
 
@@ -1441,31 +1469,35 @@ class ConversationMemory:
         with sqlite3.connect(self._db_path) as conn:
             if include_inactive:
                 rows = conn.execute(
-                    "SELECT * FROM retrieval_eval_items ORDER BY id DESC").fetchall()
+                    """SELECT id, query, expected, profile, category, difficulty, is_active, created_at
+                       FROM retrieval_eval_items ORDER BY id DESC""").fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM retrieval_eval_items WHERE is_active=1 ORDER BY id DESC").fetchall()
-        cols = ["id", "query", "expected", "category", "difficulty", "is_active", "created_at"]
+                    """SELECT id, query, expected, profile, category, difficulty, is_active, created_at
+                       FROM retrieval_eval_items WHERE is_active=1 ORDER BY id DESC""").fetchall()
+        cols = ["id", "query", "expected", "profile", "category", "difficulty", "is_active", "created_at"]
         items = [dict(zip(cols, r)) for r in rows]
         for i in items:
             i["created_at"] = self._utc_to_local(i.get("created_at", ""))
         return items
 
     def add_retrieval_eval_item(self, query: str, expected: str,
-                                category: str = "", difficulty: str = "medium") -> int:
+                                category: str = "", difficulty: str = "medium",
+                                profile: str = "general") -> int:
         with sqlite3.connect(self._db_path) as conn:
             cur = conn.execute(
-                "INSERT INTO retrieval_eval_items (query, expected, category, difficulty) VALUES (?, ?, ?, ?)",
-                (query, expected, category, difficulty)
+                "INSERT INTO retrieval_eval_items (query, expected, profile, category, difficulty) VALUES (?, ?, ?, ?, ?)",
+                (query, expected, profile, category, difficulty)
             )
             return cur.lastrowid
 
     def update_retrieval_eval_item(self, item_id: int, query: str, expected: str,
-                                   category: str, difficulty: str, is_active: int) -> bool:
+                                   category: str, difficulty: str, is_active: int,
+                                   profile: str = "general") -> bool:
         with sqlite3.connect(self._db_path) as conn:
             cur = conn.execute(
-                "UPDATE retrieval_eval_items SET query=?, expected=?, category=?, difficulty=?, is_active=? WHERE id=?",
-                (query, expected, category, difficulty, is_active, item_id)
+                "UPDATE retrieval_eval_items SET query=?, expected=?, profile=?, category=?, difficulty=?, is_active=? WHERE id=?",
+                (query, expected, profile, category, difficulty, is_active, item_id)
             )
             return cur.rowcount > 0
 
@@ -1482,15 +1514,26 @@ class ConversationMemory:
             return count
 
     def batch_import_retrieval_eval_items(self, items: list) -> int:
-        """批量导入测试用例: items=[(query, expected, category, difficulty), ...]"""
+        """批量导入测试用例，兼容旧四列元组和新版带 profile 的字典。"""
         count = 0
         with sqlite3.connect(self._db_path) as conn:
             for row in items:
                 try:
+                    if isinstance(row, dict):
+                        query = row.get("query", "")
+                        expected = row.get("expected", "")
+                        profile = row.get("profile", "general")
+                        category = row.get("category", "")
+                        difficulty = row.get("difficulty", "medium")
+                    else:
+                        query = row[0]
+                        expected = row[1]
+                        category = row[2] if len(row) > 2 else ""
+                        difficulty = row[3] if len(row) > 3 else "medium"
+                        profile = row[4] if len(row) > 4 else "general"
                     conn.execute(
-                        "INSERT INTO retrieval_eval_items (query, expected, category, difficulty) VALUES (?, ?, ?, ?)",
-                        (row[0], row[1], row[2] if len(row) > 2 else "",
-                         row[3] if len(row) > 3 else "medium")
+                        "INSERT INTO retrieval_eval_items (query, expected, profile, category, difficulty) VALUES (?, ?, ?, ?, ?)",
+                        (query, expected, profile, category, difficulty)
                     )
                     count += 1
                 except Exception:

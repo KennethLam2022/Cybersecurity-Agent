@@ -527,6 +527,9 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
       <span style="font-size:13px;font-weight:600;color:var(--t1)">🔍 关键词生成测试集：</span>
       <input id="retrievalKeyword" value="网络安全 等保 数据安全" style="flex:1;min-width:180px;padding:6px 10px;border:1px solid var(--b2);border-radius:6px;font-size:13px;background:var(--bg1);color:var(--t1)">
+      <select id="retrievalGenerateProfile" style="padding:6px 10px;border:1px solid var(--b2);border-radius:6px;font-size:12px;background:var(--bg1);color:var(--t1)">
+        <option value="general">网络安全通用主干</option>
+      </select>
       <button onclick="generateRetrievalEval()" class="gen-btn" style="padding:6px 16px;background:var(--a);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">🎲 生成测试集</button>
       <button onclick="toggleTestSetPanel()" style="padding:6px 16px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:13px">📋 管理测试集</button>
       <button onclick="window.open('/api/stats/retrieval-eval/report')" style="padding:6px 16px;background:var(--g);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">📄 导出 Word 报告</button>
@@ -551,6 +554,9 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
         </div>
         <div style="display:flex;gap:8px;margin-bottom:8px">
           <input id="itemCategory" placeholder="分类 (可选)" style="flex:1;padding:6px 10px;border:1px solid var(--b2);border-radius:4px;font-size:12px;background:var(--bg1);color:var(--t1)">
+          <select id="itemProfile" style="padding:6px 10px;border:1px solid var(--b2);border-radius:4px;font-size:12px;background:var(--bg1);color:var(--t1)">
+            <option value="general">网络安全通用主干</option>
+          </select>
           <select id="itemDifficulty" style="padding:6px 10px;border:1px solid var(--b2);border-radius:4px;font-size:12px;background:var(--bg1);color:var(--t1)">
             <option value="easy">简单</option>
             <option value="medium" selected>中等</option>
@@ -565,7 +571,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <!-- 测试集表格 -->
       <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
         <table class="data-table" style="width:100%;font-size:12px;border-collapse:collapse">
-          <thead><tr><th>ID</th><th>查询</th><th>期望来源</th><th>分类</th><th>难度</th><th>操作</th></tr></thead>
+          <thead><tr><th>ID</th><th>查询</th><th>期望来源</th><th>Profile</th><th>分类</th><th>难度</th><th>操作</th></tr></thead>
           <tbody id="testSetBody"></tbody>
         </table>
       </div>
@@ -586,7 +592,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
     <div class="chart-card" style="margin-top:12px">
       <div class="chart-title">检索质量明细</div>
       <div style="overflow-x:auto"><table class="data-table" id="retrievalTable" style="width:100%;font-size:12px;border-collapse:collapse">
-        <thead><tr><th>查询</th><th>期望来源</th><th>R@5</th><th>R@10</th><th>MRR</th><th>时间</th></tr></thead>
+        <thead><tr><th>查询</th><th>期望来源</th><th>Profile</th><th>R@5</th><th>R@10</th><th>MRR</th><th>时间</th></tr></thead>
         <tbody></tbody>
       </table></div>
     </div>
@@ -604,6 +610,9 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
         <span class="chart-title" style="margin:0">📊 检索模式增益对比（4种模式跑同一测试集）</span>
         <div style="display:flex;align-items:center;gap:8px">
           <input id="compareKeyword" value="网络安全 等保 数据安全" style="padding:4px 8px;border:1px solid var(--b2);border-radius:4px;font-size:12px;width:180px;background:var(--bg1);color:var(--t1)">
+          <select id="compareProfile" style="padding:4px 8px;border:1px solid var(--b2);border-radius:4px;font-size:12px;background:var(--bg1);color:var(--t1)">
+            <option value="general">网络安全通用主干</option>
+          </select>
           <button onclick="runRetrievalCompare()" style="padding:4px 12px;background:var(--a);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">🚀 运行对比</button>
           <button onclick="loadRetrievalCompare()" style="padding:4px 12px;background:var(--b2);color:var(--t1);border:none;border-radius:4px;cursor:pointer;font-size:12px">刷新</button>
           <button onclick="window.open('/api/stats/retrieval-eval/compare/report')" style="padding:4px 12px;background:var(--g);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">📄 导出报告</button>
@@ -620,6 +629,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <div style="overflow-x:auto;margin-top:8px"><table class="data-table" id="compareTable" style="width:100%;font-size:11px;border-collapse:collapse">
         <thead><tr>
           <th>查询</th>
+          <th>Profile</th>
           <th>FAISS R@5</th><th>FAISS MRR</th>
           <th>BM25 R@5</th><th>BM25 MRR</th>
           <th>Hybrid R@5</th><th>Hybrid MRR</th>
@@ -3096,11 +3106,13 @@ async function loadPipelineStats() {
   }
 
   async function generateRetrievalEval() {
+  await loadRetrievalProfileOptions();
   const kw = document.getElementById('retrievalKeyword').value.trim() || '网络安全';
+  const profile = document.getElementById('retrievalGenerateProfile').value || 'general';
   const btn = document.querySelector('#tabRetrieval .gen-btn');
   btn.disabled = true; btn.textContent = '⏳ 生成中...';
   try {
-    const r = await fetch('/api/stats/retrieval-eval/generate-items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({keywords:kw})});
+    const r = await fetch('/api/stats/retrieval-eval/generate-items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({keywords:kw, profile})});
     const d = await r.json();
     if (d.error) { showToast('❌ '+d.error, ''); btn.disabled=false; btn.textContent='🎲 生成测试集'; return; }
     const cnt = d.items?.length || 0;
@@ -3184,6 +3196,7 @@ async function loadRetrievalEval() {
     tbody.innerHTML = items.map(i => `<tr>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${i.query}">${i.query}</td>
       <td style="font-size:11px">${i.expected_source||''}</td>
+      <td style="font-size:11px">${escHtml(profileLabel(i.profile))}</td>
       <td style="color:${i.recall_5?'var(--g)':'var(--r)'};font-weight:600">${i.recall_5?'✅':'❌'}</td>
       <td style="color:${i.recall_10?'var(--g)':'var(--r)'};font-weight:600">${i.recall_10?'✅':'❌'}</td>
       <td>${i.mrr?.toFixed(3)}</td>
@@ -3216,7 +3229,7 @@ async function loadRetrievalCompare() {
     if (summary.count === 0) {
       document.getElementById('compareGainStats').innerHTML = '<span style="color:var(--t2)">暂无对比数据，点击"运行对比"生成</span>';
       const tbody = document.querySelector('#compareTable tbody');
-      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--t2);padding:16px">暂无对比数据</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--t2);padding:16px">暂无对比数据</td></tr>';
       return;
     }
 
@@ -3290,6 +3303,7 @@ async function loadRetrievalCompare() {
       const r5 = i.hybrid_rerank_recall_5 ? '✅' : '❌';
       return `<tr>
         <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${i.query}">${i.query}</td>
+        <td style="font-size:10px">${escHtml(profileLabel(i.profile))}</td>
         <td style="color:${i.faiss_only_recall_5?'var(--g)':'var(--r)'}">${f5}</td>
         <td>${i.faiss_only_mrr?.toFixed(3)}</td>
         <td style="color:${i.bm25_only_recall_5?'var(--g)':'var(--r)'}">${b5}</td>
@@ -3318,11 +3332,13 @@ async function loadRetrievalCompare() {
 }
 
 async function runRetrievalCompare() {
+  await loadRetrievalProfileOptions();
   const kw = document.getElementById('compareKeyword').value.trim() || '网络安全';
+  const profile = document.getElementById('compareProfile').value || 'general';
   const btn = document.querySelector('.chart-card:nth-child(2) button');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 运行中...'; }
   try {
-    const r = await fetch('/api/stats/retrieval-eval/compare', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({keywords:kw})});
+    const r = await fetch('/api/stats/retrieval-eval/compare', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({keywords:kw, profile})});
     const d = await r.json();
     if (d.error) { showToast('❌ '+d.error, ''); return; }
     showToast(`✅ 对比完成：${d.result.count} 条测试，Rerank R@5=${(d.result.hybrid_rerank_recall_5*100).toFixed(0)}%`);
@@ -3332,25 +3348,31 @@ async function runRetrievalCompare() {
 }
 
 // ====== 测试集管理 ======
-function toggleTestSetPanel() {
+async function toggleTestSetPanel() {
   const panel = document.getElementById('testSetPanel');
   panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-  if (panel.style.display === 'block') loadTestSetItems();
+  if (panel.style.display === 'block') {
+    await loadRetrievalProfileOptions();
+    await loadTestSetItems();
+  }
 }
 
-function showAddItemForm(data) {
+async function showAddItemForm(data) {
+  await loadRetrievalProfileOptions();
   const form = document.getElementById('itemForm');
   form.style.display = 'block';
   if (data) {
     document.getElementById('itemId').value = data.id;
     document.getElementById('itemQuery').value = data.query;
     document.getElementById('itemExpected').value = data.expected;
+    document.getElementById('itemProfile').value = data.profile || 'general';
     document.getElementById('itemCategory').value = data.category || '';
     document.getElementById('itemDifficulty').value = data.difficulty || 'medium';
   } else {
     document.getElementById('itemId').value = '';
     document.getElementById('itemQuery').value = '';
     document.getElementById('itemExpected').value = '';
+    document.getElementById('itemProfile').value = 'general';
     document.getElementById('itemCategory').value = '';
     document.getElementById('itemDifficulty').value = 'medium';
   }
@@ -3603,7 +3625,7 @@ async function loadTestSetItems() {
     const items = d.items || [];
     const tbody = document.getElementById('testSetBody');
     if (items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--t2);padding:16px">暂无测试用例，点击"+ 新增"添加</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--t2);padding:16px">暂无测试用例，点击"+ 新增"添加</td></tr>';
       return;
     }
     tbody.innerHTML = items.map(i => `
@@ -3611,6 +3633,7 @@ async function loadTestSetItems() {
         <td>${i.id}</td>
         <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(i.query)}">${escHtml(i.query)}</td>
         <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(i.expected)}">${escHtml(i.expected)}</td>
+        <td style="font-size:11px">${escHtml(profileLabel(i.profile))}</td>
         <td>${escHtml(i.category || '-')}</td>
         <td>${difficultyBadge(i.difficulty)}</td>
         <td>
@@ -3620,7 +3643,7 @@ async function loadTestSetItems() {
       </tr>
     `).join('');
   } catch(e) {
-    document.getElementById('testSetBody').innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--r);padding:16px">加载失败: ${e.message}</td></tr>`;
+    document.getElementById('testSetBody').innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--r);padding:16px">加载失败: ${e.message}</td></tr>`;
   }
 }
 
@@ -3632,10 +3655,37 @@ function difficultyBadge(d) {
 
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+let retrievalProfileOptions = [{profile: 'general', label: '网络安全通用主干'}];
+
+async function loadRetrievalProfileOptions() {
+  try {
+    const r = await fetch('/api/documents/profile-registry');
+    const d = await r.json();
+    if (!r.ok || !Array.isArray(d.profiles) || !d.profiles.length) return;
+    retrievalProfileOptions = d.profiles;
+    for (const id of ['itemProfile', 'retrievalGenerateProfile', 'compareProfile']) {
+      const select = document.getElementById(id);
+      const selected = select.value || 'general';
+      select.innerHTML = retrievalProfileOptions.map(p =>
+        `<option value="${escHtml(p.profile)}">${escHtml(p.label || p.profile)}</option>`
+      ).join('');
+      select.value = retrievalProfileOptions.some(p => p.profile === selected) ? selected : 'general';
+    }
+  } catch (e) {
+    console.warn('加载评测 profile 注册表失败:', e);
+  }
+}
+
+function profileLabel(profile) {
+  const option = retrievalProfileOptions.find(p => p.profile === (profile || 'general'));
+  return option ? option.label : (profile || 'general');
+}
+
 async function saveItem() {
   const id = document.getElementById('itemId').value;
   const query = document.getElementById('itemQuery').value.trim();
   const expected = document.getElementById('itemExpected').value.trim();
+  const profile = document.getElementById('itemProfile').value || 'general';
   const category = document.getElementById('itemCategory').value.trim();
   const difficulty = document.getElementById('itemDifficulty').value;
   if (!query || !expected) { showToast('❌ 查询和期望来源不能为空', ''); return; }
@@ -3643,9 +3693,9 @@ async function saveItem() {
   try {
     let r;
     if (id) {
-      r = await fetch('/api/stats/retrieval-eval/items', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:parseInt(id), query, expected, category, difficulty, is_active:1})});
+      r = await fetch('/api/stats/retrieval-eval/items', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:parseInt(id), query, expected, profile, category, difficulty, is_active:1})});
     } else {
-      r = await fetch('/api/stats/retrieval-eval/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query, expected, category, difficulty})});
+      r = await fetch('/api/stats/retrieval-eval/items', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query, expected, profile, category, difficulty})});
     }
     const d = await r.json();
     if (d.error) { showToast('❌ '+d.error, ''); return; }
@@ -3683,7 +3733,7 @@ async function runEvalWithTestSet() {
     let pass = 0, total = 0;
     for (const item of items) {
       try {
-        const rr = await fetch('/api/stats/retrieval-eval/run-single', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query: item.query, expected: item.expected})});
+        const rr = await fetch('/api/stats/retrieval-eval/run-single', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query: item.query, expected: item.expected, profile: item.profile || 'general'})});
         const rd = await rr.json();
         if (rd.recall_5 === 1) pass++;
         total++;

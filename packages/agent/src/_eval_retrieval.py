@@ -133,6 +133,7 @@ def evaluate(profile: str = "general"):
             chroma_count=len(retriever._chroma_collection.get(include=[])[
                              "ids"]) if retriever._chroma_collection else 0,
             rerank_top1_match=top1_match_after_rerank,
+            profile=evaluation_profile,
         )
 
         results_summary["items"].append({
@@ -256,6 +257,7 @@ def evaluate_with_items(items: list, memory) -> dict:
             chroma_count=len(retriever._chroma_collection.get(include=[])[
                              "ids"]) if retriever._chroma_collection else 0,
             rerank_top1_match=top1_match,
+            profile=item_profile,
         )
 
         status = "PASS" if recall_5 == 1 else "FAIL"
@@ -320,6 +322,7 @@ def evaluate_single_query(agent, query: str, expected: str, profile: str = "gene
         recall_5=recall_5, recall_10=recall_10, mrr=mrr,
         faiss_count=faiss_count, chroma_count=chroma_count,
         rerank_top1_match=top1_match,
+        profile=item_profile,
     )
 
     return {
@@ -431,6 +434,7 @@ def evaluate_with_items_compare(items: list, memory) -> dict:
             hybrid_no_rerank_mrr=all_results["hybrid_no_rerank"]["mrrs"][i],
             hybrid_rerank_recall_5=all_results["hybrid_rerank"]["recall_5s"][i],
             hybrid_rerank_mrr=all_results["hybrid_rerank"]["mrrs"][i],
+            profile=_item_profile(item),
         )
 
     base_r5 = sum(all_results["faiss_only"]["recall_5s"]) / len(items)

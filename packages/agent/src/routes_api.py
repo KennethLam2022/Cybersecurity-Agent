@@ -1337,7 +1337,7 @@ def add_retrieval_eval_item(data: dict):
         difficulty = data.get("difficulty", "medium")
         if not query or not expected:
             return JSONResponse({"error": "query 和 expected 不能为空"}, status_code=400)
-        item_id = agent.memory.add_retrieval_eval_item(query, expected, category, difficulty)
+        item_id = agent.memory.add_retrieval_eval_item(query, expected, category, difficulty, profile=profile)
         return JSONResponse({"id": item_id, "success": True})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1355,7 +1355,8 @@ def update_retrieval_eval_item(data: dict):
             data.get("expected", ""),
             data.get("category", ""),
             data.get("difficulty", "medium"),
-            data.get("is_active", 1)
+            data.get("is_active", 1),
+            profile=data.get("profile", "general"),
         )
         return JSONResponse({"success": ok})
     except Exception as e:
@@ -1386,6 +1387,7 @@ def retrieval_eval_run_single(data: dict):
     try:
         query = data.get("query", "").strip()
         expected = data.get("expected", "").strip()
+        profile = data.get("profile", "general")
         if not query or not expected:
             return JSONResponse({"error": "query 和 expected 不能为空"}, status_code=400)
         from _eval_retrieval import evaluate_single_query
@@ -1411,6 +1413,7 @@ def retrieval_eval_generate(data: dict):
                 expected=item.get("expected", ""),
                 category=item.get("category", ""),
                 difficulty=item.get("difficulty", "medium"),
+                profile=item.get("profile", "general"),
             )
             saved += 1
         except Exception:
@@ -1481,8 +1484,11 @@ def retrieval_eval_compare(limit: int = 100):
 @router.post("/api/stats/retrieval-eval/compare")
 def retrieval_eval_compare_run(data: dict):
     keywords = data.get("keywords", "网络安全")
+    profile = data.get("profile", "general")
     from _eval_retrieval import generate_test_set_from_keywords, evaluate_with_items_compare
     items = generate_test_set_from_keywords(keywords, llm=_get_backend_eval_llm())
+    for item in items:
+        item["profile"] = profile
     result = evaluate_with_items_compare(items, agent.memory)
 
     summary_text = ""
@@ -1572,6 +1578,7 @@ def retrieval_eval_compare_report(limit: int = 60):
 @router.post("/api/stats/retrieval-eval/generate-items")
 def retrieval_eval_generate_items(data: dict):
     keywords = data.get("keywords", "网络安全")
+    profile = data.get("profile", "general")
     from _eval_retrieval import generate_test_set_from_keywords
     items = generate_test_set_from_keywords(keywords, llm=_get_backend_eval_llm())
 
@@ -1579,11 +1586,13 @@ def retrieval_eval_generate_items(data: dict):
     saved = 0
     for item in items:
         try:
+            item["profile"] = profile
             agent.memory.add_retrieval_eval_item(
                 query=item.get("query", ""),
                 expected=item.get("expected", ""),
                 category=item.get("category", ""),
                 difficulty=item.get("difficulty", "medium"),
+                profile=profile,
             )
             saved += 1
         except Exception:
