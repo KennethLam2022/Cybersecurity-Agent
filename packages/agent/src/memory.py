@@ -355,6 +355,53 @@ class ConversationMemory:
                 conn.execute("ALTER TABLE e2e_eval_items ADD COLUMN profile TEXT DEFAULT 'general'")
             except sqlite3.OperationalError:
                 pass
+            # ---- Agent Evaluation：通用测试用例、运行快照与逐例结果 ----
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS agent_eval_cases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    case_key TEXT NOT NULL UNIQUE,
+                    profile TEXT NOT NULL DEFAULT 'general',
+                    case_type TEXT NOT NULL DEFAULT 'answer_quality',
+                    domain TEXT DEFAULT '',
+                    query_json TEXT NOT NULL DEFAULT '{}',
+                    expected_json TEXT NOT NULL DEFAULT '{}',
+                    risk_tags_json TEXT NOT NULL DEFAULT '[]',
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_eval_cases_profile
+                    ON agent_eval_cases(profile, is_active, id);
+                CREATE TABLE IF NOT EXISTS agent_eval_runs (
+                    run_id TEXT PRIMARY KEY,
+                    profile TEXT NOT NULL DEFAULT 'general',
+                    status TEXT NOT NULL DEFAULT 'running',
+                    context_json TEXT NOT NULL DEFAULT '{}',
+                    summary_json TEXT NOT NULL DEFAULT '{}',
+                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    finished_at TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS agent_eval_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL,
+                    case_id INTEGER,
+                    case_key TEXT NOT NULL,
+                    profile TEXT NOT NULL DEFAULT 'general',
+                    case_type TEXT NOT NULL DEFAULT 'answer_quality',
+                    query_text TEXT NOT NULL DEFAULT '',
+                    answer_text TEXT NOT NULL DEFAULT '',
+                    trace_json TEXT NOT NULL DEFAULT '{}',
+                    metrics_json TEXT NOT NULL DEFAULT '{}',
+                    status TEXT NOT NULL DEFAULT 'completed',
+                    elapsed_ms INTEGER DEFAULT 0,
+                    error TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (run_id) REFERENCES agent_eval_runs(run_id),
+                    FOREIGN KEY (case_id) REFERENCES agent_eval_cases(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_eval_results_run
+                    ON agent_eval_results(run_id, id);
+            """)
 
     def create_conversation(self, title: str = "新对话", category: str = "user") -> dict:
         conv_id = str(uuid.uuid4())[:8]
@@ -1636,3 +1683,158 @@ class ConversationMemory:
                 except Exception:
                     continue
         return count
+
+    # ==================== Agent Evaluation ====================
+
+    def upsert_agent_eval_case(self, case: dict) -> int:
+        """新增或更新一条通用 Agent Evaluation 用例。"""
+        case_key = str(case.get("case_key") or case.get("id") or "").strip()
+        if not case_key:
+            raise ValueError("agent eval case_key is required")
+        query = case.get("query", {})
+        if isinstance(query, str):
+            query = {"text": query}
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute("""
+                INSERT INTO agent_eval_cases
+                    (case_key, profile, case_type, domain, query_json, expected_json, risk_tags_json, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(case_key) DO UPDATE SET
+                    profile=excluded.profile, case_type=excluded.case_type, domain=excluded.domain,
+                    query_json=excluded.query_json, expected_json=excluded.expected_json,
+                    risk_tags_json=excluded.risk_tags_json, is_active=excluded.is_active,
+                    updated_at=CURRENT_TIMESTAMP
+            """, (
+                case_key,
+                case.get("profile") or "general",
+                case.get("case_type") or "answer_quality",
+                case.get("domain") or "",
+                json.dumps(query, ensure_ascii=False),
+                json.dumps(case.get("expected") or {}, ensure_ascii=False),
+                json.dumps(case.get("risk_tags") or [], ensure_ascii=False),
+                int(case.get("is_active", 1)),
+            ))
+            row = conn.execute(
+                "SELECT id FROM agent_eval_cases WHERE case_key=?", (case_key,)
+            ).fetchone()
+        return int(row[0])
+
+    def get_agent_eval_cases(self, profile: str | None = None,
+                             include_inactive: bool = False) -> list[dict]:
+        conditions = []
+        params = []
+        if profile:
+            conditions.append("profile=?")
+            params.append(profile)
+        if not include_inactive:
+            conditions.append("is_active=1")
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        with sqlite3.connect(self._db_path) as conn:
+            rows = conn.execute(
+                "SELECT id, case_key, profile, case_type, domain, query_json, expected_json, "
+                "risk_tags_json, is_active, created_at, updated_at FROM agent_eval_cases" + where + " ORDER BY id ASC",
+                params,
+            ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(zip((
+                "id", "case_key", "profile", "case_type", "domain", "query_json", "expected_json",
+                "risk_tags_json", "is_active", "created_at", "updated_at",
+            ), row))
+            for field, fallback in (("query_json", {}), ("expected_json", {}), ("risk_tags_json", [])):
+                try:
+                    item[field.removesuffix("_json")] = json.loads(item.pop(field) or json.dumps(fallback))
+                except (TypeError, ValueError):
+                    item[field.removesuffix("_json")] = fallback
+            item["created_at"] = self._utc_to_local(item.get("created_at", ""))
+            item["updated_at"] = self._utc_to_local(item.get("updated_at", ""))
+            items.append(item)
+        return items
+
+    def create_agent_eval_run(self, profile: str = "general", context: dict | None = None,
+                              run_id: str | None = None) -> str:
+        run_id = run_id or f"agent_eval_{uuid.uuid4().hex[:12]}"
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                "INSERT INTO agent_eval_runs (run_id, profile, context_json) VALUES (?, ?, ?)",
+                (run_id, profile or "general", json.dumps(context or {}, ensure_ascii=False)),
+            )
+        return run_id
+
+    def complete_agent_eval_run(self, run_id: str, summary: dict,
+                                status: str = "completed") -> bool:
+        with sqlite3.connect(self._db_path) as conn:
+            cur = conn.execute("""
+                UPDATE agent_eval_runs
+                SET status=?, summary_json=?, finished_at=CURRENT_TIMESTAMP
+                WHERE run_id=?
+            """, (status, json.dumps(summary or {}, ensure_ascii=False), run_id))
+        return cur.rowcount > 0
+
+    def save_agent_eval_result(self, run_id: str, case: dict, result: dict) -> int:
+        """保存单条 case 的答案、标准化 trace 和规则/LLM 指标。"""
+        case_query = case.get("query", {})
+        if isinstance(case_query, str):
+            case_query = {"text": case_query}
+        with sqlite3.connect(self._db_path) as conn:
+            cur = conn.execute("""
+                INSERT INTO agent_eval_results
+                    (run_id, case_id, case_key, profile, case_type, query_text, answer_text,
+                     trace_json, metrics_json, status, elapsed_ms, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                run_id,
+                case.get("id"),
+                case.get("case_key") or case.get("id") or "",
+                case.get("profile") or "general",
+                case.get("case_type") or "answer_quality",
+                result.get("query") or case_query.get("text", ""),
+                result.get("answer") or "",
+                json.dumps(result.get("trace") or {}, ensure_ascii=False),
+                json.dumps(result.get("metrics") or {}, ensure_ascii=False),
+                result.get("status") or "completed",
+                int(result.get("elapsed_ms") or 0),
+                result.get("error") or "",
+            ))
+        return cur.lastrowid
+
+    def get_agent_eval_runs(self, limit: int = 20) -> list[dict]:
+        with sqlite3.connect(self._db_path) as conn:
+            rows = conn.execute("""
+                SELECT run_id, profile, status, context_json, summary_json, started_at, finished_at
+                FROM agent_eval_runs ORDER BY started_at DESC LIMIT ?
+            """, (limit,)).fetchall()
+        items = []
+        for row in rows:
+            item = dict(zip(("run_id", "profile", "status", "context_json", "summary_json", "started_at", "finished_at"), row))
+            for field in ("context_json", "summary_json"):
+                try:
+                    item[field.removesuffix("_json")] = json.loads(item.pop(field) or "{}")
+                except (TypeError, ValueError):
+                    item[field.removesuffix("_json")] = {}
+            item["started_at"] = self._utc_to_local(item.get("started_at", ""))
+            item["finished_at"] = self._utc_to_local(item.get("finished_at", ""))
+            items.append(item)
+        return items
+
+    def get_agent_eval_results(self, run_id: str) -> list[dict]:
+        with sqlite3.connect(self._db_path) as conn:
+            rows = conn.execute("""
+                SELECT id, run_id, case_id, case_key, profile, case_type, query_text, answer_text,
+                       trace_json, metrics_json, status, elapsed_ms, error, created_at
+                FROM agent_eval_results WHERE run_id=? ORDER BY id ASC
+            """, (run_id,)).fetchall()
+        items = []
+        for row in rows:
+            item = dict(zip((
+                "id", "run_id", "case_id", "case_key", "profile", "case_type", "query", "answer",
+                "trace_json", "metrics_json", "status", "elapsed_ms", "error", "created_at",
+            ), row))
+            for field in ("trace_json", "metrics_json"):
+                try:
+                    item[field.removesuffix("_json")] = json.loads(item.pop(field) or "{}")
+                except (TypeError, ValueError):
+                    item[field.removesuffix("_json")] = {}
+            item["created_at"] = self._utc_to_local(item.get("created_at", ""))
+            items.append(item)
+        return items
