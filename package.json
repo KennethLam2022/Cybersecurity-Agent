@@ -6,6 +6,7 @@
     "dev": "python packages/agent/src/main.py",
     "build": "python -m compileall -q packages/agent/src packages/preprocessor/src",
     "test": "python -m pytest packages/agent/src/tests -q",
+    "smoke": "python scripts/eval_smoke.py",
     "lint": "python -m compileall -q packages/agent/src packages/preprocessor/src"
   },
   "engines": {
