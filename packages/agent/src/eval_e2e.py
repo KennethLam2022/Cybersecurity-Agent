@@ -67,7 +67,7 @@ QUESTIONS = [
     {"id": "H02", "domain": "等保合规", "difficulty": "困难",
      "query": "我是安全主管，系统等保测评没过，常见的整改项有哪些？先改什么后改什么？", "style": "role"},
     {"id": "H03", "domain": "等保合规", "difficulty": "中等",
-     "query": "我负责网络这一块，安全通信网络有啥技术要求？加密、隔离之类的。", "style": "role"},
+     "query": "我负责网络这一块，网络与通信安全控制有哪些技术要求？加密、隔离之类的。", "style": "role"},
     {"id": "H04", "domain": "等保合规", "difficulty": "困难",
      "query": "等保四级和三级到底差在哪？安全要求上有什么不一样？", "style": "plain"},
     {"id": "H05", "domain": "等保合规", "difficulty": "困难",
