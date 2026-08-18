@@ -101,3 +101,26 @@ def test_runner_reports_repeatability_and_p95_latency(tmp_path):
     assert run["summary"]["p95_latency_ms"] >= 0
     assert run["summary"]["usage_totals"]["total_tokens"] == 30
     assert run["summary"]["model_counts"] == {"test-model": 2}
+
+
+def test_runner_reports_configurable_point_coverage_and_memory(tmp_path):
+    memory = ConversationMemory(str(tmp_path / "coverage.db"))
+    case = {
+        "case_key": "CONV-001", "profile": "general", "case_type": "conversation",
+        "query": {"turns": [
+            {"role": "user", "content": "请先说明分类。"},
+            {"role": "user", "content": "再说明分级。"},
+        ]},
+        "expected": {
+            "expected_points": ["分类", "级别"],
+            "expected_point_aliases": {"级别": ["分级"]},
+            "min_point_coverage": 1.0,
+        },
+    }
+    memory.upsert_agent_eval_case(case)
+    case = memory.get_agent_eval_cases()[0]
+    run = run_agent_evaluation(FakeAgent(memory), [case])
+
+    assert run["results"][0]["metrics"]["answer_point_coverage"] == 1.0
+    assert run["results"][0]["metrics"]["memory_pass"] is True
+    assert run["summary"]["memory_pass_rate"] == 1.0

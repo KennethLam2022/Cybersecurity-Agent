@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 import json
 import re
+import unicodedata
 from collections import Counter
 from typing import Any
 
@@ -47,6 +48,26 @@ def _check_safety(expected_behavior: str, raw_trace: dict[str, Any], answer: str
     return blocked and not contains_forbidden
 
 
+def _normalized_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return re.sub(r"[\s\W_]+", "", text, flags=re.UNICODE)
+
+
+def _point_coverage(expected_points: list[str], answer: str,
+                    aliases: dict[str, list[str]] | None = None) -> tuple[float, list[str]]:
+    if not expected_points:
+        return 1.0, []
+    normalized_answer = _normalized_text(answer)
+    aliases = aliases or {}
+    matched = []
+    for point in expected_points:
+        candidates = [point, *(aliases.get(point) or [])]
+        if any(_normalized_text(candidate) and _normalized_text(candidate) in normalized_answer
+               for candidate in candidates):
+            matched.append(point)
+    return round(len(matched) / len(expected_points), 4), matched
+
+
 def _trace_query_type(raw_trace: dict[str, Any]) -> str:
     query_rewrite = raw_trace.get("query_rewrite") or {}
     if isinstance(query_rewrite, dict) and query_rewrite.get("query_type"):
@@ -70,14 +91,21 @@ def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: in
     forbidden = expected.get("forbidden") or []
     expected_behavior = expected.get("expected_behavior") or ""
     expected_points = expected.get("expected_points") or []
+    point_aliases = expected.get("expected_point_aliases") or {}
+    point_coverage, matched_points = _point_coverage(expected_points, answer, point_aliases)
+    min_point_coverage = float(expected.get("min_point_coverage", 1.0))
     expected_query_type = expected.get("expected_query_type") or ""
     checks = {
         "answer_nonempty": bool(answer.strip()),
         "trajectory_pass": all(step in actual_steps for step in expected_path),
         "source_hit": _check_source_hit(expected_sources, response),
         "safety_pass": _check_safety(expected_behavior, raw_trace, answer, forbidden),
-        "answer_points_pass": all(point.lower() in answer.lower() for point in expected_points),
+        "answer_point_coverage": point_coverage,
+        "matched_points": matched_points,
+        "answer_points_pass": point_coverage >= min_point_coverage,
     }
+    if response.get("memory_check") is not None:
+        checks["memory_pass"] = bool(response["memory_check"].get("conversation_id_stable"))
     if expected_query_type:
         checks["query_type_pass"] = _trace_query_type(raw_trace) == expected_query_type
     max_latency_ms = expected.get("max_latency_ms")
@@ -93,6 +121,8 @@ def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: in
         required.append("safety_pass")
     if expected_points:
         required.append("answer_points_pass")
+    if case.get("case_type") == "conversation":
+        required.append("memory_pass")
     if expected_query_type:
         required.append("query_type_pass")
     if max_latency_ms is not None:
@@ -138,6 +168,7 @@ def _run_case(agent: Any, case: dict[str, Any]) -> tuple[dict[str, Any], str]:
     profile = case.get("profile") or "general"
     if isinstance(query, dict) and query.get("turns"):
         conversation_id = None
+        conversation_ids = []
         response = {}
         for turn in query["turns"]:
             if turn.get("role", "user") != "user":
@@ -148,7 +179,13 @@ def _run_case(agent: Any, case: dict[str, Any]) -> tuple[dict[str, Any], str]:
                 category="agent_eval",
                 profiles={profile},
             )
-            conversation_id = response.get("conversation_id") or conversation_id
+            next_conversation_id = response.get("conversation_id") or conversation_id
+            conversation_ids.append(next_conversation_id)
+            conversation_id = next_conversation_id
+        response["memory_check"] = {
+            "conversation_id_stable": bool(conversation_ids) and len(set(conversation_ids)) == 1,
+            "turn_count": len(conversation_ids),
+        }
         return response, _query_text(case)
     query_text = _query_text(case)
     return agent.ask(query_text, category="agent_eval", profiles={profile}), query_text
@@ -171,6 +208,10 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
         values = [item[key] for item in judge_results if key in item]
         if values:
             judge_avg[key] = round(sum(values) / len(values), 4)
+    point_coverages = [result["metrics"]["answer_point_coverage"] for result in results
+                       if "answer_point_coverage" in result.get("metrics", {})]
+    memory_results = [result["metrics"].get("memory_pass") for result in results
+                      if "memory_pass" in result.get("metrics", {})]
     usage_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     model_counts = Counter()
     for result in results:
@@ -192,6 +233,8 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
         "case_type_counts": dict(type_counts),
         "judge_count": len(judge_results),
         "judge_avg": judge_avg,
+        "answer_point_coverage_avg": round(sum(point_coverages) / len(point_coverages), 4) if point_coverages else 0,
+        "memory_pass_rate": round(sum(memory_results) / len(memory_results), 4) if memory_results else None,
         "usage_totals": usage_totals,
         "model_counts": dict(model_counts),
     }

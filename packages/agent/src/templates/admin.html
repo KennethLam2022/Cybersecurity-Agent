@@ -3712,8 +3712,14 @@ function renderAgentEval(run, results) {
   document.getElementById('agentEvalFailed').textContent = summary.failed ?? '--';
   document.getElementById('agentEvalRate').textContent = ((summary.pass_rate || 0) * 100).toFixed(0) + '%';
   const profiles = summary.profile_counts || {};
-  document.getElementById('agentEvalProfileSummary').textContent = 'Profile 分布：' + Object.entries(profiles)
+  const profileText = Object.entries(profiles)
     .map(([profile, count]) => `${profileLabel(profile)} ${count}条`).join(' · ');
+  const coverageText = summary.answer_point_coverage_avg === undefined ? '' :
+    ` · 要点覆盖 ${(summary.answer_point_coverage_avg * 100).toFixed(0)}%`;
+  const memoryText = summary.memory_pass_rate === null || summary.memory_pass_rate === undefined ? '' :
+    ` · 多轮记忆 ${(summary.memory_pass_rate * 100).toFixed(0)}%`;
+  document.getElementById('agentEvalProfileSummary').textContent =
+    'Profile 分布：' + profileText + coverageText + memoryText;
   const body = document.getElementById('agentEvalResultsBody');
   body.innerHTML = results.map(item => {
     const m = item.metrics || {};
