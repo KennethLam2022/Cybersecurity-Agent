@@ -417,3 +417,211 @@ Langfuse 适合作为可选的观测、实验、评分趋势和人工复核协�
 3. 使用真实 Agent 建立 30 条通用主干 baseline；
 4. 再接入 Langfuse Dataset/Experiment、Annotation Queue 和 CI 回归；
 5. 最后由人工复核结果校准 Judge 与发布阈值。
+
+## 13. 二期完成结论与后续评测产品化方案（2026-08-18）
+
+### 13.1 二期完成结论
+
+截至 2026 年 8 月 18 日，二期开发目标已完成，二期不再增加新的功能项。已完成范围包括：
+
+- 前台用户端隐藏 LLM 配置，模型由后台统一管理；
+- 通用网络安全 taxonomy、general 主干与行业扩展 profile；
+- 存量文档 profile 迁移、待确认列表、批量确认和向量 metadata 同步；
+- 新文档 Profile 建议、人工确认和未知行业扩展 Profile 提案/确认；
+- Agent Trace 标准化、Profile 隔离、通用 Agent Evaluation 主干集；
+- Prompt、检索、E2E、Agent 四类评测入口和后台结果查看；
+- Agent Evaluation 的重复运行、P95、Flaky、Token、模型统计、失败样本复核和发布门禁；
+- 可选、脱敏、失败即忽略的 Langfuse Exporter；
+- `agent-core` 独立构建技术债已修复，根构建和独立构建均通过。
+
+二期验收结果：Python 测试 `99 passed, 1 warning`，根目录 `pnpm build` 通过，`@cybersec/agent-core` 独立构建通过。现有 warning 来自第三方 `jieba` 使用弃用的 `pkg_resources`，不属于本项目本次改动。
+
+### 13.2 评测代码反思结论
+
+四套评测的定位应明确分层，不能继续把所有分数混成一个“总质量分”：
+
+| 工具 | 正确定位 | 当前判断 | 后续目标 |
+|---|---|---|---|
+| Prompt Test | System Prompt 规则和行为工作台 | 开发调试工具，域 A 规则为主 | 做成 Prompt 回归与版本比较工具 |
+| Retrieval Eval | 检索命中和排序基线 | Recall@K/MRR 粗粒度基线 | 做成可配置、可解释的检索回归工具 |
+| E2E Eval | RAG 最终回答质量评估 | 指标体系合理，但依赖 Judge | 做成独立评测报告和人工校准工具 |
+| Agent Eval | Agent 结果、轨迹、安全和效率评估 | 当前最完整，可作为主门禁框架 | 做成发布级 Agent 质量与风险门禁 |
+
+当前不应直接发布的原因不是“没有评测”，而是四套工具存在评分契约不统一、部分启发式规则过宽、Prompt Test 与 E2E 评分职责交叉、旧脚本与后台入口并存等问题。因此，下一阶段的目标是**评测体系产品化**，不是继续堆叠测试题数量。
+
+### 13.3 统一测试用例模型
+
+四类测试统一使用一个逻辑 schema，具体存储可以分表，但字段语义必须一致：
+
+```json
+{
+  "case_key": "SAFE-GEN-001",
+  "profile": "general",
+  "evaluation_scope": ["prompt", "e2e", "agent"],
+  "case_type": "safety",
+  "domain": "安全边界",
+  "query": {
+    "text": "请求内容",
+    "turns": []
+  },
+  "expected": {
+    "expected_behavior": "refuse_or_redirect",
+    "expected_sources": [],
+    "expected_points": [],
+    "required_steps": [],
+    "forbidden": []
+  },
+  "risk_tags": ["safety_critical"],
+  "thresholds": {},
+  "is_active": true,
+  "owner": "security",
+  "version": 1
+}
+```
+
+约束：
+
+1. `profile=general` 是通用主干默认值，行业 profile 必须显式指定。
+2. `evaluation_scope` 决定用例由哪些评测工具执行，不能由页面名称猜测。
+3. `expected` 保存可验证的期望，不使用测试代码中的隐式字符串规则替代。
+4. 缺失维度应记录为 `not_applicable`，不能自动按 0 分或从分母中静默删除。
+5. 每次运行必须保存用例版本、Prompt 版本、模型、知识库、taxonomy、代码版本和评测配置快照。
+
+### 13.4 统一评分原则
+
+#### 硬门禁
+
+以下指标任何一项失败，都不能仅靠平均分覆盖：
+
+- 安全边界关键用例必须全部通过；
+- Agent 运行错误率为 0；
+- 通用主干与行业扩展不得混算；
+- 关键来源要求必须满足；
+- 评测配置、模型和知识库版本必须可追溯；
+- 关键失败样本必须完成管理员复核或明确豁免。
+
+#### 软指标
+
+以下指标用于趋势、比较和优化，不单独决定发布：
+
+- 通过率；
+- Context Precision/Recall；
+- Faithfulness、Relevancy、无幻觉率；
+- P95/P99 延迟；
+- Token 和成本；
+- 多轮记忆准确率；
+- Flaky rate 和重复运行稳定性。
+
+#### 评分实现要求
+
+- 安全拒答必须判断行为、轨迹和有害内容泄漏，不能只判断回答是否包含“安全”等关键词；
+- 来源命中需要区分“来源名称命中”和“来源内容支持”，不能将二者混成一个布尔值；
+- 轨迹通过必须检查步骤顺序、状态和必要输入输出；
+- 多轮记忆必须验证上一轮实体/约束是否在下一轮被正确使用，不能只检查 conversation ID；
+- Judge 失败、超时或 JSON 无法解析必须标记为 `judge_error`，不能静默当成正常分数；
+- 启发式回退分数必须标记方法为 `heuristic`，不可与 LLM Judge 分数无标识混合平均。
+
+### 13.5 四个发布级工具
+
+#### A. Prompt Test Workbench
+
+目标：验证 System Prompt 的规则行为和版本退化。
+
+必须具备：
+
+- Prompt 版本绑定和差异对比；
+- 规则型测试：来源标注、品牌/产品中立、安全拒答、偏题处理、首答完整、输出格式；
+- 每条用例明确 expected behavior 和禁止内容；
+- 通过率、维度分、失败原因和回答原文；
+- 缺失维度显示 `N/A`；
+- 单条重跑、全量回归、重复运行和失败样本复核；
+- 不承担完整 RAG Faithfulness 结论，RAG 质量交由 E2E Eval。
+
+#### B. Retrieval Eval
+
+目标：验证检索是否召回正确资料并排序到合理位置。
+
+必须具备：
+
+- `relevant_doc_ids` 或标准来源集合，而不是只依赖模糊字符串；
+- Recall@1、Recall@5、Recall@10、MRR、nDCG；
+- 负例和相似干扰文档；
+- profile 隔离、过滤条件和 reranker 开关记录；
+- 命中来源、排名、分数、检索耗时和失败原因；
+- 通用主干与行业扩展分开报告。
+
+#### C. E2E RAG Eval
+
+目标：验证“问题 → 检索 → 上下文 → 回答”的最终质量。
+
+必须具备：
+
+- Context Precision、Context Recall、Faithfulness、Relevancy、无幻觉率；
+- 独立 Judge 配置和自评偏差告警；
+- Judge 原始理由、声明数、支持数、幻觉清单；
+- Judge 失败和启发式回退标识；
+- 抽样人工标注集，用于校准 Judge；
+- 结果与知识库、Prompt、模型版本绑定。
+
+#### D. Agent Eval
+
+目标：作为发布主门禁，验证 Agent 的结果、过程、安全、记忆和效率。
+
+必须具备：
+
+- Router、Retrieval、Answer、Safety、Conversation 五类用例；
+- 标准 Trace 和步骤顺序检查；
+- 结果评分与过程评分分离；
+- 安全关键用例硬失败；
+- 多轮记忆状态验证；
+- 重复运行、Flaky、P95、Token、成本、模型和错误统计；
+- 失败样本人工复核、复核结论和豁免记录；
+- 发布门禁报告和历史趋势。
+
+### 13.6 后续开发顺序
+
+#### P3.1：统一评分契约
+
+1. 冻结统一用例 schema 和状态枚举；
+2. 修复 Prompt Test 拒答、禁止词、动态分母和维度缺失问题；
+3. 清理 Prompt Test 与 E2E 的职责交叉；
+4. 增加四类工具的单元测试、契约测试和错误注入测试。
+
+#### P3.2：检索和 E2E 发布化
+
+1. 将 expected source 从关键词升级为标准来源 ID/文档 ID；
+2. 增加负例、排序指标和 profile 版本；
+3. 统一 Judge 输出 schema；
+4. 增加人工校准集和 Judge 一致性报告；
+5. 记录评测成本和脱敏后的原始证据。
+
+#### P3.3：Agent 发布门禁强化
+
+1. 增加顺序化 Trace 断言；
+2. 增加安全风险分和硬门禁；
+3. 增加多轮记忆事实断言；
+4. 增加 baseline、候选版本和回归版本比较；
+5. 形成可导出的发布评测报告。
+
+#### P3.4：CI 与 Langfuse 协作
+
+1. 本地 Runner 继续作为事实来源；
+2. CI 只运行无外部费用的 smoke/deterministic 集；
+3. 真实模型 baseline 由管理员手动触发并确认费用；
+4. Langfuse 作为可选 Trace、Dataset、Annotation Queue 和趋势平台；
+5. Langfuse 不可用时不阻塞本地评测和发布门禁。
+
+### 13.7 发布验收标准
+
+下一阶段完成后，必须同时满足：
+
+1. 四类评测均使用统一用例 schema 和版本快照；
+2. Prompt Test 不再把 RAG 质量指标伪装成 Prompt 规则分；
+3. Retrieval Eval 有可维护的标准来源集合和排序指标；
+4. E2E Eval 能区分 Judge、启发式回退和人工分；
+5. Agent Eval 安全关键用例 100% 通过，运行错误率为 0；
+6. 所有失败样本均能查看输入、期望、回答、来源、轨迹和评分理由；
+7. 通用主干、行业扩展、人工确认和豁免记录完全分离；
+8. 真实 baseline 可重复执行，结果可比较、可追溯、可导出；
+9. CI、后台手动评测和 Langfuse 的职责边界清晰；
+10. 发布门禁报告能够给出“通过”或“阻塞”的明确理由，而不是只展示一个平均分。
