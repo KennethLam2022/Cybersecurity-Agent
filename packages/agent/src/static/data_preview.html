@@ -494,11 +494,6 @@
     let selectedMigrationPaths = new Set();
     const FALLBACK_PROFILES = [
       { profile: 'general', label: '网络安全通用主干', category: '通用', scope: 'general', industry: '', description: '通用网络安全主干资料' },
-      { profile: 'industry/telecom', label: '通信行业扩展', category: '04-通信行业标准-运营商', scope: 'industry', industry: 'telecom', description: '通信行业扩展资料包' },
-      { profile: 'industry/finance', label: '金融行业扩展', category: '11-金融行业安全', scope: 'industry', industry: 'finance', description: '金融行业扩展资料包' },
-      { profile: 'industry/energy', label: '能源行业扩展', category: '12-能源行业安全', scope: 'industry', industry: 'energy', description: '能源行业扩展资料包' },
-      { profile: 'industry/healthcare', label: '医疗行业扩展', category: '13-医疗行业安全', scope: 'industry', industry: 'healthcare', description: '医疗行业扩展资料包' },
-      { profile: 'industry/government', label: '政务行业扩展', category: '14-政务行业安全', scope: 'industry', industry: 'government', description: '政务行业扩展资料包' },
     ];
 
     // ─── DOM refs ───────────────────────────────────────────
@@ -568,7 +563,8 @@
     }
 
     function getProfileOption(profile) {
-      return getProfileOptions().find(p => p.profile === profile) || getProfileOptions()[0];
+      return getProfileOptions().find(p => p.profile === profile)
+        || { profile: profile || 'general', label: profile || '待确认', category: '' };
     }
 
     function getProfileLabel(profile) {
