@@ -279,6 +279,7 @@ class ConversationMemory:
                     query TEXT NOT NULL,
                     expected_source TEXT DEFAULT '',
                     profile TEXT DEFAULT 'general',
+                    context_json TEXT DEFAULT '{}',
                     recall_5 INTEGER DEFAULT 0,
                     recall_10 INTEGER DEFAULT 0,
                     mrr REAL DEFAULT 0,
@@ -295,6 +296,7 @@ class ConversationMemory:
                     query TEXT NOT NULL,
                     expected_source TEXT DEFAULT '',
                     profile TEXT DEFAULT 'general',
+                    context_json TEXT DEFAULT '{}',
                     faiss_only_recall_5 INTEGER DEFAULT 0,
                     faiss_only_mrr REAL DEFAULT 0,
                     bm25_only_recall_5 INTEGER DEFAULT 0,
@@ -323,6 +325,11 @@ class ConversationMemory:
             for table in ("retrieval_eval", "eval_comparison", "retrieval_eval_items"):
                 try:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN profile TEXT DEFAULT 'general'")
+                except sqlite3.OperationalError:
+                    pass
+            for table in ("retrieval_eval", "eval_comparison"):
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN context_json TEXT DEFAULT '{{}}'")
                 except sqlite3.OperationalError:
                     pass
             # ---- e2e_eval_items 综合质量评测测试集表 ----
@@ -1349,27 +1356,31 @@ class ConversationMemory:
     def save_retrieval_eval(self, query: str, expected_source: str,
                             recall_5: int, recall_10: int, mrr: float,
                             faiss_count: int, chroma_count: int, rerank_top1_match: int,
-                            profile: str = "general"):
+                            profile: str = "general", context: dict | None = None):
         """保存一次检索质量评估结果"""
         with sqlite3.connect(self._db_path) as conn:
             conn.execute("""
-                INSERT INTO retrieval_eval (query, expected_source, profile, recall_5, recall_10, mrr,
+                INSERT INTO retrieval_eval (query, expected_source, profile, context_json, recall_5, recall_10, mrr,
                     faiss_count, chroma_count, rerank_top1_match)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (query, expected_source, profile, recall_5, recall_10, mrr,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (query, expected_source, profile, json.dumps(context or {}, ensure_ascii=False), recall_5, recall_10, mrr,
                   faiss_count, chroma_count, rerank_top1_match))
 
     def get_retrieval_eval(self, limit: int = 100) -> dict:
         """获取检索质量评估的汇总统计"""
         with sqlite3.connect(self._db_path) as conn:
             rows = conn.execute(
-                """SELECT id, query, expected_source, profile, recall_5, recall_10, mrr,
+                """SELECT id, query, expected_source, profile, context_json, recall_5, recall_10, mrr,
                           faiss_count, chroma_count, rerank_top1_match, eval_at
                    FROM retrieval_eval ORDER BY id DESC LIMIT ?""", (limit,)).fetchall()
-        cols = ["id", "query", "expected_source", "profile", "recall_5", "recall_10", "mrr",
+        cols = ["id", "query", "expected_source", "profile", "context_json", "recall_5", "recall_10", "mrr",
                 "faiss_count", "chroma_count", "rerank_top1_match", "eval_at"]
         items = [dict(zip(cols, r)) for r in rows]
         for i in items:
+            try:
+                i["context"] = json.loads(i.pop("context_json") or "{}")
+            except (TypeError, ValueError):
+                i["context"] = {}
             i["eval_at"] = self._utc_to_local(i.get("eval_at", ""))
         total = len(items)
         if total == 0:
@@ -1397,18 +1408,18 @@ class ConversationMemory:
                              bm25_only_recall_5: int, bm25_only_mrr: float,
                              hybrid_no_rerank_recall_5: int, hybrid_no_rerank_mrr: float,
                              hybrid_rerank_recall_5: int, hybrid_rerank_mrr: float,
-                             profile: str = "general"):
+                             profile: str = "general", context: dict | None = None):
         """保存一次检索模式对比结果"""
         with sqlite3.connect(self._db_path) as conn:
             conn.execute("""
                 INSERT INTO eval_comparison
-                    (query, expected_source, profile,
+                    (query, expected_source, profile, context_json,
                      faiss_only_recall_5, faiss_only_mrr,
                      bm25_only_recall_5, bm25_only_mrr,
                      hybrid_no_rerank_recall_5, hybrid_no_rerank_mrr,
                      hybrid_rerank_recall_5, hybrid_rerank_mrr)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (query, expected_source, profile,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (query, expected_source, profile, json.dumps(context or {}, ensure_ascii=False),
                   faiss_only_recall_5, faiss_only_mrr,
                   bm25_only_recall_5, bm25_only_mrr,
                   hybrid_no_rerank_recall_5, hybrid_no_rerank_mrr,
@@ -1418,19 +1429,24 @@ class ConversationMemory:
         """获取检索模式对比的汇总统计"""
         with sqlite3.connect(self._db_path) as conn:
             rows = conn.execute(
-                """SELECT id, query, expected_source, profile,
+                """SELECT id, query, expected_source, profile, context_json,
                           faiss_only_recall_5, faiss_only_mrr,
                           bm25_only_recall_5, bm25_only_mrr,
                           hybrid_no_rerank_recall_5, hybrid_no_rerank_mrr,
                           hybrid_rerank_recall_5, hybrid_rerank_mrr, eval_at
                    FROM eval_comparison ORDER BY id DESC LIMIT ?""", (limit,)).fetchall()
-        cols = ["id", "query", "expected_source", "profile",
+        cols = ["id", "query", "expected_source", "profile", "context_json",
                 "faiss_only_recall_5", "faiss_only_mrr",
                 "bm25_only_recall_5", "bm25_only_mrr",
                 "hybrid_no_rerank_recall_5", "hybrid_no_rerank_mrr",
                 "hybrid_rerank_recall_5", "hybrid_rerank_mrr",
                 "eval_at"]
         items = [dict(zip(cols, r)) for r in rows]
+        for item in items:
+            try:
+                item["context"] = json.loads(item.pop("context_json") or "{}")
+            except (TypeError, ValueError):
+                item["context"] = {}
         for i in items:
             i["eval_at"] = self._utc_to_local(i.get("eval_at", ""))
         total = len(items)

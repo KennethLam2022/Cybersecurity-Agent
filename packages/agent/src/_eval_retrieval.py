@@ -7,6 +7,7 @@
 """
 from memory import ConversationMemory
 from retriever import CyberRetriever
+from trace_observability import build_runtime_context
 import sys
 import os
 import json
@@ -80,12 +81,14 @@ def get_test_set(profile: str = "general") -> list[dict]:
 
 def evaluate(profile: str = "general"):
     memory = ConversationMemory()
+    runtime_context = build_runtime_context(getattr(memory, "_db_path", None))
     retriever = CyberRetriever(use_hybrid=True)
     test_set = get_test_set(profile)
     evaluation_profile = _item_profile({"profile": profile})
 
     results_summary = {
         "evaluation_profile": evaluation_profile,
+        "context": runtime_context,
         "total": len(test_set), "pass": 0, "fail": 0, "items": []
     }
     all_recall_5, all_recall_10, all_mrr = [], [], []
@@ -134,6 +137,7 @@ def evaluate(profile: str = "general"):
                              "ids"]) if retriever._chroma_collection else 0,
             rerank_top1_match=top1_match_after_rerank,
             profile=evaluation_profile,
+            context=runtime_context,
         )
 
         results_summary["items"].append({
@@ -213,10 +217,12 @@ def evaluate_with_items(items: list, memory) -> dict:
     from retriever import CyberRetriever
 
     retriever = CyberRetriever(use_hybrid=True)
+    runtime_context = build_runtime_context(getattr(memory, "_db_path", None))
     profiles = sorted({_item_profile(item) for item in items})
     results_summary = {
         "evaluation_profile": profiles[0] if len(profiles) == 1 else "mixed",
         "profiles": profiles,
+        "context": runtime_context,
         "total": len(items), "pass": 0, "fail": 0, "items": []
     }
     all_recall_5, all_recall_10, all_mrr = [], [], []
@@ -258,6 +264,7 @@ def evaluate_with_items(items: list, memory) -> dict:
                              "ids"]) if retriever._chroma_collection else 0,
             rerank_top1_match=top1_match,
             profile=item_profile,
+            context=runtime_context,
         )
 
         status = "PASS" if recall_5 == 1 else "FAIL"
@@ -292,6 +299,7 @@ def evaluate_single_query(agent, query: str, expected: str, profile: str = "gene
     from datetime import datetime
     retriever = agent.retriever
     item_profile = _item_profile({"profile": profile})
+    runtime_context = build_runtime_context(getattr(agent.memory, "_db_path", None))
     docs = retriever.search(query, top_k=10, use_rerank=True, profiles={item_profile})
 
     recall_5, recall_10 = 0, 0
@@ -323,12 +331,14 @@ def evaluate_single_query(agent, query: str, expected: str, profile: str = "gene
         faiss_count=faiss_count, chroma_count=chroma_count,
         rerank_top1_match=top1_match,
         profile=item_profile,
+        context=runtime_context,
     )
 
     return {
         "query": query,
         "expected": expected,
         "profile": item_profile,
+        "context": runtime_context,
         "recall_5": recall_5,
         "recall_10": recall_10,
         "mrr": mrr,
@@ -398,6 +408,7 @@ def evaluate_with_items_compare(items: list, memory) -> dict:
 
     retriever_faiss = CyberRetriever(use_hybrid=False)
     retriever_hybrid = CyberRetriever(use_hybrid=True)
+    runtime_context = build_runtime_context(getattr(memory, "_db_path", None))
 
     all_results = {}
 
@@ -435,6 +446,7 @@ def evaluate_with_items_compare(items: list, memory) -> dict:
             hybrid_rerank_recall_5=all_results["hybrid_rerank"]["recall_5s"][i],
             hybrid_rerank_mrr=all_results["hybrid_rerank"]["mrrs"][i],
             profile=_item_profile(item),
+            context=runtime_context,
         )
 
     base_r5 = sum(all_results["faiss_only"]["recall_5s"]) / len(items)
@@ -451,6 +463,7 @@ def evaluate_with_items_compare(items: list, memory) -> dict:
         "count": len(items),
         "evaluation_profile": profiles[0] if len(profiles) == 1 else "mixed",
         "profiles": profiles,
+        "context": runtime_context,
         "faiss_only_recall_5": round(base_r5, 3),
         "faiss_only_mrr": round(base_mrr, 3),
         "bm25_only_recall_5": round(bm25_r5, 3),

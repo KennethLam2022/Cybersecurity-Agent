@@ -69,6 +69,20 @@ def _llm_summary(module_id: str) -> dict[str, str]:
     }
 
 
+def build_runtime_context(db_path: str | None = None) -> dict[str, Any]:
+    """Return the versioned runtime context shared by chat traces and evals."""
+    return {
+        "prompt_version": _active_prompt_version(db_path),
+        "taxonomy_version": _taxonomy_version(),
+        "llm": {
+            "chat": _llm_summary("chat"),
+            "reranker": _llm_summary("reranker"),
+            "embedding": _llm_summary("embedding"),
+        },
+        "knowledge_base": _knowledge_base_snapshot(),
+    }
+
+
 def build_trace_envelope(
     *,
     original_query: str,
@@ -90,16 +104,7 @@ def build_trace_envelope(
             "category": conversation_category,
             "path": path,
         },
-        "context": {
-            "prompt_version": _active_prompt_version(db_path),
-            "taxonomy_version": _taxonomy_version(),
-            "llm": {
-                "chat": _llm_summary("chat"),
-                "reranker": _llm_summary("reranker"),
-                "embedding": _llm_summary("embedding"),
-            },
-            "knowledge_base": _knowledge_base_snapshot(),
-        },
+        "context": build_runtime_context(db_path),
         "steps": [],
         "outcome": "started",
     }

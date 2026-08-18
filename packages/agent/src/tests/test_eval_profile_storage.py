@@ -27,11 +27,13 @@ def test_retrieval_eval_history_records_profile(tmp_path):
         query="通信专项", expected_source="核心网", recall_5=1, recall_10=1,
         mrr=1.0, faiss_count=1, chroma_count=1, rerank_top1_match=1,
         profile="industry/telecom",
+        context={"taxonomy_version": "test-taxonomy", "prompt_version": "test-prompt"},
     )
 
     data = memory.get_retrieval_eval()
 
     assert data["items"][0]["profile"] == "industry/telecom"
+    assert data["items"][0]["context"]["taxonomy_version"] == "test-taxonomy"
     assert data["summary"]["profile_counts"] == {"industry/telecom": 1}
 
 
@@ -45,11 +47,13 @@ def test_retrieval_compare_history_records_profile(tmp_path):
         hybrid_no_rerank_recall_5=1, hybrid_no_rerank_mrr=0.5,
         hybrid_rerank_recall_5=1, hybrid_rerank_mrr=1.0,
         profile="industry/telecom",
+        context={"taxonomy_version": "test-taxonomy"},
     )
 
     data = memory.get_eval_comparison()
 
     assert data["items"][0]["profile"] == "industry/telecom"
+    assert data["items"][0]["context"]["taxonomy_version"] == "test-taxonomy"
     assert data["summary"]["profile_counts"] == {"industry/telecom": 1}
 
 
