@@ -699,6 +699,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
           <div class="stat-card"><span class="num" id="e2eRL">--</span><span class="lbl">Relevancy</span></div>
           <div class="stat-card"><span class="num" id="e2eHC">--</span><span class="lbl">Hallucination</span></div>
         </div>
+        <div id="e2eProfileSummary" style="margin-top:10px;font-size:12px;color:var(--t2)"></div>
         <div class="chart-card" style="margin-top:12px">
           <div class="chart-title">综合质量各项指标</div>
           <div class="chart-box" id="chartE2eScores" style="height:220px"></div>
@@ -713,7 +714,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
           <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
             <table class="data-table" style="width:100%;font-size:11px;border-collapse:collapse">
               <thead><tr>
-                <th>ID</th><th>域</th><th>难度</th><th>查询</th>
+                <th>ID</th><th>Profile</th><th>域</th><th>难度</th><th>查询</th>
                 <th>CP</th><th>CR</th><th>FT</th><th>RL</th><th>HC</th>
                 <th>截断</th><th>来源</th>
               </tr></thead>
@@ -3464,6 +3465,13 @@ function renderE2eResults(results) {
   document.getElementById('e2eFT').textContent = (avgScores.faithfulness*100).toFixed(0)+'%';
   document.getElementById('e2eRL').textContent = (avgScores.relevancy*100).toFixed(0)+'%';
   document.getElementById('e2eHC').textContent = (avgScores.hallucination*100).toFixed(0)+'%';
+  const profileCounts = {};
+  results.forEach(r => {
+    const profile = r.profile || 'general';
+    profileCounts[profile] = (profileCounts[profile] || 0) + 1;
+  });
+  document.getElementById('e2eProfileSummary').textContent = 'Profile 分布：' + Object.entries(profileCounts)
+    .map(([profile, count]) => `${profileLabel(profile)} ${count}题`).join(' · ');
 
   // 评分柱状图
   makeChart('chartE2eScores', {
@@ -3510,7 +3518,7 @@ function renderE2eResults(results) {
     const scColor = v => v>=0.8?'#34c759':v>=0.5?'#ff9500':'#ff3b30';
     const fmt = v => `<span style="color:${scColor(parseFloat(v))};font-weight:600">${v}</span>`;
     return `<tr>
-      <td>${r.id||''}</td><td>${(r.domain||'').slice(0,6)}</td><td>${r.difficulty||''}</td>
+      <td>${r.id||''}</td><td>${escHtml(profileLabel(r.profile || 'general'))}</td><td>${(r.domain||'').slice(0,6)}</td><td>${r.difficulty||''}</td>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.query||''}">${(r.query||'').slice(0,30)}</td>
       <td>${s.context_precision?fmt(sc('context_precision')):'--'}</td>
       <td>${s.context_recall?fmt(sc('context_recall')):'--'}</td>

@@ -121,6 +121,33 @@ def test_e2e_evaluation_passes_question_profile_to_agent(tmp_path, monkeypatch):
     assert [item["profile"] for item in results] == ["general", "industry/finance"]
 
 
+def test_e2e_stats_and_html_report_keep_profile_breakdown(tmp_path):
+    results = [
+        {
+            "profile": "general", "scores": {key: {"score": 0.8} for key in (
+                "context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"
+            )},
+            "auto_status": "有来源(1条)", "sources": [], "truncation": {},
+            "id": "G01", "domain": "通用", "difficulty": "基础", "query": "通用题", "answer": "回答",
+        },
+        {
+            "profile": "industry/finance", "scores": {key: {"score": 0.6} for key in (
+                "context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"
+            )},
+            "auto_status": "有来源(1条)", "sources": [], "truncation": {},
+            "id": "F01", "domain": "金融安全", "difficulty": "中等", "query": "金融题", "answer": "回答",
+        },
+    ]
+
+    stats = eval_e2e._compute_stats(results)
+    output = tmp_path / "report.html"
+    eval_e2e.generate_html(results, output)
+
+    assert stats["profile_counts"] == {"general": 1, "industry/finance": 1}
+    assert stats["profile_stats"]["industry/finance"]["avg_scores"]["relevancy"] == 0.6
+    assert "industry/finance" in output.read_text(encoding="utf-8")
+
+
 def test_existing_eval_item_table_is_migrated_without_column_misalignment(tmp_path):
     db_path = tmp_path / "legacy.db"
     with sqlite3.connect(db_path) as conn:

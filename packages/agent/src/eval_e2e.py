@@ -340,6 +340,10 @@ def generate_html(results: list[dict], output_file: Path):
     has_src = sum(1 for r in results if r.get("sources"))
     errors = sum(1 for r in results if r.get("auto_status") == "运行错误")
     scorable = [r for r in results if r.get("scores")]
+    profile_counts = {}
+    for result in results:
+        profile = result.get("profile") or "general"
+        profile_counts[profile] = profile_counts.get(profile, 0) + 1
 
     # 计算平均分
     avg_scores = {}
@@ -387,6 +391,7 @@ def generate_html(results: list[dict], output_file: Path):
     for i, r in enumerate(results, 1):
         qid = html_lib.escape(str(r.get("id", "")))
         domain = html_lib.escape(str(r.get("domain", "")))
+        profile = html_lib.escape(str(r.get("profile") or "general"))
         diff = html_lib.escape(str(r.get("difficulty", "")))
         query = html_lib.escape(str(r.get("query", "")))
         answer = html_lib.escape((r.get("answer") or "")[:200])
@@ -411,6 +416,7 @@ def generate_html(results: list[dict], output_file: Path):
         rows_html += f"""
     <tr>
       <td style="font-size:12px;font-weight:600;color:#0071e3">{qid}</td>
+      <td style="font-size:11px;color:#6e6e73">{profile}</td>
       <td style="font-size:11px;color:#6e6e73">{domain[:8]}</td>
       <td><span class="diff-badge {diff_class}">{diff}</span></td>
       <td style="font-size:13px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{query}">{query}</td>
@@ -485,6 +491,7 @@ tr:hover{{background:#fafafa}}
     <div class="kpi"><span class="n" style="color:var(--a)">{len(scorable)}</span><span class="l">已评分</span></div>
     <div class="kpi"><span class="n" style="color:var(--y)">{c5_rate:.0f}%</span><span class="l">截断影响(C5)</span></div>
   </div>
+  <div class="legend">Profile 分布：{html_lib.escape(' · '.join(f'{name} {count}题' for name, count in profile_counts.items()))}</div>
 
   <!-- 域B + 域C 评分卡片 -->
   <div class="score-grid">
@@ -499,7 +506,7 @@ tr:hover{{background:#fafafa}}
   <table>
     <thead>
       <tr>
-        <th>#</th><th>领域</th><th>难度</th><th>问题</th><th>回答片段</th>
+        <th>#</th><th>Profile</th><th>领域</th><th>难度</th><th>问题</th><th>回答片段</th>
         <th title="Context Precision">B-CP</th>
         <th title="Context Recall">B-CR</th>
         <th title="Faithfulness">C-Faith</th>
@@ -626,6 +633,8 @@ def _save_version(results_json: Path, html_path: Path, version_tag: str, stats: 
         "total": stats.get("total"),
         "errors": stats.get("errors"),
         "avg_scores": stats.get("avg_scores", {}),
+        "profile_counts": stats.get("profile_counts", {}),
+        "profile_stats": stats.get("profile_stats", {}),
     })
     _VERSION_FILE.write_text(
         json.dumps(versions, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -641,12 +650,29 @@ def _compute_stats(results: list) -> dict:
     # C5 截断影响
     trunc_records = [r for r in scorable if r.get("truncation", {}).get("truncated_count", 0) > 0]
     c5_rate = len(trunc_records) / len(scorable) * 100 if scorable else 0
+    profile_counts = {}
+    profile_stats = {}
+    for result in results:
+        profile = result.get("profile") or "general"
+        profile_counts[profile] = profile_counts.get(profile, 0) + 1
+        stats = profile_stats.setdefault(profile, {"total": 0, "errors": 0, "avg_scores": {}})
+        stats["total"] += 1
+        if result.get("auto_status") == "运行错误":
+            stats["errors"] += 1
+
+    for profile, stats in profile_stats.items():
+        profile_results = [r for r in results if (r.get("profile") or "general") == profile and r.get("scores")]
+        for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
+            vals = [r["scores"][key]["score"] for r in profile_results if key in r.get("scores", {})]
+            stats["avg_scores"][key] = round(sum(vals) / len(vals), 4) if vals else 0
     return {
         "total": len(results),
         "errors": sum(1 for r in results if r.get("auto_status") == "运行错误"),
         "avg_scores": avg_scores,
         "c5_truncation_rate": round(c5_rate, 1),
         "c5_truncated_count": len(trunc_records),
+        "profile_counts": profile_counts,
+        "profile_stats": profile_stats,
     }
 
 
