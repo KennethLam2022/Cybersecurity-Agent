@@ -8,6 +8,26 @@ REQUIRED_METRICS = ("context_precision", "context_recall", "faithfulness", "rele
 DEFAULT_THRESHOLDS = {"faithfulness_min": 0.5, "hallucination_max": 0.5}
 
 
+def normalize_metric_result(value: Any, evaluator: str) -> dict[str, Any]:
+    """Normalize LLM and heuristic judge outputs for report/storage consumers."""
+    if not isinstance(value, dict):
+        value = {"score": value}
+    try:
+        score = max(0.0, min(1.0, float(value.get("score", 0))))
+    except (TypeError, ValueError):
+        score = 0.0
+    reason = value.get("reason") or value.get("explanation") or ""
+    details = value.get("details") if isinstance(value.get("details"), dict) else {}
+    method = value.get("evaluator") or details.get("method") or evaluator
+    return {
+        "score": round(score, 4),
+        "reason": str(reason),
+        "explanation": str(reason),
+        "evaluator": str(method),
+        "details": details,
+    }
+
+
 def _score(scores: dict[str, Any], name: str) -> float | None:
     value = scores.get(name)
     if isinstance(value, dict):

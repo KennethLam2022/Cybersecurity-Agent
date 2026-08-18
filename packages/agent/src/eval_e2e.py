@@ -21,7 +21,7 @@
 """
 from _eval_generation import eval_faithfulness, eval_relevancy, eval_hallucination
 from _eval_context import eval_context_precision, eval_context_recall
-from e2e_eval_contract import evaluate_e2e_gates, summarize_e2e_gates
+from e2e_eval_contract import evaluate_e2e_gates, normalize_metric_result, summarize_e2e_gates
 import os
 import sys
 import json
@@ -244,11 +244,11 @@ def run_evaluation(
                 "timestamp": datetime.now().isoformat(),
                 "elapsed": round(elapsed, 2),
                 "scores": {
-                    "context_precision": score_cp,
-                    "context_recall": score_cr,
-                    "faithfulness": score_ft,
-                    "relevancy": score_rl,
-                    "hallucination": score_hc,
+                    "context_precision": normalize_metric_result(score_cp, "context_precision_judge"),
+                    "context_recall": normalize_metric_result(score_cr, "context_recall_judge"),
+                    "faithfulness": normalize_metric_result(score_ft, "faithfulness_judge"),
+                    "relevancy": normalize_metric_result(score_rl, "relevancy_judge"),
+                    "hallucination": normalize_metric_result(score_hc, "hallucination_judge"),
                 },
                 "auto_status": f"有来源({len(retrieved_docs)}条)" if retrieved_docs else "无来源",
                 "truncation": result.get("stats", {}).get("truncation", {}),
