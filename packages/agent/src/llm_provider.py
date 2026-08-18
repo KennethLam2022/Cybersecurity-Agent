@@ -361,7 +361,7 @@ class LLMProvider:
     ) -> dict:
         """调用 LLM 生成回答（同步，非流式）
 
-        返回: {"content": str, "reasoning_content": str|None}
+        返回: {"content": str, "reasoning_content": str|None, "usage": dict}
 
         当 enable_thinking=True 时，模型会先输出推理过程（reasoning_content）
         再输出最终回答（content）。保持 system prompt 不变。
@@ -408,7 +408,12 @@ class LLMProvider:
                 resp_data = self._try_provider(payload, timeout)
                 content = resp_data["choices"][0]["message"].get("content", "").strip()
                 reasoning = resp_data["choices"][0]["message"].get("reasoning_content")
-                return {"content": content, "reasoning_content": reasoning}
+                return {
+                    "content": content,
+                    "reasoning_content": reasoning,
+                    "usage": resp_data.get("usage") or {},
+                    "model": resp_data.get("model") or self.model,
+                }
             except Exception as e:
                 last_exc = e
                 if attempt < self.max_retries and self._is_timeout_or_server_error(e):

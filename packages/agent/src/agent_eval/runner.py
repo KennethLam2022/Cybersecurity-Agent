@@ -171,6 +171,15 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
         values = [item[key] for item in judge_results if key in item]
         if values:
             judge_avg[key] = round(sum(values) / len(values), 4)
+    usage_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    model_counts = Counter()
+    for result in results:
+        runtime = result.get("metrics", {}).get("runtime") or {}
+        usage = runtime.get("usage") or {}
+        for key in usage_totals:
+            usage_totals[key] += int(usage.get(key) or 0)
+        if runtime.get("model"):
+            model_counts[runtime["model"]] += 1
     return {
         "total": total,
         "case_count": len(case_statuses),
@@ -183,6 +192,8 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
         "case_type_counts": dict(type_counts),
         "judge_count": len(judge_results),
         "judge_avg": judge_avg,
+        "usage_totals": usage_totals,
+        "model_counts": dict(model_counts),
     }
 
 
@@ -202,6 +213,11 @@ def run_agent_evaluation(agent: Any, cases: list[dict[str, Any]],
                     response, query = _run_case(agent, case)
                     elapsed_ms = round((time.perf_counter() - started) * 1000)
                     metrics = evaluate_case(case, response, elapsed_ms)
+                    runtime_stats = response.get("stats") or {}
+                    metrics["runtime"] = {
+                        "usage": runtime_stats.get("usage") or {},
+                        "model": runtime_stats.get("model") or "",
+                    }
                     result = {
                         "query": query,
                         "answer": response.get("answer") or "",

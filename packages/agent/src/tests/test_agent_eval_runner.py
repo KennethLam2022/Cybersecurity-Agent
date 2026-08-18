@@ -25,7 +25,7 @@ class FakeAgent:
                 {"step": "query_rewrite", "duration_s": 0.01},
                 {"step": "retrieval", "duration_s": 0.02},
                 {"step": "llm_generation", "duration_s": 0.03},
-            ]}},
+            ]}, "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}, "model": "test-model"},
         }
 
 
@@ -99,3 +99,5 @@ def test_runner_reports_repeatability_and_p95_latency(tmp_path):
     assert run["summary"]["case_count"] == 1
     assert run["summary"]["flaky_rate"] == 0
     assert run["summary"]["p95_latency_ms"] >= 0
+    assert run["summary"]["usage_totals"]["total_tokens"] == 30
+    assert run["summary"]["model_counts"] == {"test-model": 2}

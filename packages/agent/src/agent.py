@@ -1778,6 +1778,8 @@ class CyberAgent:
                 "total_time": round(rewrite_time + search_time + llm_time, 2),
                 "docs_count": len(docs),
                 "truncation": truncation_info,
+                "usage": llm_result.get("usage") or {},
+                "model": llm_result.get("model") or getattr(self.llm, "model", ""),
                 "trace": trace_data,
             },
         }
