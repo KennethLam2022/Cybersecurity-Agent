@@ -1447,14 +1447,20 @@ def retrieval_eval_report(limit: int = 60):
             (stats.get('faiss_vectors', '?'), "FAISS 向量"),
             (stats.get('chroma_chunks', '?'), "Chroma 向量"),
         ]
+        profile_counts = summary.get("profile_counts", {})
+        profile_summary = ", ".join(
+            f"{profile}: {count}" for profile, count in profile_counts.items()
+        ) or "general"
+        summary_cards.append((profile_summary, "评测 Profile 分布"))
 
-        headers = ["#", "查询", "期望来源", "R@5", "R@10", "MRR", "评估时间"]
+        headers = ["#", "查询", "期望来源", "Profile", "R@5", "R@10", "MRR", "评估时间"]
         rows = []
         for i, item in enumerate(items[:60], 1):
             r5 = "✓" if item.get("recall_5") else "✗"
             r10 = "✓" if item.get("recall_10") else "✗"
             rows.append([
                 i, item.get('query', ''), item.get('expected_source', ''),
+                item.get('profile', 'general'),
                 r5, r10, f"{item.get('mrr', 0):.3f}",
                 str(item.get('eval_at', ''))[:16]
             ])
@@ -1542,8 +1548,13 @@ def retrieval_eval_compare_report(limit: int = 60):
     rerank_gain_mrr = summary.get("rerank_gain_mrr", 0)
     summary_cards.append((f"{hybrid_gain_r5*100:+.0f}pp\n{hybrid_gain_mrr:+.3f}", "Hybrid 增益"))
     summary_cards.append((f"{rerank_gain_r5*100:+.0f}pp\n{rerank_gain_mrr:+.3f}", "Rerank 增益"))
+    profile_counts = summary.get("profile_counts", {})
+    profile_summary = ", ".join(
+        f"{profile}: {count}" for profile, count in profile_counts.items()
+    ) or "general"
+    summary_cards.append((profile_summary, "评测 Profile 分布"))
 
-    headers = ["#", "查询", "模式", "R@5", "MRR", "评估时间"]
+    headers = ["#", "查询", "Profile", "模式", "R@5", "MRR", "评估时间"]
     rows = []
     unfolded_modes = [
         ("FAISS-only",       "faiss_only_recall_5",       "faiss_only_mrr"),
@@ -1558,7 +1569,7 @@ def retrieval_eval_compare_report(limit: int = 60):
             r5_val = it.get(r5_key, 0)
             mrr_val = it.get(mrr_key, 0)
             rows.append([
-                idx, query, mode_label,
+                idx, query, it.get('profile', 'general'), mode_label,
                 f"{'✓' if r5_val else '✗'} ({r5_val})",
                 f"{mrr_val:.3f}",
                 ts,
