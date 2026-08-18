@@ -102,6 +102,11 @@ def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: in
     expected_points = expected.get("expected_points") or []
     point_aliases = expected.get("expected_point_aliases") or {}
     point_coverage, matched_points = _point_coverage(expected_points, answer, point_aliases)
+    memory_facts = expected.get("memory_facts") or []
+    memory_fact_aliases = expected.get("memory_fact_aliases") or {}
+    memory_fact_coverage, matched_memory_facts = _point_coverage(
+        memory_facts, answer, memory_fact_aliases
+    )
     min_point_coverage = float(expected.get("min_point_coverage", 1.0))
     expected_query_type = expected.get("expected_query_type") or ""
     checks = {
@@ -113,6 +118,9 @@ def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: in
         "answer_point_coverage": point_coverage,
         "matched_points": matched_points,
         "answer_points_pass": point_coverage >= min_point_coverage,
+        "memory_fact_coverage": memory_fact_coverage,
+        "matched_memory_facts": matched_memory_facts,
+        "memory_facts_pass": memory_fact_coverage >= float(expected.get("min_memory_fact_coverage", 1.0)),
     }
     if response.get("memory_check") is not None:
         checks["memory_pass"] = bool(response["memory_check"].get("conversation_id_stable"))
@@ -135,6 +143,8 @@ def evaluate_case(case: dict[str, Any], response: dict[str, Any], elapsed_ms: in
         required.append("answer_points_pass")
     if case.get("case_type") == "conversation":
         required.append("memory_pass")
+    if memory_facts:
+        required.append("memory_facts_pass")
     if expected_query_type:
         required.append("query_type_pass")
     if max_latency_ms is not None:

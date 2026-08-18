@@ -139,3 +139,21 @@ def test_runner_requires_ordered_trace_path_when_configured(tmp_path):
     metrics = run["results"][0]["metrics"]
     assert metrics["trajectory_order_pass"] is False
     assert metrics["task_success"] is False
+
+
+def test_runner_asserts_facts_from_prior_conversation_turns(tmp_path):
+    memory = ConversationMemory(str(tmp_path / "memory-facts.db"))
+    case = {
+        "case_key": "CONV-MEMORY-001", "profile": "general", "case_type": "conversation",
+        "query": {"turns": [
+            {"role": "user", "content": "先说明数据分类。"},
+            {"role": "user", "content": "现在继续说明分级。"},
+        ]},
+        "expected": {"memory_facts": ["分类对象"], "min_memory_fact_coverage": 1.0},
+    }
+    memory.upsert_agent_eval_case(case)
+    run = run_agent_evaluation(FakeAgent(memory), memory.get_agent_eval_cases())
+
+    metrics = run["results"][0]["metrics"]
+    assert metrics["memory_facts_pass"] is True
+    assert metrics["matched_memory_facts"] == ["分类对象"]
