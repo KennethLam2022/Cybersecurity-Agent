@@ -10,6 +10,7 @@ from typing import Any
 
 from agent_eval.trace_schema import normalize_trace, trace_step_names
 from trace_observability import build_runtime_context
+from profile_classifier import profile_version_snapshot
 
 
 def _query_text(case: dict[str, Any]) -> str:
@@ -275,21 +276,34 @@ def run_agent_evaluation(agent: Any, cases: list[dict[str, Any]],
     """Run cases, persist reproducible artifacts, and return a compact run result."""
     memory = agent.memory
     context = build_runtime_context(getattr(memory, "_db_path", None))
-    run_id = memory.create_agent_eval_run(profile=profile, context=context)
+    run_profile_snapshot = profile_version_snapshot(profile)
+    run_id = memory.create_agent_eval_run(
+        profile=profile,
+        context={**context, "profile_snapshot": run_profile_snapshot},
+    )
     persisted_results = []
     try:
         for repeat_index in range(max(1, min(int(repetitions), 5))):
             for case in cases:
                 started = time.perf_counter()
+                case_profile = case.get("profile") or "general"
+                case_profile_snapshot = profile_version_snapshot(case_profile)
+                persisted_case = {
+                    **case,
+                    "profile": case_profile,
+                    "profile_version": case_profile_snapshot["profile_version"],
+                    "profile_snapshot": case_profile_snapshot,
+                }
                 try:
-                    response, query = _run_case(agent, case)
+                    response, query = _run_case(agent, persisted_case)
                     elapsed_ms = round((time.perf_counter() - started) * 1000)
-                    metrics = evaluate_case(case, response, elapsed_ms)
+                    metrics = evaluate_case(persisted_case, response, elapsed_ms)
                     runtime_stats = response.get("stats") or {}
                     metrics["runtime"] = {
                         "usage": runtime_stats.get("usage") or {},
                         "model": runtime_stats.get("model") or "",
                     }
+                    metrics["profile_snapshot"] = case_profile_snapshot
                     result = {
                         "query": query,
                         "answer": response.get("answer") or "",
@@ -300,18 +314,24 @@ def run_agent_evaluation(agent: Any, cases: list[dict[str, Any]],
                         "repeat_index": repeat_index + 1,
                     }
                     if judge is not None:
-                        result["metrics"]["judge"] = judge_case(judge, case, response, result["trace"])
+                        result["metrics"]["judge"] = judge_case(judge, persisted_case, response, result["trace"])
                 except Exception as exc:
                     elapsed_ms = round((time.perf_counter() - started) * 1000)
                     result = {
                         "query": _query_text(case), "answer": "", "trace": normalize_trace(None),
-                        "metrics": {"task_success": False}, "status": "error",
+                    "metrics": {"task_success": False}, "status": "error",
                         "elapsed_ms": elapsed_ms, "error": str(exc), "repeat_index": repeat_index + 1,
                     }
-                memory.save_agent_eval_result(run_id, case, result)
-                persisted_results.append({**result, "profile": case.get("profile") or "general",
-                                          "case_key": case.get("case_key") or case.get("id") or "",
-                                          "case_type": case.get("case_type") or "answer_quality"})
+                    result["metrics"]["profile_snapshot"] = case_profile_snapshot
+                memory.save_agent_eval_result(run_id, persisted_case, result)
+                persisted_results.append({
+                    **result,
+                    "profile": case_profile,
+                    "profile_version": case_profile_snapshot["profile_version"],
+                    "profile_snapshot": case_profile_snapshot,
+                    "case_key": case.get("case_key") or case.get("id") or "",
+                    "case_type": case.get("case_type") or "answer_quality",
+                })
         summary = _summary(persisted_results)
         memory.complete_agent_eval_run(run_id, summary)
         run = {"run_id": run_id, "summary": summary, "results": persisted_results}

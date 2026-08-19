@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import hashlib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,42 @@ def load_profile_registry() -> dict[str, Any]:
 
 def available_profiles() -> list[dict[str, Any]]:
     return list(load_profile_registry().get("profiles", []))
+
+
+def profile_version_snapshot(profile: str = "") -> dict[str, str]:
+    """Return a reproducible registry snapshot for an evaluation profile.
+
+    The registry version identifies the configured catalog release.  The
+    definition hash additionally captures administrator-confirmed local
+    extensions, whose content can change without editing the bundled registry.
+    """
+    registry = load_profile_registry()
+    requested_profile = str(profile or "general").strip() or "general"
+    selected = next(
+        (item for item in registry.get("profiles", []) if item.get("profile") == requested_profile),
+        None,
+    )
+    registry_version = str(registry.get("version") or "unknown")
+    if selected is None:
+        return {
+            "profile": requested_profile,
+            "registry_version": registry_version,
+            "profile_version": "unknown",
+            "definition_hash": "",
+            "status": "unknown",
+        }
+
+    # Source paths are operational metadata, not part of the retrieval policy.
+    definition = {key: value for key, value in selected.items() if key != "source_paths"}
+    serialized = json.dumps(definition, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    definition_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+    return {
+        "profile": requested_profile,
+        "registry_version": registry_version,
+        "profile_version": f"{registry_version}:{definition_hash}",
+        "definition_hash": definition_hash,
+        "status": "known",
+    }
 
 
 def profile_options() -> list[dict[str, str]]:

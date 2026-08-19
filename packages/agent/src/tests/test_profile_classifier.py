@@ -3,6 +3,7 @@ from profile_classifier import (
     enabled_retrieval_profiles,
     profile_for_metadata,
     profile_options,
+    profile_version_snapshot,
     suggest_document_profile,
 )
 
@@ -62,3 +63,20 @@ def test_retrieval_profiles_default_to_general(monkeypatch):
 def test_retrieval_profiles_can_enable_industry_extensions(monkeypatch):
     monkeypatch.setenv("CYBER_AGENT_RETRIEVAL_PROFILES", "general,industry/telecom")
     assert enabled_retrieval_profiles() == {"general", "industry/telecom"}
+
+
+def test_profile_version_snapshot_tracks_registry_and_definition():
+    snapshot = profile_version_snapshot("industry/finance")
+
+    assert snapshot["profile"] == "industry/finance"
+    assert snapshot["registry_version"]
+    assert snapshot["profile_version"].startswith(snapshot["registry_version"] + ":")
+    assert len(snapshot["definition_hash"]) == 16
+    assert snapshot["status"] == "known"
+
+
+def test_unknown_profile_snapshot_is_explicitly_not_comparable():
+    snapshot = profile_version_snapshot("industry/retired")
+
+    assert snapshot["profile_version"] == "unknown"
+    assert snapshot["status"] == "unknown"

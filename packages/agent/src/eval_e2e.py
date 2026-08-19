@@ -44,6 +44,11 @@ logger = logging.getLogger(__name__)
 _SRC = Path(__file__).parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+_PREPROCESSOR_SRC = _SRC.parent.parent / "preprocessor" / "src"
+if str(_PREPROCESSOR_SRC) not in sys.path:
+    sys.path.insert(0, str(_PREPROCESSOR_SRC))
+
+from profile_classifier import profile_version_snapshot
 
 # ── 项目路径 ──
 _PROJECT_ROOT = _SRC.parent.parent.parent
@@ -205,6 +210,7 @@ def run_evaluation(
     results = []
     for i, q in enumerate(questions, 1):
         query = q["query"]
+        profile_snapshot = profile_version_snapshot(q.get("profile", "general"))
         logger.info(f"[{i}/{total}] [{q['domain'][:6]}] [{q['difficulty']}] {query[:50]}...")
         t0 = time.time()
 
@@ -235,6 +241,8 @@ def run_evaluation(
                 "id": q["id"],
                 "domain": q["domain"],
                 "profile": q.get("profile", "general"),
+                "profile_version": profile_snapshot["profile_version"],
+                "profile_snapshot": profile_snapshot,
                 "difficulty": q["difficulty"],
                 "query": query,
                 "style": q.get("style", "plain"),
@@ -271,6 +279,8 @@ def run_evaluation(
                 "id": q["id"],
                 "domain": q["domain"],
                 "profile": q.get("profile", "general"),
+                "profile_version": profile_snapshot["profile_version"],
+                "profile_snapshot": profile_snapshot,
                 "difficulty": q["difficulty"],
                 "query": query,
                 "style": q.get("style", "plain"),

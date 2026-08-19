@@ -119,6 +119,8 @@ def test_e2e_evaluation_passes_question_profile_to_agent(tmp_path, monkeypatch):
         ("金融题", {"industry/finance"}),
     ]
     assert [item["profile"] for item in results] == ["general", "industry/finance"]
+    assert all(item["profile_snapshot"]["status"] == "known" for item in results)
+    assert all(item["profile_version"].startswith("2026.08.phase2:") for item in results)
 
 
 def test_e2e_stats_and_html_report_keep_profile_breakdown(tmp_path):

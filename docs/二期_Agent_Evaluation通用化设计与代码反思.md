@@ -625,3 +625,22 @@ Langfuse 适合作为可选的观测、实验、评分趋势和人工复核协�
 8. 真实 baseline 可重复执行，结果可比较、可追溯、可导出；
 9. CI、后台手动评测和 Langfuse 的职责边界清晰；
 10. 发布门禁报告能够给出“通过”或“阻塞”的明确理由，而不是只展示一个平均分。
+
+### 13.8 P3 已落地：Profile 版本快照
+
+评测结果不能只记录 `profile` 名称。行业扩展包可以由后台人工确认后动态加入，
+因此同名 Profile 的关键词、分类别名和描述也可能发生变化。P3 为 Retrieval、E2E
+和 Agent Eval 增加统一的 `profile_snapshot`：
+
+- `registry_version`：内置 Profile 注册表版本；
+- `definition_hash`：当前 Profile 定义的稳定 SHA-256 指纹；
+- `profile_version`：`registry_version:definition_hash`，用于结果比较和报告展示；
+- `status`：`known` 或 `unknown`，防止历史数据被误判为可比。
+
+指纹不包含机器相关的 `source_paths`，避免同一套策略因部署目录不同而产生无意义差异。
+旧评测记录没有快照时保留原有 `profile`，读取或再次导出时标记为 `unknown`，不伪造
+历史版本。新运行会把快照写入运行上下文、逐例结果和报告数据；Agent Eval 同时把
+快照放入逐例指标，保证已有数据库结构也能读取。
+
+这一步完成后，P3 还剩人工校准集/Judge 一致性、成本与脱敏证据、Langfuse 可选协作、
+全量发布验收四项工作，不能以当前 smoke 通过替代真实模型和人工验收。

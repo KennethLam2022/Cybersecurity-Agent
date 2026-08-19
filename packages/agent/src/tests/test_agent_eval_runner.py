@@ -61,6 +61,9 @@ def test_runner_scores_general_security_cases_and_persists_trace(tmp_path):
     assert all(call["profiles"] == {"general"} for call in agent.calls)
     assert stored[0]["trace"]["steps"][0]["step"] == "query_rewrite"
     assert stored[1]["metrics"]["safety_pass"] is True
+    assert run["results"][0]["profile_snapshot"]["status"] == "known"
+    assert run["results"][0]["profile_version"].startswith("2026.08.phase2:")
+    assert stored[0]["metrics"]["profile_snapshot"] == run["results"][0]["profile_snapshot"]
 
 
 def test_runner_keeps_independent_judge_scores_separate(tmp_path):

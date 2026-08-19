@@ -19,6 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "preprocessor" / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from profile_classifier import profile_version_snapshot
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("eval_retrieval")
 
@@ -86,9 +88,12 @@ def evaluate(profile: str = "general"):
     retriever = CyberRetriever(use_hybrid=True)
     test_set = get_test_set(profile)
     evaluation_profile = _item_profile({"profile": profile})
+    profile_snapshot = profile_version_snapshot(evaluation_profile)
 
     results_summary = {
         "evaluation_profile": evaluation_profile,
+        "profile_version": profile_snapshot["profile_version"],
+        "profile_snapshot": profile_snapshot,
         "context": runtime_context,
         "total": len(test_set), "pass": 0, "fail": 0, "items": []
     }
@@ -141,13 +146,15 @@ def evaluate(profile: str = "general"):
                              "ids"]) if retriever._chroma_collection else 0,
             rerank_top1_match=top1_match_after_rerank,
             profile=evaluation_profile,
-            context=runtime_context,
+            context={**runtime_context, "profile_snapshot": profile_snapshot},
         )
 
         results_summary["items"].append({
             "query": query,
             "expected": expected,
             "profile": evaluation_profile,
+            "profile_version": profile_snapshot["profile_version"],
+            "profile_snapshot": profile_snapshot,
             "recall_5": recall_5,
             "recall_10": recall_10,
             "mrr": round(mrr, 3),
@@ -225,9 +232,12 @@ def evaluate_with_items(items: list, memory) -> dict:
     retriever = CyberRetriever(use_hybrid=True)
     runtime_context = build_runtime_context(getattr(memory, "_db_path", None))
     profiles = sorted({_item_profile(item) for item in items})
+    profile_snapshots = {profile: profile_version_snapshot(profile) for profile in profiles}
     results_summary = {
         "evaluation_profile": profiles[0] if len(profiles) == 1 else "mixed",
         "profiles": profiles,
+        "profile_versions": {profile: snapshot["profile_version"] for profile, snapshot in profile_snapshots.items()},
+        "profile_snapshots": profile_snapshots,
         "context": runtime_context,
         "total": len(items), "pass": 0, "fail": 0, "items": []
     }
@@ -237,6 +247,7 @@ def evaluate_with_items(items: list, memory) -> dict:
         query = item["query"]
         expected = item.get("expected", "")
         item_profile = _item_profile(item)
+        profile_snapshot = profile_snapshots[item_profile]
         docs = retriever.search(query, top_k=10, use_rerank=True, profiles={item_profile})
 
         recall_5, recall_10 = 0, 0
@@ -275,7 +286,7 @@ def evaluate_with_items(items: list, memory) -> dict:
                              "ids"]) if retriever._chroma_collection else 0,
             rerank_top1_match=top1_match,
             profile=item_profile,
-            context=runtime_context,
+            context={**runtime_context, "profile_snapshot": profile_snapshot},
         )
 
         status = "PASS" if recall_5 == 1 else "FAIL"
@@ -288,6 +299,8 @@ def evaluate_with_items(items: list, memory) -> dict:
             "query": query,
             "expected": expected,
             "profile": item_profile,
+            "profile_version": profile_snapshot["profile_version"],
+            "profile_snapshot": profile_snapshot,
             "recall_5": recall_5,
             "recall_10": recall_10,
             "mrr": round(mrr, 4),
@@ -310,6 +323,7 @@ def evaluate_single_query(agent, query: str, expected: str, profile: str = "gene
     from datetime import datetime
     retriever = agent.retriever
     item_profile = _item_profile({"profile": profile})
+    profile_snapshot = profile_version_snapshot(item_profile)
     runtime_context = build_runtime_context(getattr(agent.memory, "_db_path", None))
     docs = retriever.search(query, top_k=10, use_rerank=True, profiles={item_profile})
 
@@ -346,13 +360,15 @@ def evaluate_single_query(agent, query: str, expected: str, profile: str = "gene
         faiss_count=faiss_count, chroma_count=chroma_count,
         rerank_top1_match=top1_match,
         profile=item_profile,
-        context=runtime_context,
+        context={**runtime_context, "profile_snapshot": profile_snapshot},
     )
 
     return {
         "query": query,
         "expected": expected,
         "profile": item_profile,
+        "profile_version": profile_snapshot["profile_version"],
+        "profile_snapshot": profile_snapshot,
         "context": runtime_context,
         "recall_5": recall_5,
         "recall_10": recall_10,
