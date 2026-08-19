@@ -2,7 +2,6 @@
 
 包含全局实例（agent、event_bus）、配置管理、帮助函数、启动初始化。
 """
-from agent import CyberAgent
 from llm_config_manager import (
     _fernet, _CRYPTO_AVAILABLE,
     _load_llm_config, _save_llm_config,
@@ -97,7 +96,26 @@ _STATIC = _BASE / "static"
 _TEMPLATES = _BASE / "templates"
 jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATES)))
 
-agent = CyberAgent()
+class LazyCyberAgent:
+    """Defer heavy LangChain/vector dependencies until the first Agent use."""
+
+    def __init__(self):
+        self._instance = None
+        self._lock = threading.Lock()
+
+    def _get(self):
+        if self._instance is None:
+            with self._lock:
+                if self._instance is None:
+                    from agent import CyberAgent
+                    self._instance = CyberAgent()
+        return self._instance
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+
+agent = LazyCyberAgent()
 
 # ---- LLM 配置与密钥管理 ----
 _CONFIG_PATH = Path(__file__).parent.parent / "agent_data" / "llm_config.json"

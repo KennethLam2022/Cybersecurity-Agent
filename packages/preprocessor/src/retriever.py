@@ -161,8 +161,7 @@ class CyberRetriever:
         self._bm25_docs: Optional[list[dict]] = None
         self._use_hybrid = use_hybrid
         self.last_trace: dict = {}
-        # 启动时预加载 BM25 索引（避免首次检索慢）
-        self._build_bm25_index()
+        # BM25 在首次检索时按需构建，避免应用启动阶段读取并扫描全部父文档。
         # 用于匹配文档编号的正则，如 YD/T 2692-2014, GB/T 22239-2019
         self._doc_id_pattern = re.compile(r"([A-Z]+/[T]\s*\d+[-]?\d*)")
         # 否定句式关键词

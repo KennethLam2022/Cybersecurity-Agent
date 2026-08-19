@@ -22,13 +22,16 @@ async def lifespan(app: FastAPI):
     # ---- 启动初始化 ----
     logger.info("🚀 应用启动中...")
     import asyncio
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, _init_on_startup)
-    logger.info("✅ 应用启动完成")
+    startup_task = asyncio.create_task(asyncio.to_thread(_init_on_startup))
+    logger.info("✅ HTTP 服务已就绪，后台继续初始化 Agent/LLM/数据迁移")
 
     yield
 
     # ---- 关闭清理 ----
     logger.info("🛑 应用关闭中...")
+    if not startup_task.done():
+        await startup_task
+    else:
+        startup_task.result()
     _cleanup_staging()
     logger.info("✅ 应用关闭完成")

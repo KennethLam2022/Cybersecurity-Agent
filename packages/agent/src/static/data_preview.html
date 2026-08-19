@@ -475,7 +475,93 @@
 
 </div>
 
+<div class="admin-token-modal" id="documentTokenModal" style="display:none">
+  <div class="admin-token-backdrop"></div>
+  <div class="admin-token-card">
+    <h2>管理后台认证</h2>
+    <p>请输入管理员 Token 以加载文档 Profile 和存量数据。</p>
+    <input id="documentTokenInput" type="password" placeholder="X-Admin-Token">
+    <button id="documentTokenSave" type="button">确认</button>
+    <div id="documentTokenError" class="admin-token-error"></div>
+  </div>
+</div>
+
+<style>
+.admin-token-modal{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center}
+.admin-token-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
+.admin-token-card{position:relative;width:min(360px,90vw);padding:24px;background:#fff;border:1px solid var(--b);border-radius:10px;box-shadow:0 12px 36px rgba(0,0,0,.18)}
+.admin-token-card h2{font-size:18px;margin-bottom:8px}
+.admin-token-card p{font-size:13px;color:var(--t2);margin-bottom:14px}
+.admin-token-card input{width:100%;padding:9px 10px;border:1px solid var(--b2);border-radius:6px;font-size:13px}
+.admin-token-card button{margin-top:12px;padding:8px 18px;border:1px solid var(--a);border-radius:6px;background:#0071e312;color:var(--a);cursor:pointer}
+.admin-token-error{min-height:18px;margin-top:8px;color:var(--r);font-size:12px}
+</style>
+
 <script>
+  // 管理接口认证必须先于页面数据初始化安装，否则首次请求会被 403。
+  (function initAdminFetch() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('token');
+    if (urlToken && !localStorage.getItem('admin_token')) {
+      localStorage.setItem('admin_token', urlToken);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+
+    const originalFetch = window.fetch;
+    window.fetch = function(input, init) {
+      init = init || {};
+      const token = localStorage.getItem('admin_token') || '';
+      if (token) {
+        try {
+          if (init.headers instanceof Headers) {
+            init.headers.set('X-Admin-Token', token);
+          } else {
+            init.headers = init.headers || {};
+            init.headers['X-Admin-Token'] = token;
+          }
+        } catch (e) {
+          console.error('设置 X-Admin-Token 失败:', e);
+        }
+      }
+      return originalFetch(input, init).then(function(resp) {
+        if (resp.status === 403) {
+          localStorage.removeItem('admin_token');
+          showDocumentTokenModal('Token 无效或已过期');
+        }
+        return resp;
+      });
+    };
+  })();
+
+  function documentToken() {
+    return localStorage.getItem('admin_token') || '';
+  }
+
+  function showDocumentTokenModal(message) {
+    const modal = document.getElementById('documentTokenModal');
+    const error = document.getElementById('documentTokenError');
+    if (error) error.textContent = message || '';
+    if (modal) modal.style.display = 'flex';
+  }
+
+  function saveDocumentToken() {
+    const input = document.getElementById('documentTokenInput');
+    const token = (input.value || '').trim();
+    if (!token || /[^\x00-\x7F]/.test(token)) {
+      showDocumentTokenModal('Token 不能为空且只能包含 ASCII 字符');
+      return;
+    }
+    localStorage.setItem('admin_token', token);
+    document.getElementById('documentTokenModal').style.display = 'none';
+    window.location.reload();
+  }
+
+  document.getElementById('documentTokenSave').addEventListener('click', saveDocumentToken);
+  document.getElementById('documentTokenInput').addEventListener('keydown', event => {
+    if (event.key === 'Enter') saveDocumentToken();
+  });
+  if (!documentToken()) showDocumentTokenModal('');
+
   (function() {
     'use strict';
 
@@ -1479,6 +1565,7 @@
 
     // ─── Init ───────────────────────────────────────────────
     (async function initProfileRegistry() {
+      if (!documentToken()) return;
       try {
         const resp = await fetch('/api/documents/profile-registry');
         const data = await resp.json();
@@ -1486,7 +1573,8 @@
           profileRegistry = data.profiles;
         }
       } catch (e) {
-        profileRegistry = [];
+        statusText.textContent = 'Profile 注册表加载失败，请检查 Token 后重试';
+        return;
       }
       renderProfileTargetOptions();
       migrationTargetCategory.value = getProfileCategory(migrationTargetProfile.value);
@@ -1534,40 +1622,6 @@
     }, 15000);
   })();
 
-  // ─── Token 管理：自动注入 X-Admin-Token ───
-  (function initToken() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlToken = urlParams.get('token');
-    if (urlToken && !localStorage.getItem('admin_token')) {
-      localStorage.setItem('admin_token', urlToken);
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-  })();
-
-  const _origFetch = window.fetch;
-  window.fetch = function(input, init) {
-    init = init || {};
-    const token = localStorage.getItem('admin_token') || '';
-    if (token) {
-      try {
-        if (init.headers instanceof Headers) {
-          init.headers.set('X-Admin-Token', token);
-        } else {
-          init.headers = init.headers || {};
-          init.headers['X-Admin-Token'] = token;
-        }
-      } catch(e) {
-        console.error('设置 X-Admin-Token 失败:', e);
-      }
-    }
-    return _origFetch(input, init).then(function(resp) {
-      if (resp.status === 403) {
-        localStorage.removeItem('admin_token');
-        location.href = '/admin';
-      }
-      return resp;
-    });
-  };
 </script>
 </body>
 </html>
