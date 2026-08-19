@@ -7,6 +7,7 @@
     "build": "python -m compileall -q packages/agent/src packages/preprocessor/src",
     "test": "python scripts/run_tests.py",
     "smoke": "python scripts/eval_smoke.py",
+    "release:check": "python scripts/release_check.py",
     "lint": "python -m compileall -q packages/agent/src packages/preprocessor/src"
   },
   "engines": {
