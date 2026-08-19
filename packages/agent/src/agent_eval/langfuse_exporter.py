@@ -9,6 +9,8 @@ import hashlib
 import os
 from typing import Any
 
+from agent_eval.evaluation_evidence import redact_evidence, redact_text
+
 
 def _enabled(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -27,7 +29,7 @@ class LangfuseExporter:
     def _safe_text(self, value: Any) -> Any:
         text = str(value or "")
         if self.export_content:
-            return text[:4000]
+            return redact_text(text)
         return {"sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "length": len(text)}
 
     def export_run(self, run: dict[str, Any]) -> bool:
@@ -61,8 +63,9 @@ class LangfuseExporter:
                         observation.update(
                             output={
                                 "answer": self._safe_text(result.get("answer", "")),
-                                "trace": result.get("trace") or {},
+                                "trace": redact_evidence(result.get("trace") or {}),
                                 "elapsed_ms": result.get("elapsed_ms", 0),
+                                "cost_estimate": (metrics.get("runtime") or {}).get("cost_estimate") or {},
                             }
                         )
                         for name, value in metrics.items():

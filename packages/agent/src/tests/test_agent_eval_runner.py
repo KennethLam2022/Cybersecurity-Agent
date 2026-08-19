@@ -104,6 +104,7 @@ def test_runner_reports_repeatability_and_p95_latency(tmp_path):
     assert run["summary"]["p95_latency_ms"] >= 0
     assert run["summary"]["usage_totals"]["total_tokens"] == 30
     assert run["summary"]["model_counts"] == {"test-model": 2}
+    assert run["summary"]["cost_estimate"]["unpriced_call_count"] == 2
 
 
 def test_runner_reports_configurable_point_coverage_and_memory(tmp_path):

@@ -11,6 +11,7 @@ from typing import Any
 from agent_eval.trace_schema import normalize_trace, trace_step_names
 from trace_observability import build_runtime_context
 from profile_classifier import profile_version_snapshot
+from agent_eval.evaluation_evidence import estimate_usage_cost, load_model_pricing
 
 
 def _query_text(case: dict[str, Any]) -> str:
@@ -242,6 +243,9 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
                       if "memory_pass" in result.get("metrics", {})]
     usage_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     model_counts = Counter()
+    cost_total = 0.0
+    priced_calls = 0
+    unpriced_calls = 0
     for result in results:
         runtime = result.get("metrics", {}).get("runtime") or {}
         usage = runtime.get("usage") or {}
@@ -249,6 +253,12 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
             usage_totals[key] += int(usage.get(key) or 0)
         if runtime.get("model"):
             model_counts[runtime["model"]] += 1
+        cost = runtime.get("cost_estimate") or {}
+        if cost.get("estimated_cost_usd") is None:
+            unpriced_calls += 1
+        else:
+            cost_total += float(cost["estimated_cost_usd"])
+            priced_calls += 1
     return {
         "total": total,
         "case_count": len(case_statuses),
@@ -267,6 +277,13 @@ def _summary(results: list[dict[str, Any]]) -> dict[str, Any]:
         "memory_pass_rate": round(sum(memory_results) / len(memory_results), 4) if memory_results else None,
         "usage_totals": usage_totals,
         "model_counts": dict(model_counts),
+        "cost_estimate": {
+            "currency": "USD",
+            "estimated_cost_usd": round(cost_total, 8) if priced_calls else None,
+            "priced_call_count": priced_calls,
+            "unpriced_call_count": unpriced_calls,
+            "pricing_source": "CYBER_AGENT_EVAL_MODEL_PRICING",
+        },
     }
 
 
@@ -276,6 +293,7 @@ def run_agent_evaluation(agent: Any, cases: list[dict[str, Any]],
     """Run cases, persist reproducible artifacts, and return a compact run result."""
     memory = agent.memory
     context = build_runtime_context(getattr(memory, "_db_path", None))
+    pricing = load_model_pricing()
     run_profile_snapshot = profile_version_snapshot(profile)
     run_id = memory.create_agent_eval_run(
         profile=profile,
@@ -302,6 +320,9 @@ def run_agent_evaluation(agent: Any, cases: list[dict[str, Any]],
                     metrics["runtime"] = {
                         "usage": runtime_stats.get("usage") or {},
                         "model": runtime_stats.get("model") or "",
+                        "cost_estimate": estimate_usage_cost(
+                            runtime_stats.get("usage") or {}, runtime_stats.get("model") or "", pricing,
+                        ),
                     }
                     metrics["profile_snapshot"] = case_profile_snapshot
                     result = {

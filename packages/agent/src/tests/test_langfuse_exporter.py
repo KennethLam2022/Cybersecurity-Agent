@@ -55,3 +55,12 @@ def test_langfuse_exporter_disabled_without_flag(monkeypatch):
     monkeypatch.delenv("LANGFUSE_ENABLED", raising=False)
     exporter = build_langfuse_exporter()
     assert exporter.enabled is False
+
+
+def test_langfuse_content_export_is_redacted():
+    client = FakeClient()
+    exporter = LangfuseExporter(client=client, export_content=True)
+
+    assert exporter._safe_text("mail a@example.com token Bearer abcdefghijk") == (
+        "mail [REDACTED_EMAIL] token Bearer [REDACTED_TOKEN]"
+    )

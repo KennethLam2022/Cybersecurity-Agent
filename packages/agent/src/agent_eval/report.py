@@ -5,6 +5,8 @@ import html
 import json
 from typing import Any
 
+from agent_eval.evaluation_evidence import redact_text
+
 
 def render_agent_eval_report(run: dict[str, Any], results: list[dict[str, Any]], comparison: dict[str, Any] | None = None) -> str:
     summary = run.get("summary") or {}
@@ -17,7 +19,7 @@ def render_agent_eval_report(run: dict[str, Any], results: list[dict[str, Any]],
         rows.append(
             "<tr>"
             f"<td>{html.escape(str(item.get('case_key', '')))}</td>"
-            f"<td>{html.escape(str(item.get('query', ''))[:120])}</td>"
+            f"<td>{html.escape(redact_text(item.get('query', ''), 120))}</td>"
             f"<td>{html.escape(status)}</td>"
             f"<td>{html.escape('、'.join(failed) or '-')}</td>"
             f"<td>{int(item.get('elapsed_ms') or 0)}ms</td>"
