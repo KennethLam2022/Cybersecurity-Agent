@@ -434,9 +434,8 @@ Langfuse 适合作为可选的观测、实验、评分趋势和人工复核协�
 - 可选、脱敏、失败即忽略的 Langfuse Exporter；
 - `agent-core` 独立构建技术债已修复，根构建和独立构建均通过。
 
-二期验收结果：Python 测试入口已统一为 `pnpm test`，当前结果为 `129 passed, 1 warning`；
-根目录 `pnpm smoke`、`pnpm build` 和 `@cybersec/agent-core` 独立构建均通过。现有 warning
-来自第三方 `jieba` 使用弃用的 `pkg_resources`，不属于本项目本次改动。
+二期验收结果：Python 测试入口已统一为 `pnpm test`，当前结果为 `131 passed`；根目录
+`pnpm smoke`、`pnpm build` 和 `@cybersec/agent-core` 独立构建均通过。
 
 ### 13.2 评测代码反思结论
 
@@ -695,16 +694,25 @@ P3 的代码开发与本地确定性验收已完成：四类评测的行为契�
 
 本地验收命令及结果：
 
-1. `pnpm test`：`129 passed, 1 warning`；
+1. `pnpm test`：`131 passed`；
 2. `pnpm smoke`：`24 passed`；
 3. `pnpm build`：通过；
 4. `pnpm --filter @cybersec/agent-core build`：通过。
 
-唯一测试 warning 为第三方 `jieba` 的 `pkg_resources` 弃用提示，未影响测试结果。P3 不能用
-本地模拟验证替代的运营验收仍需管理员在发布环境执行：配置真实模型费率后建立并审批真实
+P3 不能用本地模拟验证替代的运营验收仍需管理员在发布环境执行：配置真实模型费率后建立并审批真实
 baseline；抽样完成人工复核以校准 Judge；如需使用 Langfuse，再由管理员配置凭证、确认允许
 传输的数据范围并验证 Dataset/Annotation Queue 工作流。这些是上线运行确认，不是尚未完成的
 本地代码项。
+
+### 13.13 P3 已处理：jieba `pkg_resources` 弃用兼容
+
+当前 jieba 版本只为读取自身内置词典而导入已弃用的 `pkg_resources`，导致测试启动时产生
+DeprecationWarning。项目新增窄范围 `jieba_compat` 适配器：在首次导入 jieba 时使用其已有
+的文件系统资源回退路径，不修改机器全局 `site-packages`，也不隐藏其他依赖产生的 warning。
+
+BM25 检索与热点词统计均改为通过该适配器取得 jieba；新增测试验证中文分词仍可用，以及新
+Python 进程首次导入不会出现 `pkg_resources` warning。最终 `pnpm test` 结果为 `131 passed`，
+无 warning。`jieba>=0.42.1` 也已写入预处理包依赖声明，保证部署环境显式安装该依赖。
 
 ## 14. P3 完成后的产品需求记录（待设计，不代表已实现）
 

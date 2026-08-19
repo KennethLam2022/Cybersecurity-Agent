@@ -1242,7 +1242,8 @@ class ConversationMemory:
                 conn,
             )
         hotspot_words = {}
-        import jieba
+        from jieba_compat import load_jieba
+        jieba = load_jieba()
         stop_words = {"的", "了", "是", "在", "有", "和", "就", "不", "也", "都", "要", "吗", "呢", "吧", "啊",
                       "什么", "怎么", "如何", "哪些", "哪个", "一个", "这个", "那个", "对", "为", "可以", "能",
                       "我", "你", "他", "它", "她", "我们", "你们", "他们", "与", "及", "或", "等", "之"}

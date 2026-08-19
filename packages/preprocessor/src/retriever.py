@@ -24,8 +24,8 @@ from chromadb.config import Settings
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings
 
-import jieba
 from rank_bm25 import BM25Okapi
+from jieba_compat import load_jieba
 
 from memory import get_llm_config_card
 from metadata_filter import (
@@ -39,6 +39,8 @@ from metadata_filter import (
 )
 from security_taxonomy import infer_categories_from_text
 from profile_classifier import available_profiles, enabled_retrieval_profiles, profile_for_metadata
+
+jieba = load_jieba()
 
 logger = logging.getLogger(__name__)
 

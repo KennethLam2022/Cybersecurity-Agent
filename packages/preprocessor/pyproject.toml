@@ -10,6 +10,7 @@ dependencies = [
     "pypdfium2>=4.30.0",
     "rapidocr>=3.8.0",
     "openai>=1.0.0",
+    "jieba>=0.42.1",
 ]
 
 [tool.setuptools.packages.find]
