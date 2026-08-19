@@ -434,7 +434,9 @@ Langfuse 适合作为可选的观测、实验、评分趋势和人工复核协�
 - 可选、脱敏、失败即忽略的 Langfuse Exporter；
 - `agent-core` 独立构建技术债已修复，根构建和独立构建均通过。
 
-二期验收结果：Python 测试 `99 passed, 1 warning`，根目录 `pnpm build` 通过，`@cybersec/agent-core` 独立构建通过。现有 warning 来自第三方 `jieba` 使用弃用的 `pkg_resources`，不属于本项目本次改动。
+二期验收结果：Python 测试入口已统一为 `pnpm test`，当前结果为 `129 passed, 1 warning`；
+根目录 `pnpm smoke`、`pnpm build` 和 `@cybersec/agent-core` 独立构建均通过。现有 warning
+来自第三方 `jieba` 使用弃用的 `pkg_resources`，不属于本项目本次改动。
 
 ### 13.2 评测代码反思结论
 
@@ -683,6 +685,26 @@ Langfuse 保持为可选的单向观测协作端，本地 SQLite、deterministic
 管理员在 Langfuse 中筛选和入队。当前实现不假设某个 SDK 版本存在自动入队接口，也不把
 远端队列状态当成本地发布前置条件。Langfuse 未启用、SDK 不支持 Dataset API 或远端调用
 失败时，接口返回明确错误，但本地用例、结果、复核与发布门禁继续可用。
+
+### 13.12 P3 开发验收结论（2026-08-19）
+
+P3 的代码开发与本地确定性验收已完成：四类评测的行为契约和发布门禁、Profile 版本快照、
+人工复核/Judge 校准、成本估算、脱敏证据、可选 Langfuse Dataset/Trace 协作，以及 CI smoke
+均已接入。根目录 `pnpm test` 也已修复为跨平台 Python 测试入口，不再依赖调用者手工设置
+`PYTHONPATH`。
+
+本地验收命令及结果：
+
+1. `pnpm test`：`129 passed, 1 warning`；
+2. `pnpm smoke`：`24 passed`；
+3. `pnpm build`：通过；
+4. `pnpm --filter @cybersec/agent-core build`：通过。
+
+唯一测试 warning 为第三方 `jieba` 的 `pkg_resources` 弃用提示，未影响测试结果。P3 不能用
+本地模拟验证替代的运营验收仍需管理员在发布环境执行：配置真实模型费率后建立并审批真实
+baseline；抽样完成人工复核以校准 Judge；如需使用 Langfuse，再由管理员配置凭证、确认允许
+传输的数据范围并验证 Dataset/Annotation Queue 工作流。这些是上线运行确认，不是尚未完成的
+本地代码项。
 
 ## 14. P3 完成后的产品需求记录（待设计，不代表已实现）
 
