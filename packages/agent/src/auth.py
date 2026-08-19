@@ -79,6 +79,9 @@ PUBLIC_ROUTES = {
     "/api/conversations",
     "/api/chat/stream",
     "/api/rating",
+    # Profile registry only exposes taxonomy metadata; document content and
+    # all write/migration endpoints remain protected by /api/documents/.
+    "/api/documents/profile-registry",
     "/api/llm/config/current",
     "/admin/model-config",
     "/api/admin/stream",
@@ -89,6 +92,9 @@ PUBLIC_PREFIXES = {"/api/conversations/", "/static/"}
 
 def is_admin_route(path: str) -> bool:
     """判断是否为管理路由（需要 X-Admin-Token）"""
+    if path in PUBLIC_ROUTES:
+        return False
+
     for prefix in _ADMIN_PREFIXES:
         if path.startswith(prefix):
             return True
@@ -108,8 +114,6 @@ def is_admin_route(path: str) -> bool:
                 if path.startswith(base + "/") and "/" not in path[len(base) + 1:]:
                     return True
 
-    if path in PUBLIC_ROUTES:
-        return False
     for prefix in PUBLIC_PREFIXES:
         if path.startswith(prefix):
             return False
