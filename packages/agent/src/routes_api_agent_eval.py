@@ -125,6 +125,60 @@ def get_agent_eval_run_results(run_id: str):
     return {"run_id": run_id, "items": agent.memory.get_agent_eval_results(run_id)}
 
 
+@router.get("/api/agent-eval/runs/{run_id}/reviews")
+def get_agent_eval_human_reviews(run_id: str):
+    return {"run_id": run_id, "items": agent.memory.get_eval_human_reviews("agent", run_id)}
+
+
+@router.post("/api/agent-eval/runs/{run_id}/reviews")
+def upsert_agent_eval_human_review(run_id: str, data: dict | None = None):
+    payload = data or {}
+    result_key = str(payload.get("result_key") or "").strip()
+    if not result_key:
+        return JSONResponse({"error": "result_key 不能为空"}, status_code=400)
+    results = agent.memory.get_agent_eval_results(run_id)
+    if not any(str(item.get("id")) == result_key for item in results):
+        return JSONResponse({"error": "评测结果不存在"}, status_code=404)
+    try:
+        review_id = agent.memory.upsert_eval_human_review(
+            "agent", run_id, result_key, payload.get("scores") or {},
+            reviewer=payload.get("reviewer") or "", note=payload.get("note") or "",
+        )
+        return {"ok": True, "id": review_id}
+    except (TypeError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+@router.get("/api/agent-eval/runs/{run_id}/calibration")
+def get_agent_eval_judge_calibration(run_id: str, agreement_tolerance: float = 0.2):
+    from agent_eval.judge_calibration import build_judge_calibration_report
+
+    reviews = {
+        review["result_key"]: review
+        for review in agent.memory.get_eval_human_reviews("agent", run_id)
+    }
+    items = []
+    for result in agent.memory.get_agent_eval_results(run_id):
+        review = reviews.get(str(result.get("id")))
+        if not review:
+            continue
+        items.append({
+            "result_key": result.get("id"),
+            "case_key": result.get("case_key"),
+            "judge_scores": (result.get("metrics") or {}).get("judge") or {},
+            "human_scores": review.get("scores") or {},
+            "reviewer": review.get("reviewer") or "",
+            "note": review.get("note") or "",
+        })
+    return {
+        "run_id": run_id,
+        "review_count": len(reviews),
+        "calibration": build_judge_calibration_report(
+            items, agreement_tolerance=agreement_tolerance,
+        ),
+    }
+
+
 @router.post("/api/agent-eval/runs/{run_id}/gate")
 def evaluate_agent_eval_release_gate(run_id: str, data: dict | None = None):
     from agent_eval.release_gate import evaluate_release_gate

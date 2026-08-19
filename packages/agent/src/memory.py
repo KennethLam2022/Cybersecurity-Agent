@@ -401,6 +401,20 @@ class ConversationMemory:
                 );
                 CREATE INDEX IF NOT EXISTS idx_agent_eval_results_run
                     ON agent_eval_results(run_id, id);
+                CREATE TABLE IF NOT EXISTS eval_human_reviews (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    evaluation_type TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    result_key TEXT NOT NULL,
+                    reviewer TEXT DEFAULT '',
+                    scores_json TEXT NOT NULL DEFAULT '{}',
+                    note TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(evaluation_type, run_id, result_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_eval_human_reviews_run
+                    ON eval_human_reviews(evaluation_type, run_id, result_key);
             """)
 
     def create_conversation(self, title: str = "新对话", category: str = "user") -> dict:
@@ -1843,5 +1857,53 @@ class ConversationMemory:
                 except (TypeError, ValueError):
                     item[field.removesuffix("_json")] = [] if field == "risk_tags_json" else {}
             item["created_at"] = self._utc_to_local(item.get("created_at", ""))
+            items.append(item)
+        return items
+
+    # ====== Human calibration reviews ======
+
+    def upsert_eval_human_review(self, evaluation_type: str, run_id: str, result_key: str,
+                                 scores: dict, reviewer: str = "", note: str = "") -> int:
+        """Save an independent human review for a single evaluation result."""
+        if not all(str(value or "").strip() for value in (evaluation_type, run_id, result_key)):
+            raise ValueError("evaluation_type、run_id 和 result_key 不能为空")
+        if not isinstance(scores, dict):
+            raise ValueError("scores 必须是对象")
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute("""
+                INSERT INTO eval_human_reviews
+                    (evaluation_type, run_id, result_key, reviewer, scores_json, note)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(evaluation_type, run_id, result_key) DO UPDATE SET
+                    reviewer=excluded.reviewer, scores_json=excluded.scores_json,
+                    note=excluded.note, updated_at=CURRENT_TIMESTAMP
+            """, (
+                str(evaluation_type).strip(), str(run_id).strip(), str(result_key).strip(),
+                str(reviewer or "").strip(), json.dumps(scores, ensure_ascii=False), str(note or "").strip(),
+            ))
+            row = conn.execute("""
+                SELECT id FROM eval_human_reviews
+                WHERE evaluation_type=? AND run_id=? AND result_key=?
+            """, (str(evaluation_type).strip(), str(run_id).strip(), str(result_key).strip())).fetchone()
+        return int(row[0])
+
+    def get_eval_human_reviews(self, evaluation_type: str, run_id: str) -> list[dict]:
+        with sqlite3.connect(self._db_path) as conn:
+            rows = conn.execute("""
+                SELECT id, evaluation_type, run_id, result_key, reviewer, scores_json, note, created_at, updated_at
+                FROM eval_human_reviews WHERE evaluation_type=? AND run_id=? ORDER BY id ASC
+            """, (evaluation_type, run_id)).fetchall()
+        items = []
+        for row in rows:
+            item = dict(zip((
+                "id", "evaluation_type", "run_id", "result_key", "reviewer", "scores_json", "note",
+                "created_at", "updated_at",
+            ), row))
+            try:
+                item["scores"] = json.loads(item.pop("scores_json") or "{}")
+            except (TypeError, ValueError):
+                item["scores"] = {}
+            item["created_at"] = self._utc_to_local(item.get("created_at", ""))
+            item["updated_at"] = self._utc_to_local(item.get("updated_at", ""))
             items.append(item)
         return items
