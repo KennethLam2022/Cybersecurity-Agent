@@ -60,6 +60,22 @@ def seed_agent_eval_cases():
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+@router.post("/api/agent-eval/langfuse/dataset-sync")
+def sync_agent_eval_cases_to_langfuse(data: dict | None = None):
+    """Optional one-way copy of local cases to a Langfuse Dataset."""
+    from agent_eval.langfuse_exporter import build_langfuse_exporter
+
+    payload = data or {}
+    profile = payload.get("profile") or "general"
+    dataset_name = str(payload.get("dataset_name") or f"cyber-agent-eval-{profile.replace('/', '-')}").strip()
+    exporter = build_langfuse_exporter()
+    result = exporter.export_cases_to_dataset(
+        agent.memory.get_agent_eval_cases(profile=profile), dataset_name,
+    )
+    status_code = 200 if result.get("ok") else 503
+    return JSONResponse({"profile": profile, **result}, status_code=status_code)
+
+
 @router.post("/api/agent-eval/preflight")
 def agent_eval_preflight(data: dict | None = None):
     from agent_eval.preflight import build_preflight

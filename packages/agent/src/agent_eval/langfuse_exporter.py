@@ -32,6 +32,40 @@ class LangfuseExporter:
             return redact_text(text)
         return {"sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "length": len(text)}
 
+    def export_cases_to_dataset(self, cases: list[dict[str, Any]], dataset_name: str) -> dict[str, Any]:
+        """Best-effort Dataset projection; SQLite remains the canonical test set."""
+        if not self.client:
+            return {"ok": False, "exported": 0, "error": self.last_error or "Langfuse 未启用"}
+        if not hasattr(self.client, "create_dataset_item"):
+            return {"ok": False, "exported": 0, "error": "当前 Langfuse SDK 不支持 Dataset API"}
+        exported = 0
+        try:
+            for case in cases:
+                query = case.get("query") or {}
+                self.client.create_dataset_item(
+                    dataset_name=dataset_name,
+                    input=redact_evidence(query),
+                    expected_output=redact_evidence(case.get("expected") or {}),
+                    metadata={
+                        "local_case_id": case.get("id"),
+                        "case_key": case.get("case_key") or "",
+                        "profile": case.get("profile") or "general",
+                        "profile_version": case.get("profile_version") or "unknown",
+                        "case_type": case.get("case_type") or "answer_quality",
+                        "domain": case.get("domain") or "",
+                    },
+                )
+                exported += 1
+            self.client.flush()
+            return {"ok": True, "exported": exported, "dataset_name": dataset_name}
+        except Exception as exc:
+            self.last_error = str(exc)
+            try:
+                self.client.flush()
+            except Exception:
+                pass
+            return {"ok": False, "exported": exported, "error": self.last_error}
+
     def export_run(self, run: dict[str, Any]) -> bool:
         if not self.client:
             return False
@@ -44,6 +78,8 @@ class LangfuseExporter:
                 metadata={
                     "profile_counts": summary.get("profile_counts", {}),
                     "case_type_counts": summary.get("case_type_counts", {}),
+                    "annotation_queue_candidate": bool(os.environ.get("LANGFUSE_ANNOTATION_QUEUE")),
+                    "annotation_queue": os.environ.get("LANGFUSE_ANNOTATION_QUEUE", ""),
                 },
             ) as root:
                 for result in run.get("results", []):
@@ -53,6 +89,10 @@ class LangfuseExporter:
                         "profile": result.get("profile") or "general",
                         "case_type": result.get("case_type") or "answer_quality",
                         "status": result.get("status", ""),
+                        "annotation_queue_candidate": bool(
+                            os.environ.get("LANGFUSE_ANNOTATION_QUEUE")
+                        ),
+                        "annotation_queue": os.environ.get("LANGFUSE_ANNOTATION_QUEUE", ""),
                     }
                     with root.start_as_current_observation(
                         as_type="span",

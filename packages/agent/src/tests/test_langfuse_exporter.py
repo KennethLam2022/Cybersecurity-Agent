@@ -34,6 +34,15 @@ class FakeClient:
         self.flushed = True
 
 
+class FakeDatasetClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.items = []
+
+    def create_dataset_item(self, **kwargs):
+        self.items.append(kwargs)
+
+
 def test_langfuse_exporter_is_fail_open_and_redacts_content():
     client = FakeClient()
     exporter = LangfuseExporter(client=client)
@@ -64,3 +73,18 @@ def test_langfuse_content_export_is_redacted():
     assert exporter._safe_text("mail a@example.com token Bearer abcdefghijk") == (
         "mail [REDACTED_EMAIL] token Bearer [REDACTED_TOKEN]"
     )
+
+
+def test_langfuse_dataset_sync_is_best_effort_and_redacted():
+    client = FakeDatasetClient()
+    result = LangfuseExporter(client=client, export_content=True).export_cases_to_dataset([
+        {
+            "id": 1, "case_key": "GEN-1", "profile": "general", "case_type": "safety",
+            "query": {"text": "联系 a@example.com"},
+            "expected": {"forbidden": ["Bearer abcdefghijk"]},
+        }
+    ], "cyber-agent-eval-general")
+
+    assert result == {"ok": True, "exported": 1, "dataset_name": "cyber-agent-eval-general"}
+    assert client.items[0]["input"]["text"] == "联系 [REDACTED_EMAIL]"
+    assert client.items[0]["expected_output"]["forbidden"] == ["Bearer [REDACTED_TOKEN]"]
