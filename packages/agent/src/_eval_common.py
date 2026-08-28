@@ -34,16 +34,16 @@ def compute_avg_stats(results: list) -> dict:
     return avg
 
 
-def score_single_question(query: str, retrieved_docs: list, answer: str, eval_llm) -> dict:
+def score_single_question(query: str, retrieved_docs: list, answer: str, eval_llm, usage_sink=None) -> dict:
     """单题评分管道：调用 5 个 LLM 评分函数"""
     from _eval_context import eval_context_precision, eval_context_recall
     from _eval_generation import eval_faithfulness, eval_relevancy, eval_hallucination
 
-    ctx_precision = eval_context_precision(query, retrieved_docs, answer, llm=eval_llm)
-    ctx_recall = eval_context_recall(query, retrieved_docs, answer, llm=eval_llm)
-    faithfulness = eval_faithfulness(query, retrieved_docs, answer, llm=eval_llm)
-    relevancy = eval_relevancy(query, answer, retrieved_docs, llm=eval_llm)
-    hallucination = eval_hallucination(query, retrieved_docs, answer, llm=eval_llm)
+    ctx_precision = eval_context_precision(query, retrieved_docs, answer, llm=eval_llm, usage_sink=usage_sink)
+    ctx_recall = eval_context_recall(query, retrieved_docs, answer, llm=eval_llm, usage_sink=usage_sink)
+    faithfulness = eval_faithfulness(query, retrieved_docs, answer, llm=eval_llm, usage_sink=usage_sink)
+    relevancy = eval_relevancy(query, answer, retrieved_docs, llm=eval_llm, usage_sink=usage_sink)
+    hallucination = eval_hallucination(query, retrieved_docs, answer, llm=eval_llm, usage_sink=usage_sink)
 
     return {
         "context_precision": ctx_precision.get("score", 0),

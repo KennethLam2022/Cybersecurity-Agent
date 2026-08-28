@@ -1,10 +1,12 @@
-# Cybersecurity Agent
+# 安枢 SecureNexus
 
-> 面向用户自有网络安全法规、国家标准、行业标准及其他专业文档的 RAG 智能问答系统
+> 连接安全知识，驱动可信行动。
+
+安枢 SecureNexus 是面向用户自有网络安全法规、国家标准、行业标准及其他专业文档的 RAG 智能问答系统。
 
 **当前版本：v1.0.0**
 
-Cybersecurity Agent 是一个本地优先的网络安全知识库问答系统。项目将用户自行导入的网络安全法律法规、等保国标、关键信息基础设施安全要求、行业标准和组织内部安全管理资料整理为可检索知识库，通过混合检索、重排和大模型生成，为用户提供带依据的专业问答、资料查询和知识库管理能力。
+安枢 SecureNexus 是一个本地优先的网络安全知识库问答系统。项目将用户自行导入的网络安全法律法规、等保国标、关键信息基础设施安全要求、行业标准和组织内部安全管理资料整理为可检索知识库，通过混合检索、重排和大模型生成，为用户提供带依据的专业问答、资料查询和知识库管理能力。
 
 > 系统适合用于资料查询、条款定位、制度理解、方案起草和内部知识辅助，不替代正式法律意见、监管认定、审计结论或渗透测试授权判断。对于知识库没有覆盖、检索依据不足或问题超出边界的场景，系统应明确说明无法确认，而不是编造结论。
 
@@ -18,7 +20,7 @@ Cybersecurity Agent 是一个本地优先的网络安全知识库问答系统。
 - **模型配置管理**：后台可管理聊天、兜底、打分、Prompt 评测、Embedding、Reranker 等模型配置。
 - **Prompt 版本与测试**：内置 Prompt 版本管理、测试用例、失败分析和修复流程，支持持续改进 Agent 行为。
 - **评测与看板**：提供检索质量评测、端到端问答评测、评分卡和 ECharts 管理后台，用于观察系统质量变化。
-- **基础安全控制**：管理路由支持 `X-Admin-Token` 校验，LLM API 地址包含 SSRF 白名单校验，模型密钥在具备加密条件时使用 Fernet 保护。
+- **基础安全控制**：管理路由使用独立登录会话与 RBAC 权限校验，LLM API 地址包含 SSRF 白名单校验，模型密钥在具备加密条件时使用 Fernet 保护。
 
 ## 使用流程
 
@@ -186,7 +188,7 @@ pip install -e .
 
 - 知识库原文、清洗结果和向量索引默认保存在本地目录中。
 - 会话、模型配置、评测记录等运行数据保存在本地 SQLite 或 `agent_data` 相关文件中。
-- 管理后台接口通过 `X-Admin-Token` 做基础访问控制。
+- 管理后台接口通过独立登录会话和 RBAC 做访问控制；生产环境应关闭本地默认工作区兼容模式。
 - LLM API 地址会经过白名单校验，降低 SSRF 风险。
 - 模型密钥、数据库、向量索引和业务资料如果包含内部信息，不应提交到公开仓库。
 - 本项目代码采用 `AGPL-3.0-or-later`（GNU Affero General Public License version 3 或更高版本）。
@@ -199,7 +201,7 @@ Cybersecurity-Agent/
 ├── packages/
 │   ├── agent/              FastAPI 服务、聊天界面、后台页面、评测接口
 │   ├── preprocessor/       文档解析、清洗、去重、切片、索引构建与检索
-│   ├── agent-core/         早期 TypeScript 方案归档，不参与当前发布构建
+│   ├── agent-core/         TypeScript Agent Core 兼容模块，纳入发布类型构建
 │   └── shared/             早期 TypeScript 共享类型归档
 ├── scripts/                辅助脚本
 ├── agent_data/             本地运行数据
@@ -217,10 +219,19 @@ Cybersecurity-Agent/
 .\start-agent.bat
 
 # 运行 Python 测试
-python -m pytest packages\agent\src\tests
+python scripts\run_tests.py current
+
+# 根目录默认发布口径（与 pytest.ini 一致）
+python scripts\run_tests.py root
+
+# 历史实验，仅在明确排查旧链路时运行
+python scripts\run_tests.py legacy
 
 # 发布前构建校验（当前发布产物为 Python/FastAPI 服务）
 pnpm build
+
+# P5 发布门禁：自动检查、HTTP 隔离和人工审批状态
+pnpm release:p5
 
 # 检查 FAISS / Chroma 状态
 python packages\preprocessor\src\check_faiss.py

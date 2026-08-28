@@ -33,6 +33,9 @@ class FakeClient:
     def flush(self):
         self.flushed = True
 
+    def auth_check(self):
+        return True
+
 
 class FakeDatasetClient(FakeClient):
     def __init__(self):
@@ -73,6 +76,22 @@ def test_langfuse_content_export_is_redacted():
     assert exporter._safe_text("mail a@example.com token Bearer abcdefghijk") == (
         "mail [REDACTED_EMAIL] token Bearer [REDACTED_TOKEN]"
     )
+
+
+def test_langfuse_connection_check_uses_sdk_auth_check():
+    assert LangfuseExporter(client=FakeClient()).verify_connection() == {
+        "ok": True, "message": "已验证 Langfuse 网络连接与项目凭证"
+    }
+
+
+def test_langfuse_connection_check_reports_remote_failure():
+    class BrokenClient(FakeClient):
+        def auth_check(self):
+            raise RuntimeError("invalid credentials")
+
+    result = LangfuseExporter(client=BrokenClient()).verify_connection()
+    assert result["ok"] is False
+    assert "invalid credentials" in result["error"]
 
 
 def test_langfuse_dataset_sync_is_best_effort_and_redacted():

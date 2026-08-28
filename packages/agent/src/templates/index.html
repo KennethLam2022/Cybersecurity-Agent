@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>网络安全智能Agent</title>
+    <title>安枢 SecureNexus</title>
     <link rel="stylesheet" href="/static/style.css">
     <style>
+        .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
         .source-score{font-size:10px;color:var(--t2);text-align:right;flex-shrink:0}
         .rating-bar{display:flex;align-items:center;gap:4px;padding:8px 0 4px;border-top:1px solid var(--b);margin-top:8px}
         .rating-star{cursor:pointer;width:22px;height:22px;transition:transform .15s,filter .15s;flex-shrink:0}
@@ -13,6 +14,10 @@
         .rating-star.active{filter:drop-shadow(0 0 3px rgba(255,170,0,.5))}
         .rating-label{font-size:11px;color:var(--t2);margin-left:6px;white-space:nowrap}
         .rating-locked{font-size:11px;color:var(--g);margin-left:6px;font-weight:500}
+        .feedback-actions{display:flex;gap:5px;margin-top:8px;padding-top:6px;border-top:1px solid var(--b);justify-content:flex-end}
+        .feedback-actions button{border:0;background:transparent;color:var(--t2);font-size:11px;padding:2px 5px;cursor:pointer}
+        .feedback-actions button:hover{color:var(--a)}
+        .feedback-actions button:disabled{opacity:.5;cursor:wait}
         .warning-banner{background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:8px 14px;font-size:12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;color:#664d03}
         .warning-banner .close{cursor:pointer;font-size:16px;opacity:.6;border:none;background:none;color:#664d03;padding:0 4px}
         .warning-banner .close:hover{opacity:1}
@@ -27,6 +32,16 @@
         .rename-input{border:1px solid var(--a);border-radius:4px;padding:2px 6px;font-size:13px;font-family:var(--f);outline:none;width:100%;background:#fff}
         .last-badge{font-size:9px;background:var(--a);color:#fff;padding:1px 5px;border-radius:6px;font-weight:600;flex-shrink:0}
         .top-last{border-bottom:2px solid var(--a)!important;background:#f0f7ff}
+        .account-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;padding-top:9px;border-top:1px solid var(--b)}
+        .account-label{font-size:11px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .account-btn{background:transparent;border:1px solid var(--b);border-radius:5px;color:var(--t2);font:500 11px var(--f);padding:4px 8px;cursor:pointer;flex-shrink:0}
+        .account-btn:hover{border-color:var(--a);color:var(--a)}
+        .account-modal{position:fixed;inset:0;background:rgba(17,24,39,.35);display:flex;align-items:center;justify-content:center;padding:16px;z-index:30}
+        .account-card{width:min(400px,100%);background:#fff;border:1px solid var(--b);border-radius:8px;padding:20px;box-shadow:0 16px 40px rgba(0,0,0,.18)}
+        .account-card h2{font-size:16px;margin:0 0 5px}.account-card p{font-size:12px;color:var(--t2);margin:0 0 16px;line-height:1.5}
+        .account-card label{display:block;font-size:12px;color:var(--t2);margin:10px 0 5px}.account-card input{width:100%;border:1px solid var(--b);border-radius:6px;padding:9px;font:13px var(--f);outline:none}.account-card input:focus{border-color:var(--a)}
+        .account-actions{display:flex;gap:8px;align-items:center;margin-top:18px}.account-actions .primary{background:var(--a);color:#fff;border:0;border-radius:6px;padding:8px 13px;font:600 12px var(--f);cursor:pointer}.account-actions .secondary{background:#fff;color:var(--t2);border:1px solid var(--b);border-radius:6px;padding:8px 13px;font:500 12px var(--f);cursor:pointer}.account-login-error{min-height:16px;color:var(--r);font-size:11px;line-height:1.45;margin-top:5px}.account-status{font-size:11px;color:var(--r);min-height:16px;margin-top:10px}
+        .notification-btn{position:relative;width:28px;height:28px;border:1px solid var(--b);border-radius:5px;background:#fff;color:var(--t2);cursor:pointer;font-size:15px;line-height:1}.notification-btn:hover{border-color:var(--a);color:var(--a)}.notification-badge{position:absolute;right:-5px;top:-5px;min-width:15px;height:15px;border-radius:8px;background:var(--r);color:#fff;font-size:9px;line-height:15px;text-align:center;font-weight:600}.notification-popover{position:fixed;z-index:35;left:14px;top:96px;width:min(360px,calc(100vw - 28px));max-height:min(480px,calc(100vh - 120px));overflow:auto;background:#fff;border:1px solid var(--b);border-radius:8px;box-shadow:0 14px 36px rgba(0,0,0,.18);padding:12px}.notification-popover-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:9px;border-bottom:1px solid var(--b);font-size:12px;font-weight:600}.notification-item{padding:10px 0;border-bottom:1px solid var(--b);cursor:pointer}.notification-item:last-child{border-bottom:0}.notification-item.unread .notification-title{font-weight:700}.notification-title{font-size:12px}.notification-body{font-size:11px;color:var(--t2);line-height:1.45;margin-top:3px}.notification-meta{font-size:10px;color:var(--t2);margin-top:5px;display:flex;gap:7px}.notification-severity{font-weight:600}
     </style>
 </head>
 <body>
@@ -37,8 +52,13 @@
     <!-- 侧边栏 -->
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <h1>网络安全助手</h1>
-            <p>网络安全知识库</p>
+            <h1>安枢 <span style="font-size:12px;font-weight:500;color:var(--t2)">SecureNexus</span></h1>
+            <p>连接安全知识，驱动可信行动。</p>
+            <div class="account-bar"><span class="account-label" id="accountLabel">本地默认工作区</span><select id="workspaceSelect" aria-label="当前工作区" onchange="switchWorkspace(this.value)" style="display:none;max-width:120px;border:1px solid var(--b);border-radius:5px;padding:4px;background:#fff;color:var(--t2);font:11px var(--f)"></select><select id="agentSelect" aria-label="当前 Agent" onchange="switchAgent(this.value)" style="display:none;max-width:120px;border:1px solid var(--b);border-radius:5px;padding:4px;background:#fff;color:var(--t2);font:11px var(--f)"></select><select id="languageSelect" aria-label="语言" onchange="changeLanguage(this.value)" style="max-width:76px;border:1px solid var(--b);border-radius:5px;padding:4px;background:#fff;color:var(--t2);font:11px var(--f)"><option value="zh-CN">中文</option><option value="en-US">English</option></select><button class="notification-btn" id="notificationButton" onclick="toggleNotificationPanel()" title="通知" aria-label="通知" style="display:none">🔔<span class="notification-badge" id="notificationBadge" style="display:none">0</span></button><button class="account-btn" id="accountButton" onclick="openAccountModal()">账户</button></div>
+        </div>
+        <div class="notification-popover" id="notificationPopover" style="display:none">
+        <div class="notification-popover-head"><span id="notificationTitle">通知</span><button class="account-btn" id="markAllReadButton" onclick="markAllNotificationsRead()">全部已读</button></div>
+          <div id="notificationItems" style="padding-top:2px"></div>
         </div>
         <button class="new-chat-btn" onclick="newConversation()">+ 新对话</button>
         <div class="conv-list" id="convList"></div>
@@ -48,7 +68,7 @@
     <main class="chat-area">
         <div class="chat-header">
             <div style="display:flex;align-items:center;gap:10px;min-width:0">
-                <button class="menu-toggle" id="menuToggle" onclick="toggleSidebar()">☰</button>
+                <button class="menu-toggle" id="menuToggle" aria-label="打开或关闭对话列表" title="打开或关闭对话列表" onclick="toggleSidebar()">☰</button>
                 <div class="chat-header-title" id="chatTitle" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">新对话</div>
             </div>
             <div class="chat-header-status">
@@ -65,21 +85,97 @@
                 <button class="close" onclick="dismissWarning()">&times;</button>
             </div>
             <div class="chat-input-row">
+                <label for="chatInput" class="sr-only">输入网络安全问题</label>
                 <textarea class="chat-input" id="chatInput"
                           placeholder="输入你的问题，例如：等保三级对安全计算环境有什么要求？"
                           rows="1" maxlength="2000"></textarea>
-                <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
+                <button class="send-btn" id="sendBtn" aria-label="发送问题" onclick="sendMessage()">发送</button>
             </div>
         </div>
     </main>
 </div>
 
+<div class="account-modal" id="accountModal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="accountTitle">
+  <div class="account-card">
+    <h2 id="accountTitle">登录安枢</h2>
+    <p id="accountDescription">登录后，对话将保存到你的独立工作区。</p>
+    <label for="accountName" id="accountNameLabel">显示名称（注册时填写）</label>
+    <input id="accountName" maxlength="80" autocomplete="name" placeholder="例如：张三">
+    <label for="accountEmail" id="accountEmailLabel">邮箱</label>
+    <input id="accountEmail" type="email" autocomplete="email" placeholder="name@example.com">
+    <label for="accountPassword" id="accountPasswordLabel">密码</label>
+    <input id="accountPassword" type="password" autocomplete="current-password" placeholder="至少 10 位">
+    <div class="account-login-error" id="accountLoginError" role="alert" aria-live="polite"></div>
+    <div class="account-status" id="accountStatus"></div>
+    <div id="ssoSection" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--b)">
+      <div style="font-size:12px;color:var(--t2);margin-bottom:8px" id="ssoTitle">企业账号登录</div>
+      <div id="ssoProviderButtons" style="display:flex;flex-direction:column;gap:7px"></div>
+      <div id="ssoLdapForm" style="display:none;margin-top:8px">
+        <label for="ssoLdapUsername" id="ssoLdapUsernameLabel">LDAP 用户名</label>
+        <input id="ssoLdapUsername" autocomplete="username" placeholder="sAMAccountName / UPN">
+        <label for="ssoLdapPassword" id="ssoLdapPasswordLabel">LDAP 密码</label>
+        <input id="ssoLdapPassword" type="password" autocomplete="current-password" placeholder="密码">
+        <button class="secondary" style="margin-top:8px" id="ldapLoginButton" onclick="submitLdapSso()">使用 LDAP 登录</button>
+      </div>
+    </div>
+    <div id="memorySettings" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid var(--b)"><label style="display:flex;align-items:center;gap:7px;margin:0" id="memoryEnabledLabel"><input type="checkbox" id="memoryEnabled" onchange="setMemoryEnabled(this.checked)"> 启用跨会话长期记忆</label><div style="margin-top:8px"><button class="secondary" id="manageMemoriesButton" onclick="loadMyMemories()">管理我的记忆</button><button class="secondary" id="myUsageButton" onclick="loadMyUsage()">我的用量</button><button class="secondary" id="myGenerationsButton" onclick="loadMyGenerations()">我的生成物</button><button class="secondary" id="changePasswordButton" onclick="changeMyPassword()">修改密码</button><button class="secondary" id="exportDataButton" onclick="exportMyData()">导出数据</button><button class="secondary" id="logoutButton" onclick="logoutAccount()">退出登录</button></div><button class="secondary" style="margin-top:8px;color:var(--r)" id="deletionButton" onclick="requestAccountDeletion()">申请注销账号</button><div id="memoryList" style="display:none;margin-top:10px;max-height:180px;overflow:auto"></div><div id="usageList" style="display:none;margin-top:10px"></div><div id="generationList" style="display:none;margin-top:10px;max-height:220px;overflow:auto"></div></div>
+    <div class="account-actions"><button class="primary" id="accountSubmit" onclick="submitAccount('login')">登录</button><button class="secondary" id="registerButton" onclick="location.href='/register?next=/chat'">注册工作区</button><button class="secondary" id="cancelAccountButton" onclick="closeAccountModal()">取消</button></div>
+  </div>
+</div>
+
 <script>
+document.addEventListener('keydown', function(event) {
+    if (event.key !== 'Escape') return;
+    const modal = document.getElementById('accountModal');
+    if (modal && modal.style.display !== 'none') closeAccountModal();
+    const popover = document.getElementById('notificationPopover');
+    if (popover && popover.style.display !== 'none') toggleNotificationPanel();
+});
 let currentConvId = null;
 let isLoading = false;
 let _lastWarningMsg = '';  // 上次的 Ollama 告警消息
 let _ratingTimers = {};
 let _ratedMessages = {};
+let currentMemoryItems = [];
+let responseLanguage = localStorage.getItem('securenexus_language') || 'zh-CN';
+const UI_TRANSLATIONS = {
+    'zh-CN': {
+        account: '账户', notification: '通知', markAllRead: '全部已读', accountTitle: '登录安枢', accountDescription: '登录后，对话将保存到你的独立工作区。', name: '显示名称（注册时填写）', email: '邮箱', password: '密码', enterprise: '企业账号登录', ldapUser: 'LDAP 用户名', ldapPassword: 'LDAP 密码', ldapLogin: '使用 LDAP 登录', memory: '启用跨会话长期记忆', memories: '管理我的记忆', usage: '我的用量', generations: '我的生成物', changePassword: '修改密码', exportData: '导出数据', logout: '退出登录', deleteAccount: '申请注销账号', login: '登录', register: '注册工作区', cancel: '取消', send: '发送', newChat: '+ 新对话', ready: '就绪', localWorkspace: '本地默认工作区', loginStatus: '登录中...', registering: '创建工作区中...', ldapStatus: 'LDAP 登录中...', invalidFields: '请填写邮箱和密码。', invalidLdap: '请填写 LDAP 用户名和密码。'
+    },
+    'en-US': {
+        account: 'Account', notification: 'Notifications', markAllRead: 'Mark all read', accountTitle: 'Sign in to SecureNexus', accountDescription: 'Sign in to save conversations in your private workspace.', name: 'Display name (for registration)', email: 'Email', password: 'Password', enterprise: 'Enterprise account', ldapUser: 'LDAP username', ldapPassword: 'LDAP password', ldapLogin: 'Sign in with LDAP', memory: 'Enable cross-session memory', memories: 'Manage my memories', usage: 'My usage', generations: 'My generated files', changePassword: 'Change password', exportData: 'Export my data', logout: 'Sign out', deleteAccount: 'Request account deletion', login: 'Sign in', register: 'Register workspace', cancel: 'Cancel', send: 'Send', newChat: '+ New chat', ready: 'Ready', localWorkspace: 'Local default workspace', loginStatus: 'Signing in...', registering: 'Creating workspace...', ldapStatus: 'Signing in with LDAP...', invalidFields: 'Enter an email and password.', invalidLdap: 'Enter an LDAP username and password.'
+    }
+};
+function uiText(key) { return (UI_TRANSLATIONS[responseLanguage] || UI_TRANSLATIONS['zh-CN'])[key] || key; }
+function applyUiLanguage() {
+    const ids = {accountButton:'account', notificationTitle:'notification', markAllReadButton:'markAllRead', accountTitle:'accountTitle', accountDescription:'accountDescription', accountNameLabel:'name', accountEmailLabel:'email', accountPasswordLabel:'password', ssoTitle:'enterprise', ssoLdapUsernameLabel:'ldapUser', ssoLdapPasswordLabel:'ldapPassword', ldapLoginButton:'ldapLogin', memoryEnabledLabel:'memory', manageMemoriesButton:'memories', myUsageButton:'usage', myGenerationsButton:'generations', changePasswordButton:'changePassword', exportDataButton:'exportData', logoutButton:'logout', deletionButton:'deleteAccount', accountSubmit:'login', registerButton:'register', cancelAccountButton:'cancel', sendBtn:'send'};
+    Object.entries(ids).forEach(([id, key]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (id === 'memoryEnabledLabel') {
+            const input = el.querySelector('input');
+            el.textContent = '';
+            if (input) el.appendChild(input);
+            el.appendChild(document.createTextNode(' ' + uiText(key)));
+        } else {
+            el.textContent = uiText(key);
+        }
+    });
+    const newChat = document.querySelector('.new-chat-btn'); if (newChat) newChat.textContent = uiText('newChat');
+    const status = document.getElementById('statusText'); if (status) status.textContent = uiText('ready');
+    const label = document.getElementById('accountLabel'); if (label && (!label.textContent || label.textContent === '本地默认工作区' || label.textContent === 'Local default workspace')) label.textContent = uiText('localWorkspace');
+}
+const nativeFetch = window.fetch.bind(window);
+function browserCsrfToken() { const match = document.cookie.match(/(?:^|; )securenexus_csrf=([^;]+)/); return match ? decodeURIComponent(match[1]) : ''; }
+window.fetch = (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (!url || (!url.startsWith('/') && !url.startsWith(window.location.origin))) return nativeFetch(input, init);
+    const headers = new Headers(init.headers || (typeof input === 'object' ? input.headers : undefined) || {});
+    const method = String(init.method || (typeof input === 'object' && input.method) || 'GET').toUpperCase();
+    const csrf = browserCsrfToken();
+    if (csrf && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) headers.set('X-CSRF-Token', csrf);
+    return nativeFetch(input, {...init, headers, credentials: 'same-origin'});
+};
 
 // ===== 侧边栏切换（移动端） =====
 function toggleSidebar() {
@@ -89,10 +185,437 @@ function toggleSidebar() {
 
 // ===== 初始加载 =====
 async function init() {
+    applyUiLanguage();
+    const authenticated = await refreshAccount();
+    if (!authenticated) {
+        location.replace('/login?next=/chat');
+        return;
+    }
     await loadConversations();
     if (currentConvId) {
         await loadMessages(currentConvId);
     }
+}
+
+async function refreshAccount() {
+    let response;
+    let data;
+    try {
+        response = await fetch('/api/auth/me');
+        if (!response.ok) return false;
+        data = await response.json();
+    } catch (_) {
+        return false;
+    }
+    // Only the authentication response can decide whether the session is valid.
+    // Optional UI/account widgets must not turn a valid session into a login redirect.
+    if (!data.authenticated) {
+        document.getElementById('accountLabel').textContent = '本地默认工作区';
+        document.getElementById('agentSelect').style.display = 'none';
+        document.getElementById('workspaceSelect').style.display = 'none';
+        document.getElementById('notificationButton').style.display = 'none';
+        document.getElementById('notificationPopover').style.display = 'none';
+        return false;
+    }
+    try {
+        const label = document.getElementById('accountLabel');
+        const workspaceSelect = document.getElementById('workspaceSelect');
+        const agentSelect = document.getElementById('agentSelect');
+        responseLanguage = data.language || responseLanguage;
+        document.getElementById('languageSelect').value = responseLanguage;
+        label.textContent = data.display_name || data.email || '已登录工作区';
+        const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
+        workspaceSelect.innerHTML = workspaces.map(workspace => `<option value="${escHtml(workspace.id)}" ${workspace.id === data.tenant_id ? 'selected' : ''}>${escHtml(workspace.name)}</option>`).join('');
+        workspaceSelect.style.display = workspaces.length > 1 ? '' : 'none';
+        const agents = Array.isArray(data.agents) ? data.agents : [];
+        agentSelect.innerHTML = agents.map(agent => `<option value="${escHtml(agent.id)}" ${agent.id === data.agent_id ? 'selected' : ''}>${escHtml(agent.name)}</option>`).join('');
+        agentSelect.style.display = agents.length > 1 ? '' : 'none';
+        document.getElementById('memorySettings').style.display = '';
+        const memoryResp = await fetch('/api/memories');
+        if (memoryResp.ok) {
+            const memoryData = await memoryResp.json();
+            document.getElementById('memoryEnabled').checked = !!memoryData.enabled;
+        }
+        document.getElementById('notificationButton').style.display = '';
+        await refreshNotificationBadge();
+    } catch (error) {
+        console.warn('账户界面初始化部分失败，保持当前登录状态', error);
+    }
+    return true;
+}
+
+function notificationSeverityText(severity) {
+    return {info:'信息',success:'完成',warning:'提醒',error:'错误',critical:'高危'}[severity] || '信息';
+}
+
+async function refreshNotificationBadge() {
+    try {
+        const response = await fetch('/api/notifications?limit=1');
+        const data = await response.json();
+        if (!response.ok) return;
+        const count = Number(data.summary?.unread || 0);
+        const badge = document.getElementById('notificationBadge');
+        badge.textContent = count > 99 ? '99+' : String(count);
+        badge.style.display = count ? '' : 'none';
+    } catch (_) {}
+}
+
+async function toggleNotificationPanel() {
+    const panel = document.getElementById('notificationPopover');
+    const opening = panel.style.display === 'none';
+    panel.style.display = opening ? 'block' : 'none';
+    if (opening) await loadMyNotifications();
+}
+
+async function loadMyNotifications() {
+    const box = document.getElementById('notificationItems');
+    box.textContent = '加载中...';
+    try {
+        const response = await fetch('/api/notifications?limit=50&status=unread,read');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '通知加载失败');
+        const items = data.items || [];
+        if (!items.length) {
+            box.innerHTML = '<div style="padding:14px 0;color:var(--t2);font-size:12px">暂无通知</div>';
+            await refreshNotificationBadge();
+            return;
+        }
+        box.innerHTML = items.map(item => {
+            const idArg = JSON.stringify(item.id).replace(/"/g, '&quot;');
+            const linkArg = JSON.stringify(item.link_path || '').replace(/"/g, '&quot;');
+            return '<div class="notification-item ' + (item.status === 'unread' ? 'unread' : '') + '" onclick="openMyNotification(' + idArg + ',' + linkArg + ')"><div class="notification-title"><span class="notification-severity">' + notificationSeverityText(item.severity) + '</span> · ' + escapeHtml(item.title) + '</div><div class="notification-body">' + escapeHtml(item.body || '') + '</div><div class="notification-meta"><span>' + escapeHtml(item.created_at || '--') + '</span><span>' + escapeHtml(item.status) + '</span></div></div>';
+        }).join('');
+        await refreshNotificationBadge();
+    } catch (error) {
+        box.innerHTML = '<div style="padding:14px 0;color:var(--r);font-size:12px">' + escapeHtml(error.message || '通知加载失败') + '</div>';
+    }
+}
+
+async function markNotifications(ids, status) {
+    if (!ids.length) return;
+    const response = await fetch('/api/notifications/status', {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ids, status}),
+    });
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || '通知更新失败');
+    }
+}
+
+async function openMyNotification(id, linkPath) {
+    try { await markNotifications([id], 'read'); } catch (_) {}
+    document.getElementById('notificationPopover').style.display = 'none';
+    await refreshNotificationBadge();
+    if (linkPath && linkPath !== '/') window.location.href = linkPath;
+}
+
+async function markAllNotificationsRead() {
+    try {
+        const response = await fetch('/api/notifications?limit=200&status=unread');
+        const data = await response.json();
+        const ids = (data.items || []).map(item => item.id);
+        await markNotifications(ids, 'read');
+        await loadMyNotifications();
+    } catch (error) {
+        alert(error.message || '通知更新失败');
+    }
+}
+
+async function changeLanguage(language) {
+    responseLanguage = language === 'en-US' ? 'en-US' : 'zh-CN';
+    localStorage.setItem('securenexus_language', responseLanguage);
+    document.getElementById('languageSelect').value = responseLanguage;
+    if (document.cookie.includes('securenexus_session=')) {
+        await fetch('/api/auth/language', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({language: responseLanguage})});
+    }
+    applyUiLanguage();
+}
+
+async function setMemoryEnabled(enabled) {
+    try {
+        const response = await fetch('/api/memories/preferences', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled}),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '记忆设置失败');
+    } catch (error) {
+        document.getElementById('memoryEnabled').checked = !enabled;
+        alert(error.message || '记忆设置失败');
+    }
+}
+
+async function loadMyMemories() {
+    const list = document.getElementById('memoryList');
+    try {
+        const response = await fetch('/api/memories');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '记忆加载失败');
+        const items = data.items || [];
+        currentMemoryItems = items;
+        list.style.display = '';
+        list.innerHTML = items.length ? items.map(item => `<div style="padding:7px 0;border-bottom:1px solid var(--b);font-size:12px"><div>${escapeHtml(item.content)}</div><div style="margin-top:5px"><button class="account-btn" onclick="editMyMemory(${item.id})">修改</button><button class="account-btn" onclick="toggleMyMemory(${item.id}, '${item.status === 'active' ? 'suppressed' : 'active'}')">${item.status === 'active' ? '暂停' : '恢复'}</button><button class="account-btn" onclick="deleteMyMemory(${item.id})">删除</button></div></div>`).join('') : '<div style="font-size:12px;color:var(--t2)">暂无长期记忆</div>';
+    } catch (error) { alert(error.message || '记忆加载失败'); }
+}
+
+async function loadMyUsage() {
+    const list = document.getElementById('usageList');
+    list.style.display = '';
+    list.innerHTML = '<div style="font-size:12px;color:var(--t2)">加载中...</div>';
+    try {
+        const response = await fetch('/api/usage/me');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '用量加载失败');
+        list.innerHTML = `<div style="font-size:12px;line-height:1.8">请求 ${data.requests || 0} 次 · Token ${data.total_tokens || 0} · 估算费用 ${data.estimated_cost ?? '--'}<br><span style="color:var(--t2)">费用按后台配置的模型价格估算，未知价格不会虚构金额。</span></div>`;
+    } catch (error) { list.innerHTML = `<div style="font-size:12px;color:var(--r)">${escapeHtml(error.message || '用量加载失败')}</div>`; }
+}
+
+async function loadMyGenerations() {
+    const list = document.getElementById('generationList');
+    list.style.display = '';
+    list.innerHTML = '<div style="font-size:12px;color:var(--t2)">加载中...</div>';
+    try {
+        const response = await fetch('/api/generation/requests');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '生成物加载失败');
+        const items = data.items || [];
+        list.innerHTML = items.length ? items.map(item => {
+            const label = item.mode === 'presentation' ? 'PPT' : 'Word';
+    const artifacts = (item.artifacts || []).map(artifact => `<a class="account-btn" title="下载 ${label} 文件 v${artifact.version}" href="/api/generation/requests/${encodeURIComponent(item.id)}/download?artifact_id=${encodeURIComponent(artifact.id)}">下载 ${label} v${artifact.version}</a>`).join('');
+    const latest = item.artifact_path ? `<a class="account-btn" title="下载最新 ${label} 文件" href="/api/generation/requests/${encodeURIComponent(item.id)}/download">下载最新 ${label}</a>` : '';
+            return `<div style="padding:8px 0;border-bottom:1px solid var(--b);font-size:12px"><div><strong>${escapeHtml(label)} · ${escapeHtml(item.outline?.title || item.id)}</strong><span style="color:var(--t2);margin-left:6px">${escapeHtml(item.status)}</span></div><div style="margin-top:5px">${artifacts || latest || '<span style="color:var(--t2)">尚未生成文件</span>'}<button class="account-btn" style="margin-left:6px;color:var(--r)" onclick="deleteMyGeneration('${escapeHtml(item.id)}')">删除任务</button></div></div>`;
+        }).join('') : '<div style="font-size:12px;color:var(--t2)">暂无生成物</div>';
+    } catch (error) { list.innerHTML = `<div style="font-size:12px;color:var(--r)">${escapeHtml(error.message || '生成物加载失败')}</div>`; }
+}
+
+async function deleteMyGeneration(id) {
+    if (!window.confirm('删除该生成任务及其全部版本？')) return;
+    const response = await fetch(`/api/generation/requests/${encodeURIComponent(id)}`, {method: 'DELETE'});
+    const data = await response.json();
+    if (!response.ok) { alert(data.detail || '删除失败'); return; }
+    loadMyGenerations();
+}
+
+async function editMyMemory(id) {
+    const item = currentMemoryItems.find(memory => memory.id === id);
+    const oldContent = item ? item.content : '';
+    const content = window.prompt('修改记忆内容', oldContent);
+    if (content === null) return;
+    const response = await fetch(`/api/memories/${id}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content})});
+    if (!response.ok) { const data = await response.json(); alert(data.detail || '修改失败'); return; }
+    loadMyMemories();
+}
+
+async function toggleMyMemory(id, status) {
+    const response = await fetch(`/api/memories/${id}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status})});
+    if (!response.ok) { const data = await response.json(); alert(data.detail || '更新失败'); return; }
+    loadMyMemories();
+}
+
+async function deleteMyMemory(id) {
+    if (!window.confirm('删除这条长期记忆？')) return;
+    const response = await fetch(`/api/memories/${id}`, {method:'DELETE'});
+    if (!response.ok) { const data = await response.json(); alert(data.detail || '删除失败'); return; }
+    loadMyMemories();
+}
+
+async function logoutAccount() {
+    try { await fetch('/api/auth/logout', {method:'POST'}); } finally {
+        document.getElementById('memoryList').style.display = 'none';
+        closeAccountModal();
+        currentConvId = null;
+        document.getElementById('chatMessages').innerHTML = '';
+        await refreshAccount();
+        await loadConversations();
+    }
+}
+
+async function changeMyPassword() {
+    const current_password = window.prompt('请输入当前密码');
+    if (current_password === null) return;
+    const new_password = window.prompt('请输入新密码（至少 8 位，含大小写字母和数字）');
+    if (new_password === null) return;
+    const password_confirm = window.prompt('请再次输入新密码');
+    if (password_confirm === null) return;
+    if (new_password !== password_confirm) { alert('两次输入的新密码不一致。'); return; }
+    const response = await fetch('/api/auth/password', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({current_password, new_password})});
+    const data = await response.json();
+    if (!response.ok) { alert(data.detail || '密码修改失败'); return; }
+    alert('密码已修改，请重新登录。');
+    closeAccountModal();
+    await refreshAccount();
+}
+
+async function exportMyData() {
+    const response = await fetch('/api/auth/export');
+    const data = await response.json();
+    if (!response.ok) { alert(data.detail || '数据导出失败'); return; }
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'securenexus-my-data.json';
+    link.click();
+    URL.revokeObjectURL(link.href);
+}
+
+async function requestAccountDeletion() {
+    if (!window.confirm('提交注销申请后会立即停用账号，并在保留期后清理数据。确认继续？')) return;
+    const reason = window.prompt('可选：填写注销原因', '') || '';
+    const response = await fetch('/api/auth/deletion-request', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({reason})});
+    const data = await response.json();
+    if (!response.ok) { alert(data.detail || '注销申请失败'); return; }
+    alert(data.message || '注销申请已提交');
+    closeAccountModal();
+    await refreshAccount();
+}
+
+async function switchAgent(agentId) {
+    if (!agentId) return;
+    try {
+        const response = await fetch('/api/auth/switch-agent', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({agent_id: agentId}),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Agent 切换失败');
+        currentConvId = null;
+        document.getElementById('chatMessages').innerHTML = '';
+        await refreshAccount();
+        await loadConversations();
+    } catch (error) {
+        alert(error.message || 'Agent 切换失败');
+        await refreshAccount();
+    }
+}
+
+async function switchWorkspace(tenantId) {
+    if (!tenantId) return;
+    try {
+        const response = await fetch('/api/auth/switch-workspace', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({tenant_id: tenantId}),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '工作区切换失败');
+        currentConvId = null;
+        document.getElementById('chatMessages').innerHTML = '';
+        await refreshAccount();
+        await loadConversations();
+    } catch (error) {
+        alert(error.message || '工作区切换失败');
+        await refreshAccount();
+    }
+}
+
+function openAccountModal() {
+    applyUiLanguage();
+    document.getElementById('accountModal').style.display = 'flex';
+    document.getElementById('accountLoginError').textContent = '';
+    document.getElementById('accountStatus').textContent = '';
+    document.getElementById('accountEmail').focus();
+    loadSsoProviders();
+}
+
+function closeAccountModal() { document.getElementById('accountModal').style.display = 'none'; }
+let currentLdapProviderId = '';
+async function loadSsoProviders() {
+    const box = document.getElementById('ssoProviderButtons');
+    const section = document.getElementById('ssoSection');
+    if (!box || !section) return;
+    try {
+        const resp = await nativeFetch('/api/auth/sso/providers');
+        const data = await resp.json();
+        const items = data.items || [];
+        section.style.display = items.length ? 'block' : 'none';
+        if (!items.length) return;
+        box.innerHTML = items.map(item => '<button class="secondary" style="width:100%" onclick="startSsoLogin(' + JSON.stringify(item).replace(/"/g, '&quot;') + ')">' + escapeHtml(item.name || (item.provider_type === 'ldap' ? 'LDAP 登录' : 'OIDC 登录')) + '</button>').join('');
+    } catch (e) {
+        section.style.display = 'none';
+    }
+}
+function startSsoLogin(item) {
+    const ldapForm = document.getElementById('ssoLdapForm');
+    if (item.provider_type === 'ldap') {
+        currentLdapProviderId = item.id;
+        document.getElementById('ssoLdapUsername').value = '';
+        document.getElementById('ssoLdapPassword').value = '';
+        ldapForm.style.display = 'block';
+        document.getElementById('ssoLdapUsername').focus();
+        return;
+    }
+    (async () => {
+        try {
+            const resp = await nativeFetch('/api/auth/sso/oidc/authorize', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({provider_id: item.id}),
+            });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.detail || 'OIDC 授权失败');
+            window.location.href = data.authorize_url;
+        } catch (error) {
+            document.getElementById('accountStatus').textContent = error.message || 'OIDC 登录失败';
+        }
+    })();
+}
+async function submitLdapSso() {
+    const username = document.getElementById('ssoLdapUsername').value.trim();
+    const password = document.getElementById('ssoLdapPassword').value;
+    const status = document.getElementById('accountStatus');
+    const loginError = document.getElementById('accountLoginError');
+    if (!currentLdapProviderId || !username || !password) { status.textContent = uiText('invalidLdap'); return; }
+    status.textContent = uiText('ldapStatus');
+    try {
+        const resp = await nativeFetch('/api/auth/sso/ldap/login', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({provider_id: currentLdapProviderId, username, password}),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || 'LDAP 登录失败');
+        currentConvId = null;
+        document.getElementById('chatMessages').innerHTML = '';
+        closeAccountModal();
+        await refreshAccount();
+        await loadConversations();
+    } catch (error) {
+        status.textContent = error.message || 'LDAP 登录失败，请重试。';
+    }
+}
+
+async function submitAccount(mode) {
+    const email = document.getElementById('accountEmail').value.trim();
+    const password = document.getElementById('accountPassword').value;
+    const displayName = document.getElementById('accountName').value.trim();
+    const status = document.getElementById('accountStatus');
+    if (!email || !password) { status.textContent = uiText('invalidFields'); return; }
+    const submit = document.getElementById('accountSubmit');
+    submit.disabled = true;
+    loginError.textContent = '';
+    status.textContent = mode === 'login' ? uiText('loginStatus') : uiText('registering');
+    try {
+        const inviteToken = new URLSearchParams(window.location.search).get('invite') || '';
+        const response = await nativeFetch(`/api/auth/${mode}`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email, password, display_name: displayName, ...(mode === 'register' && inviteToken ? {invite_token: inviteToken} : {})}),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '操作失败');
+        if (data.pending_approval) {
+            status.textContent = data.message || '注册信息已提交，等待管理员审批。';
+            return;
+        }
+        currentConvId = null;
+        document.getElementById('chatMessages').innerHTML = '';
+        closeAccountModal();
+        await refreshAccount();
+        await loadConversations();
+    } catch (error) {
+        if (mode === 'login') {
+            loginError.textContent = '邮箱或密码错误';
+            status.textContent = '';
+        } else {
+            status.textContent = error.message || '操作失败，请重试。';
+        }
+    } finally { submit.disabled = false; }
 }
 
 // 时间分组工具
@@ -305,8 +828,10 @@ async function loadMessages(convId) {
         return;
     }
 
+    let previousUserQuery = '';
     messages.forEach(m => {
-        appendMessage(m.role, m.content, m.sources);
+        if (m.role === 'user') previousUserQuery = m.content || '';
+        appendMessage(m.role, m.content, m.sources, m.id, previousUserQuery);
     });
 
     // 更新标题
@@ -326,6 +851,30 @@ async function sendMessage() {
     const input = document.getElementById('chatInput');
     const query = input.value.trim();
     if (!query) return;
+
+    // P5 generation intents are resolved before opening the normal streaming RAG path.
+    try {
+        const routeResponse = await fetch('/api/generation/route', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query}),
+        });
+        const routeData = await routeResponse.json();
+        if (!routeResponse.ok) throw new Error(routeData.detail || '能力路由失败');
+        const route = routeData.route || {};
+        if (route.mode && route.mode !== 'chat') {
+            appendMessage('user', query);
+            input.value = '';
+            input.style.height = 'auto';
+            if (route.clarification) {
+                appendGenerationClarification(query, route);
+            } else if (routeData.generation) {
+                appendGenerationOutline(routeData.generation);
+            }
+            scrollToBottom();
+            return;
+        }
+    } catch (error) {
+        console.warn('P5 能力路由不可用，继续普通问答：', error);
+    }
 
     isLoading = true;
     document.getElementById('sendBtn').disabled = true;
@@ -364,7 +913,10 @@ async function sendMessage() {
         bubble.innerHTML = reasoningHtml + formatContent(fullContent);
         if (answerCompleted) {
             renderSourcesIntoBubble(bubble, sourcesData);
-            if (assistantMessageId) appendRating(bubble, assistantMessageId);
+            if (assistantMessageId) {
+                appendRating(bubble, assistantMessageId);
+                appendFeedbackActions(bubble, assistantMessageId, query);
+            }
         }
         scrollToBottom();
     }
@@ -373,7 +925,7 @@ async function sendMessage() {
         const response = await fetch('/api/chat/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, conversation_id: currentConvId }),
+            body: JSON.stringify({ query, conversation_id: currentConvId, language: responseLanguage }),
         });
 
         if (!response.ok) {
@@ -412,6 +964,11 @@ async function sendMessage() {
 
                         case 'token':
                             fullContent += event.content;
+                            renderCurrentBubble();
+                            break;
+
+                        case 'answer_replace':
+                            fullContent = event.content || fullContent;
                             renderCurrentBubble();
                             break;
 
@@ -491,19 +1048,165 @@ async function sendMessage() {
     scrollToBottom();
 }
 
+function generationFieldLabel(field) {
+    return {
+        document_type: '文档类型', audience: '目标受众', purpose: '交付目的',
+        scope: '适用组织或行业范围', scenario: '使用场景', page_count: '页数或时长',
+    }[field] || field;
+}
+
+function appendGenerationClarification(query, route) {
+    const container = document.getElementById('chatMessages');
+    const fields = route.fields || {};
+    const missing = route.missing_fields || [];
+    const inputs = missing.map(field => `<label style="display:grid;gap:4px;font-size:12px;color:var(--t2);margin-top:8px">${generationFieldLabel(field)}<input data-generation-field="${escapeHtml(field)}" value="${escapeHtml(fields[field] || '')}" style="padding:6px 8px;border:1px solid var(--b);border-radius:5px;font:12px var(--f);color:var(--t);background:#fff"></label>`).join('');
+    const div = document.createElement('div');
+    div.className = 'message assistant';
+    div.innerHTML = `<div class="message-role">助手</div><div class="message-bubble"><strong>${route.mode === 'presentation' ? 'PPT' : '写作'}任务需要确认</strong><p style="font-size:12px;color:var(--t2);margin-top:6px">${escapeHtml(route.clarification || '请补充交付信息。')}</p><div style="margin-top:8px">${inputs}</div><button class="account-btn" style="margin-top:10px" onclick="submitGenerationClarification(this, '${escapeHtml(query)}', '${escapeHtml(route.mode)}')">生成提纲</button></div>`;
+    container.appendChild(div);
+}
+
+async function submitGenerationClarification(button, query, mode) {
+    const bubble = button.closest('.message-bubble');
+    const fields = {};
+    bubble.querySelectorAll('[data-generation-field]').forEach(input => {
+        fields[input.dataset.generationField] = input.value.trim();
+    });
+    button.disabled = true;
+    button.textContent = '正在生成提纲...';
+    try {
+        const response = await fetch('/api/generation/route', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({query, fields}),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '提纲生成失败');
+        if (data.route && data.route.clarification) {
+            button.disabled = false;
+            button.textContent = '生成提纲';
+            alert(data.route.clarification);
+            return;
+        }
+        if (!data.generation) throw new Error('未能创建生成任务');
+        bubble.parentElement.remove();
+        appendGenerationOutline(data.generation);
+        scrollToBottom();
+    } catch (error) {
+        button.disabled = false;
+        button.textContent = '生成提纲';
+        alert(error.message || '提纲生成失败');
+    }
+}
+
+const generationDrafts = {};
+
+function appendGenerationOutline(generation) {
+    const container = document.getElementById('chatMessages');
+    const outline = generation.outline || {};
+    const isPpt = generation.mode === 'presentation';
+    const references = generation.references || [];
+    generationDrafts[generation.id] = {
+        mode: generation.mode,
+        fields: outline.fields || generation.fields || {},
+        title: outline.title || '',
+    };
+    const entries = isPpt
+        ? (outline.pages || []).map(page => `<li>第 ${page.page} 页：${escapeHtml(page.title || '')}</li>`).join('')
+        : (outline.sections || []).map(section => `<li>${escapeHtml(section.heading || '')}</li>`).join('');
+    const div = document.createElement('div');
+    div.className = 'message assistant';
+    const referenceHtml = references.length
+        ? `<div style="margin-top:8px;font-size:12px;color:#555"><strong>已检索授权资料：</strong><ul>${references.map(reference => `<li>${escapeHtml(reference.source_name || '未命名资料')}${reference.section ? ` / ${escapeHtml(reference.section)}` : ''}</li>`).join('')}</ul></div>`
+        : `<p style="font-size:12px;color:#a15c00;margin-top:8px"><strong>引用状态：</strong>未找到可绑定的授权资料，法规、标准和组织事实均需人工核验。</p>`;
+    div.innerHTML = `<div class="message-role">助手</div><div class="message-bubble"><strong>已生成${isPpt ? ' PPT' : ' Word 文档'}提纲：${escapeHtml(outline.title || '')}</strong><ul>${entries}</ul>${referenceHtml}<p style="font-size:12px;color:#666">请确认提纲与适用范围；确认后生成本地 ${isPpt ? '.pptx PPT' : '.docx Word'} 文件。法规和组织事实仍需依据授权资料复核。</p><button class="account-btn" onclick="editGenerationOutline('${generation.id}', this)">编辑提纲</button><button class="account-btn" style="margin-left:8px" onclick="renderGenerationArtifact('${generation.id}', this)">确认并生成 ${isPpt ? 'PPT' : 'Word'}</button></div>`;
+    container.appendChild(div);
+}
+
+function editGenerationOutline(generationId, button) {
+    const bubble = button.closest('.message-bubble');
+    const list = bubble.querySelector('ul');
+    if (!list) return;
+    const current = Array.from(list.querySelectorAll('li')).map(item => item.textContent).join('\n');
+    const revised = window.prompt('每行一项。文档填写章节标题；PPT 可填写“第 N 页：标题”。', current);
+    if (revised === null) return;
+    const entries = revised.split('\n').map(value => value.trim()).filter(Boolean);
+    if (!entries.length) { alert('至少保留一项提纲内容'); return; }
+    button.disabled = true;
+    button.textContent = '保存中...';
+    const draft = generationDrafts[generationId] || {};
+    const isPpt = draft.mode === 'presentation';
+    const title = draft.title || (bubble.querySelector('strong')?.textContent || '').split('：').slice(1).join('：') || '网络安全交付物';
+    const outline = isPpt
+        ? {title, mode: 'presentation', fields: draft.fields || {}, pages: entries.map((value, index) => ({page: index + 1, title: value.replace(/^第\s*\d+\s*页[：:]\s*/, ''), points: ['待结合授权资料补充证据与数据']}))}
+        : {title, mode: 'writing', fields: draft.fields || {}, sections: entries.map(value => ({heading: value, points: ['待结合授权资料补充可核验要求']}))};
+    fetch(`/api/generation/requests/${generationId}/outline`, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({outline}),
+    }).then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '提纲保存失败');
+        const updated = data.generation || {};
+        const updatedOutline = updated.outline || outline;
+        generationDrafts[generationId] = {
+            mode: updated.mode || draft.mode,
+            fields: updatedOutline.fields || draft.fields || {},
+            title: updatedOutline.title || title,
+        };
+        const lines = updated.mode === 'presentation'
+            ? (updatedOutline.pages || []).map(page => `<li>第 ${page.page} 页：${escapeHtml(page.title || '')}</li>`).join('')
+            : (updatedOutline.sections || []).map(section => `<li>${escapeHtml(section.heading || '')}</li>`).join('');
+        list.innerHTML = lines;
+        button.disabled = false;
+        button.textContent = '编辑提纲';
+    }).catch(error => {
+        button.disabled = false;
+        button.textContent = '编辑提纲';
+        alert(error.message || '提纲保存失败');
+    });
+}
+
+async function renderGenerationArtifact(generationId, button) {
+    button.disabled = true;
+    button.textContent = '生成中...';
+    try {
+        const response = await fetch(`/api/generation/requests/${generationId}/render`, {method: 'POST'});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '生成失败');
+        const link = document.createElement('a');
+        link.href = `/api/generation/requests/${generationId}/download`;
+        const draft = generationDrafts[generationId] || {};
+        link.textContent = `下载 ${draft.mode === 'presentation' ? 'PPT' : 'Word'} 文件`;
+        link.title = link.textContent;
+        link.className = 'account-btn';
+        link.style.marginLeft = '8px';
+        button.replaceWith(link);
+    } catch (error) {
+        button.disabled = false;
+        const draft = generationDrafts[generationId] || {};
+        button.textContent = `确认并生成 ${draft.mode === 'presentation' ? 'PPT' : 'Word'}`;
+        alert(error.message || '生成失败');
+    }
+}
+
 // ===== 添加消息气泡 =====
-function appendMessage(role, content, sources) {
+function appendMessage(role, content, sources, messageId, query) {
     const container = document.getElementById('chatMessages');
     const div = document.createElement('div');
     div.className = `message ${role}`;
 
     const sourcesHtml = renderSourcesHtml(sources);
+    const feedbackHtml = role === 'assistant' && messageId
+        ? `<div class="feedback-actions" data-message-id="${messageId}" data-query="${escapeHtml(query || '')}">
+             <button type="button" title="复制回答" onclick="copyAnswer(this, ${messageId})">复制</button>
+             <button type="button" title="对回答不满意，重新生成" onclick="refreshAnswer(this, ${messageId})">刷新</button>
+           </div>`
+        : '';
 
     div.innerHTML = `
         <div class="message-role">${role === 'user' ? '你' : '助手'}</div>
         <div class="message-bubble">
             ${formatContent(content)}
             ${sourcesHtml}
+            ${feedbackHtml}
         </div>
     `;
     container.appendChild(div);
@@ -583,6 +1286,55 @@ function showWarningBanner(msg) {
 
 function dismissWarning() {
     document.getElementById('warningBanner').style.display = 'none';
+}
+
+async function sendFeedback(messageId, feedbackType, feedbackText = '') {
+    try {
+        const resp = await fetch('/api/feedback', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message_id: messageId, feedback_type: feedbackType, feedback_text: feedbackText}),
+        });
+        if (!resp.ok) throw new Error('反馈提交失败');
+        return true;
+    } catch (e) {
+        console.debug('反馈提交失败:', e);
+        return false;
+    }
+}
+
+function appendFeedbackActions(bubble, messageId, query) {
+    if (!bubble || bubble.querySelector('.feedback-actions') || !messageId) return;
+    const actions = document.createElement('div');
+    actions.className = 'feedback-actions';
+    actions.dataset.messageId = messageId;
+    actions.dataset.query = query || '';
+    actions.innerHTML = `<button type="button" title="复制回答" onclick="copyAnswer(this, ${messageId})">复制</button><button type="button" title="对回答不满意，重新生成" onclick="refreshAnswer(this, ${messageId})">刷新</button>`;
+    bubble.appendChild(actions);
+}
+
+async function copyAnswer(button, messageId) {
+    const bubble = button.closest('.message-bubble');
+    const text = bubble ? (bubble.innerText || '').replace(/复制\s*刷新\s*$/, '').trim() : '';
+    try {
+        await navigator.clipboard.writeText(text);
+        await sendFeedback(messageId, 'copy');
+        button.textContent = '已复制';
+        setTimeout(() => { button.textContent = '复制'; }, 1200);
+    } catch (e) {
+        if (button) { button.textContent = '复制失败'; setTimeout(() => { button.textContent = '复制'; }, 1500); }
+    }
+}
+
+async function refreshAnswer(button, messageId) {
+    const actions = button.closest('.feedback-actions');
+    const query = actions?.dataset.query || '';
+    if (!query || isLoading) return;
+    await sendFeedback(messageId, 'refresh');
+    button.disabled = true;
+    button.textContent = '生成中';
+    const input = document.getElementById('chatInput');
+    input.value = query;
+    await sendMessage();
 }
 
 // ===== 5 星评分组件 =====

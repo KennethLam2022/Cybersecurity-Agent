@@ -208,6 +208,7 @@ class LLMProvider:
         self.rate_limiter = TokenBucket(capacity=rate_limit_capacity, fill_rate=rate_limit_fill)
         self.circuit_breaker = CircuitBreaker(failure_threshold=3, open_timeout=60.0)
         self._provider_name = "api"
+        self.last_usage: dict = {}
 
     def reconfigure(self, base_url: str, api_key: str, model: str, provider_name: str = ""):
         """运行时重新配置 LLM 提供商（不重启服务）"""
@@ -251,7 +252,10 @@ class LLMProvider:
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
             elapsed = time.time() - t0
-            return {"ok": True, "message": f"连接成功 ({elapsed:.1f}s)", "model": model}
+            return {
+                "ok": True, "message": f"连接成功 ({elapsed:.1f}s)", "model": model,
+                "usage": data.get("usage") or {}, "provider": self._provider_name,
+            }
         except requests.exceptions.ConnectionError:
             return {"ok": False, "message": "无法连接，请检查 BASE URL 是否正确"}
         except requests.exceptions.Timeout:
@@ -306,7 +310,9 @@ class LLMProvider:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
+        self.last_usage = {}
         t0 = time.time()
         token_count = 0
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
@@ -488,6 +494,8 @@ class LLMProvider:
                                         break
                                     try:
                                         data = json.loads(data_str)
+                                        if data.get("usage"):
+                                            self.last_usage = data["usage"] or {}
                                         delta = data["choices"][0].get("delta", {})
                                         content = delta.get("content", "")
                                         reasoning = delta.get("reasoning_content", "")

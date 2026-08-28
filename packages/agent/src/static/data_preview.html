@@ -32,6 +32,8 @@
   .migration-bar .btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--b); background: var(--bg); color: var(--t); font-size: 12px; cursor: pointer; }
   .migration-bar .btn.primary { border-color: var(--a); background: #0071e312; color: var(--a); }
   .migration-bar .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .migration-bar select,.migration-bar input { border: 1px solid var(--b); border-radius: 6px; padding: 5px 8px; font-size: 12px; background: var(--card); color: var(--t); }
+  .migration-bar input { min-width: 190px; }
   .migration-panel { display: none; margin: -12px 0 24px; background: var(--card); border: 1px solid var(--b); border-radius: 10px; overflow: hidden; }
   .migration-panel.visible { display: block; }
   .migration-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 12px; background: var(--bg); border-bottom: 1px solid var(--b); }
@@ -43,6 +45,7 @@
   .migration-table th { color: var(--t2); font-weight: 600; background: #fafafa; }
   .migration-table td.path { max-width: 320px; color: var(--t2); word-break: break-all; }
   .migration-table td.reason { color: var(--t2); max-width: 260px; }
+  .migration-history { padding: 3px 7px; border: 1px solid var(--b); border-radius: 5px; background: var(--card); color: var(--a); font-size: 11px; cursor: pointer; }
 
   .stat-bar { display: flex; gap: 14px; margin-bottom: 24px; }
   .stat-item { flex: 1; background: var(--card); border: 1px solid var(--b); border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; gap: 14px; }
@@ -246,22 +249,43 @@
 <body>
 <div class="preview-wrap">
 
+  <select data-page-language aria-label="Language" style="float:right"><option value="zh-CN">中文</option><option value="en-US">English</option></select>
+
   <div class="page-header">
     <div style="display:flex;align-items:baseline;gap:16px;flex-wrap:wrap">
-      <h1 style="margin:0">📂 文档入库管理</h1>
+      <h1 style="margin:0" data-i18n="文档入库管理">📂 文档入库管理</h1>
       <span id="docTotalBadge" style="font-size:14px;color:var(--t2);font-weight:500;white-space:nowrap">已入库: 0</span>
     </div>
-    <p>拖拽上传文档 → 扫描校验 → 确认范围 → 自动清洗切片 → 入库知识库</p>
+    <p data-i18n="拖拽上传文档 → 扫描校验 → 确认范围 → 自动清洗切片 → 入库知识库">拖拽上传文档 → 扫描校验 → 确认范围 → 自动清洗切片 → 入库知识库</p>
   </div>
 
   <div class="migration-bar">
     <button class="btn primary" id="btnLoadMigration">刷新存量建议</button>
     <button class="btn" id="btnApplyMigration">应用存量校准</button>
+    <select id="migrationViewMode" aria-label="资料归属视图">
+      <option value="pending">待确认资料</option>
+      <option value="all">全部入库资料</option>
+    </select>
+    <input id="migrationSearch" type="search" placeholder="搜索文件、分类或 Profile">
     <div class="mini-stat">总量 <strong id="migrationTotal">0</strong></div>
     <div class="mini-stat">待确认 <strong id="migrationPending">0</strong></div>
     <div class="mini-stat">通用 <strong id="migrationGeneral">0</strong></div>
     <div class="mini-stat" id="migrationProfileStats">扩展 <strong>0</strong></div>
     <div class="mini-stat">待确认清单 <strong id="migrationReviewList">0</strong></div>
+  </div>
+
+  <div class="migration-bar" style="margin-top:8px">
+    <strong style="font-size:12px">访问范围</strong>
+    <select id="migrationTargetVisibility" aria-label="访问范围">
+      <option value="public">公共</option>
+      <option value="tenant">工作区共享</option>
+      <option value="private">用户私有</option>
+    </select>
+    <input id="migrationTargetTenant" placeholder="工作区 ID（共享/私有必填）">
+    <input id="migrationTargetUser" placeholder="用户 ID（私有必填）">
+    <input id="migrationTargetAgent" placeholder="Agent ID（可选）">
+    <button class="btn" id="btnConfirmAccessMigration">修改所选访问范围</button>
+    <span style="font-size:11px;color:var(--t2)">与 Profile 归属独立管理</span>
   </div>
 
   <div class="migration-panel" id="migrationPanel">
@@ -281,8 +305,9 @@
           <th style="width:34px"></th>
           <th>文件</th>
           <th>当前建议</th>
-          <th>原因</th>
+          <th>确认与变更</th>
           <th>路径</th>
+          <th style="width:58px">记录</th>
         </tr>
       </thead>
       <tbody id="migrationRows"></tbody>
@@ -475,92 +500,21 @@
 
 </div>
 
-<div class="admin-token-modal" id="documentTokenModal" style="display:none">
-  <div class="admin-token-backdrop"></div>
-  <div class="admin-token-card">
-    <h2>管理后台认证</h2>
-    <p>请输入管理员 Token 以加载文档 Profile 和存量数据。</p>
-    <input id="documentTokenInput" type="password" placeholder="X-Admin-Token">
-    <button id="documentTokenSave" type="button">确认</button>
-    <div id="documentTokenError" class="admin-token-error"></div>
-  </div>
-</div>
-
-<style>
-.admin-token-modal{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center}
-.admin-token-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
-.admin-token-card{position:relative;width:min(360px,90vw);padding:24px;background:#fff;border:1px solid var(--b);border-radius:10px;box-shadow:0 12px 36px rgba(0,0,0,.18)}
-.admin-token-card h2{font-size:18px;margin-bottom:8px}
-.admin-token-card p{font-size:13px;color:var(--t2);margin-bottom:14px}
-.admin-token-card input{width:100%;padding:9px 10px;border:1px solid var(--b2);border-radius:6px;font-size:13px}
-.admin-token-card button{margin-top:12px;padding:8px 18px;border:1px solid var(--a);border-radius:6px;background:#0071e312;color:var(--a);cursor:pointer}
-.admin-token-error{min-height:18px;margin-top:8px;color:var(--r);font-size:12px}
-</style>
-
 <script>
-  // 管理接口认证必须先于页面数据初始化安装，否则首次请求会被 403。
+  // 管理接口认证必须先于页面数据初始化安装。
   (function initAdminFetch() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlToken = urlParams.get('token');
-    if (urlToken && !localStorage.getItem('admin_token')) {
-      localStorage.setItem('admin_token', urlToken);
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-
     const originalFetch = window.fetch;
     window.fetch = function(input, init) {
       init = init || {};
-      const token = localStorage.getItem('admin_token') || '';
-      if (token) {
-        try {
-          if (init.headers instanceof Headers) {
-            init.headers.set('X-Admin-Token', token);
-          } else {
-            init.headers = init.headers || {};
-            init.headers['X-Admin-Token'] = token;
-          }
-        } catch (e) {
-          console.error('设置 X-Admin-Token 失败:', e);
-        }
-      }
+      const csrf = (document.cookie.match(/(?:^|; )securenexus_csrf=([^;]+)/) || [])[1];
+      if (csrf) { init.headers = init.headers || {}; if (init.headers instanceof Headers) init.headers.set('X-CSRF-Token', decodeURIComponent(csrf)); else init.headers['X-CSRF-Token'] = decodeURIComponent(csrf); }
+      init.credentials = 'same-origin';
       return originalFetch(input, init).then(function(resp) {
-        if (resp.status === 403) {
-          localStorage.removeItem('admin_token');
-          showDocumentTokenModal('Token 无效或已过期');
-        }
+        if (resp.status === 401) window.location.href = '/';
         return resp;
       });
     };
   })();
-
-  function documentToken() {
-    return localStorage.getItem('admin_token') || '';
-  }
-
-  function showDocumentTokenModal(message) {
-    const modal = document.getElementById('documentTokenModal');
-    const error = document.getElementById('documentTokenError');
-    if (error) error.textContent = message || '';
-    if (modal) modal.style.display = 'flex';
-  }
-
-  function saveDocumentToken() {
-    const input = document.getElementById('documentTokenInput');
-    const token = (input.value || '').trim();
-    if (!token || /[^\x00-\x7F]/.test(token)) {
-      showDocumentTokenModal('Token 不能为空且只能包含 ASCII 字符');
-      return;
-    }
-    localStorage.setItem('admin_token', token);
-    document.getElementById('documentTokenModal').style.display = 'none';
-    window.location.reload();
-  }
-
-  document.getElementById('documentTokenSave').addEventListener('click', saveDocumentToken);
-  document.getElementById('documentTokenInput').addEventListener('keydown', event => {
-    if (event.key === 'Enter') saveDocumentToken();
-  });
-  if (!documentToken()) showDocumentTokenModal('');
 
   (function() {
     'use strict';
@@ -578,6 +532,7 @@
     let totalSelectedQ = 0;        // 总文件数（用于进度条）
     let profileRegistry = [];
     let migrationRecords = [];
+    let migrationAllRecords = [];
     let selectedMigrationPaths = new Set();
     const FALLBACK_PROFILES = [
       { profile: 'general', label: '网络安全通用主干', category: '通用', scope: 'general', industry: '', description: '通用网络安全主干资料' },
@@ -622,7 +577,14 @@
     const migrationTargetCategory = $('migrationTargetCategory');
     const btnConfirmMigration = $('btnConfirmMigration');
     const btnProposeExtension = $('btnProposeExtension');
+    const btnConfirmAccessMigration = $('btnConfirmAccessMigration');
+    const migrationTargetVisibility = $('migrationTargetVisibility');
+    const migrationTargetTenant = $('migrationTargetTenant');
+    const migrationTargetUser = $('migrationTargetUser');
+    const migrationTargetAgent = $('migrationTargetAgent');
     const migrationSelectionText = $('migrationSelectionText');
+    const migrationViewMode = $('migrationViewMode');
+    const migrationSearch = $('migrationSearch');
 
     const totalCount = $('totalCount');
     const successCount = $('successCount');
@@ -738,6 +700,7 @@
         const dotPulse = shouldPulse(f.state) ? 'pulse' : '';
         const showConflict = f.isDup && !isProcessing;
         const profileDisabled = isPhase2 ? 'disabled' : '';
+        const visibility = f.visibility || 'public';
         const selectedProfile = f.profile || 'general';
         const selectedCategory = f.category || f.cat || getProfileCategory(selectedProfile);
         const profileOptionsHtml = getProfileOptions().map(opt =>
@@ -766,6 +729,7 @@
                 <input class="category-input" data-id="${f.id}" value="${escHtml(selectedCategory)}" ${profileDisabled}>
                 ${!isPhase2 ? `<button class="profile-confirm ${confirmCls}" data-id="${f.id}" title="${escHtml(f.profileReason || '')}">${confirmText}</button>` : `<span class="profile-confirm ${confirmCls}">${confirmText}</span>`}
               </div>
+              <select class="visibility-select" data-id="${f.id}" ${profileDisabled} style="margin-top:5px;width:100%;font-size:11px"><option value="public" ${visibility === 'public' ? 'selected' : ''}>公共网络安全知识库</option><option value="tenant" ${visibility === 'tenant' ? 'selected' : ''}>当前工作区共享</option><option value="private" ${visibility === 'private' ? 'selected' : ''}>仅当前用户与 Agent</option></select>
               <div class="profile-meta">${escHtml(getProfileLabel(selectedProfile))} · ${confidence}</div>
               ${f.profileReason ? `<div class="profile-meta" title="${escHtml(f.profileReason)}">${escHtml(f.profileReason).slice(0, 42)}</div>` : ''}
             </div>
@@ -878,9 +842,7 @@
       const profileCounts = summary?.summary || {};
       const records = Array.isArray(summary?.records) ? summary.records : [];
       const reviewCount = records.filter(r => r.needs_review).length;
-      migrationRecords = records.filter(r => r.needs_review).slice(0, 30);
-      const visiblePaths = new Set(migrationRecords.map(r => r.path));
-      selectedMigrationPaths = new Set([...selectedMigrationPaths].filter(p => visiblePaths.has(p)));
+      migrationAllRecords = records;
       migrationTotal.textContent = total;
       migrationPending.textContent = pending;
       migrationGeneral.textContent = general;
@@ -891,13 +853,26 @@
         ? extensionStats.join(' · ')
         : '扩展 <strong>0</strong>';
       migrationReviewList.textContent = reviewCount;
+      filterMigrationRecords();
+    }
+
+    function filterMigrationRecords() {
+      const query = migrationSearch.value.trim().toLowerCase();
+      migrationRecords = migrationAllRecords.filter(rec => {
+        if (migrationViewMode.value !== 'all' && !rec.needs_review) return false;
+        if (!query) return true;
+        return [rec.file_name, rec.category, rec.profile, rec.path, rec.industry]
+          .some(value => String(value || '').toLowerCase().includes(query));
+      }).slice(0, 500);
+      const visiblePaths = new Set(migrationRecords.map(r => r.path));
+      selectedMigrationPaths = new Set([...selectedMigrationPaths].filter(p => visiblePaths.has(p)));
       renderMigrationRows();
     }
 
     function renderMigrationRows() {
-      migrationPanel.classList.toggle('visible', migrationRecords.length > 0);
+      migrationPanel.classList.toggle('visible', migrationAllRecords.length > 0);
       if (migrationRecords.length === 0) {
-        migrationRows.innerHTML = '';
+        migrationRows.innerHTML = '<tr><td colspan="6" style="color:var(--t2);text-align:center;padding:20px">当前筛选没有资料</td></tr>';
         updateMigrationSelectionText();
         return;
       }
@@ -908,8 +883,9 @@
           <td><input type="checkbox" class="migration-check" data-path="${escHtml(rec.path)}" ${checked}></td>
           <td><strong>${escHtml(rec.file_name)}</strong><div style="color:var(--t2);margin-top:2px">${escHtml(rec.category || '')}</div></td>
           <td>${escHtml(getProfileLabel(rec.profile))}<div style="color:var(--t2);margin-top:2px">${escHtml(rec.profile)} · ${confidence}</div></td>
-          <td class="reason">${escHtml(rec.reason || '')}</td>
+          <td class="reason"><strong style="color:${rec.confirmed ? 'var(--g)' : 'var(--y)'}">${rec.confirmed ? '已确认' : '待确认'}</strong><div style="margin-top:3px">${escHtml(rec.change_reason || rec.reason || '')}</div>${rec.changed_at ? `<div style="margin-top:3px">${escHtml(rec.changed_at)} · ${escHtml(rec.changed_by || 'admin')}</div>` : ''}</td>
           <td class="path">${escHtml(rec.path)}</td>
+          <td><button class="migration-history" data-path="${escHtml(rec.path)}" title="查看 Profile 变更记录">Profile</button><button class="access-history" data-path="${escHtml(rec.path)}" title="查看访问范围变更记录">范围</button></td>
         </tr>`;
       }).join('');
       migrationSelectAll.checked = migrationRecords.length > 0 && migrationRecords.every(r => selectedMigrationPaths.has(r.path));
@@ -919,6 +895,9 @@
     function updateMigrationSelectionText() {
       migrationSelectionText.textContent = `已选 ${selectedMigrationPaths.size} 个`;
       btnConfirmMigration.disabled = selectedMigrationPaths.size === 0;
+      const allMode = migrationViewMode.value === 'all';
+      btnConfirmMigration.textContent = allMode ? '修改所选归属' : '批量确认所选';
+      btnProposeExtension.style.display = allMode ? 'none' : '';
     }
 
     async function loadMigrationSummary() {
@@ -967,17 +946,32 @@
       if (paths.length === 0) return;
       const profile = migrationTargetProfile.value;
       const category = migrationTargetCategory.value.trim() || getProfileCategory(profile);
+      const selectedRecords = migrationRecords.filter(rec => selectedMigrationPaths.has(rec.path));
+      const modifiesConfirmed = selectedRecords.some(rec => rec.confirmed);
+      let changeReason = '';
+      if (modifiesConfirmed) {
+        changeReason = window.prompt('请填写修改已确认资料归属的原因（必填）', '') || '';
+        if (!changeReason.trim()) {
+          statusText.textContent = '⚠️ 修改已确认资料时必须填写原因';
+          return;
+        }
+      }
+      const actionLabel = modifiesConfirmed ? '修改' : '确认';
+      if (!window.confirm(`确定${actionLabel} ${paths.length} 份资料的归属为“${getProfileLabel(profile)}”吗？${changeReason ? `\n原因：${changeReason}` : ''}`)) return;
       try {
         btnConfirmMigration.disabled = true;
-        btnConfirmMigration.textContent = '确认中...';
+        btnConfirmMigration.textContent = modifiesConfirmed ? '修改中...' : '确认中...';
         const resp = await fetch('/api/documents/profile-migration/confirm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ paths, profile, category, update_vector_stores: true }),
+          body: JSON.stringify({ paths, profile, category, change_reason: changeReason.trim(), update_vector_stores: true }),
         });
         const data = await resp.json();
         if (data.status === 'ok') {
-          statusText.textContent = `✅ 已确认 ${data.written_sidecars || 0} 份存量资料归属`;
+          const reclassified = Number(data.reclassified || 0);
+          statusText.textContent = reclassified > 0
+            ? `✅ 已修改 ${reclassified} 份资料归属；索引 metadata 已同步`
+            : `✅ 已确认 ${data.written_sidecars || 0} 份存量资料归属`;
           selectedMigrationPaths.clear();
           await loadMigrationSummary();
         } else {
@@ -986,9 +980,102 @@
       } catch (e) {
         statusText.textContent = '❌ 批量确认请求失败: ' + e.message;
       } finally {
-        btnConfirmMigration.textContent = '批量确认所选';
         updateMigrationSelectionText();
       }
+    }
+
+    async function confirmSelectedAccessMigration() {
+      const paths = [...selectedMigrationPaths];
+      if (paths.length === 0) {
+        statusText.textContent = '⚠️ 请先选择要修改访问范围的资料';
+        return;
+      }
+      const visibility = migrationTargetVisibility.value;
+      const tenant_id = migrationTargetTenant.value.trim();
+      const owner_user_id = migrationTargetUser.value.trim();
+      const agent_id = migrationTargetAgent.value.trim();
+      if ((visibility === 'tenant' || visibility === 'private') && !tenant_id) {
+        statusText.textContent = '⚠️ 工作区共享或用户私有资料必须填写工作区 ID';
+        return;
+      }
+      if (visibility === 'private' && !owner_user_id) {
+        statusText.textContent = '⚠️ 用户私有资料必须填写用户 ID';
+        return;
+      }
+      const selectedRecords = migrationRecords.filter(rec => selectedMigrationPaths.has(rec.path));
+      const modifiesConfirmed = selectedRecords.some(rec => !rec.needs_review);
+      const reason = modifiesConfirmed ? (window.prompt('请填写修改已确认资料访问范围的原因（必填）', '') || '').trim() : '';
+      if (modifiesConfirmed && !reason) {
+        statusText.textContent = '⚠️ 修改已确认资料时必须填写原因';
+        return;
+      }
+      if (!window.confirm(`确定修改 ${paths.length} 份资料的访问范围为“${visibility}”吗？`)) return;
+      try {
+        btnConfirmAccessMigration.disabled = true;
+        const resp = await fetch('/api/documents/access-migration/confirm', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paths, access: { visibility, tenant_id, owner_user_id, agent_id }, change_reason: reason }),
+        });
+        const data = await resp.json();
+        if (data.status !== 'ok') throw new Error(data.message || '访问范围修改失败');
+        statusText.textContent = `✅ 已更新 ${data.updated_sidecars || 0} 份资料访问范围，并同步索引 metadata`;
+        selectedMigrationPaths.clear();
+        await loadMigrationSummary();
+      } catch (e) {
+        statusText.textContent = '❌ 访问范围修改失败: ' + e.message;
+      } finally {
+        btnConfirmAccessMigration.disabled = false;
+        updateMigrationSelectionText();
+      }
+    }
+
+    async function showMigrationHistory(path) {
+      try {
+        const resp = await fetch(`/api/documents/profile-migration/history?path=${encodeURIComponent(path)}`);
+        const data = await resp.json();
+        if (data.status !== 'ok') throw new Error(data.message || '历史记录加载失败');
+        const events = Array.isArray(data.events) ? data.events : [];
+        if (!events.length) {
+          window.alert('该资料暂无 Profile 变更记录。');
+          return;
+        }
+        const text = events.map(event => {
+          const oldValue = event.old || {};
+          const newValue = event.new || {};
+          return `${event.changed_at || '-'} · ${event.changed_by || 'admin'}\n${oldValue.profile || '待确认'} / ${oldValue.category || '-'} → ${newValue.profile || '-'} / ${newValue.category || '-'}\n原因：${event.change_reason || '首次人工确认'}`;
+        }).join('\n\n');
+        window.alert(text);
+      } catch (e) {
+        statusText.textContent = '❌ Profile 变更记录加载失败: ' + e.message;
+      }
+    }
+
+    async function showAccessHistory(path) {
+      try {
+        const resp = await fetch(`/api/documents/access-migration/history?path=${encodeURIComponent(path)}`);
+        const data = await resp.json();
+        if (data.status !== 'ok') throw new Error(data.message || '历史记录加载失败');
+        const events = Array.isArray(data.events) ? data.events : [];
+        if (!events.length) { window.alert('该资料暂无访问范围变更记录。'); return; }
+        const lines = events.map((event, index) => {
+          const oldValue = event.old || {}; const newValue = event.new || {};
+          return `${index + 1}. ${event.changed_at || '-'} · ${event.changed_by || 'admin'}\n${oldValue.visibility || 'public'} → ${newValue.visibility || 'public'}\n原因：${event.change_reason || '-'}${event.action === 'access_reclassified' ? `\n输入 ${index + 1} 可回滚到此变更前版本` : ''}`;
+        });
+        const selected = window.prompt(lines.join('\n\n') + '\n\n输入需要回滚的序号，或取消关闭：', '');
+        if (!selected) return;
+        const event = events[Number(selected) - 1];
+        if (!event || event.action !== 'access_reclassified') throw new Error('请选择可回滚的访问范围变更');
+        const reason = window.prompt('请填写回滚原因（必填）', '');
+        if (!reason || !reason.trim()) return;
+        const rollbackResp = await fetch('/api/documents/access-migration/rollback', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({path, changed_at: event.changed_at, change_reason: reason.trim()}),
+        });
+        const rollbackData = await rollbackResp.json();
+        if (rollbackData.status !== 'ok') throw new Error(rollbackData.message || '回滚失败');
+        statusText.textContent = '✅ 已回滚资料访问范围，并同步索引 metadata';
+        await loadMigrationSummary();
+      } catch (e) { statusText.textContent = '❌ 访问范围历史操作失败: ' + e.message; }
     }
 
     async function proposeSelectedExtension() {
@@ -1087,6 +1174,7 @@
              profileConfidence: typeof ps.confidence === 'number' ? ps.confidence : 0,
              profileReason: ps.reason || '',
              profileConfirmed: false,
+             visibility: 'public',
              state: 'pending',
              isDup: sf.duplicate,
              checked: !sf.duplicate,
@@ -1214,6 +1302,7 @@
               profile_confidence: f.profileConfidence || 0,
               profile_reason: f.profileReason || '',
               profile_confirmed: true,
+              visibility: f.visibility || 'public',
             });
           } catch (e) {
             console.warn(`读取文件失败 ${f.name}: ${e.message}`);
@@ -1452,6 +1541,11 @@
           updateStats();
         }
       }
+      const visibilitySelect = e.target.closest('.visibility-select');
+      if (visibilitySelect) {
+        const f = files.find(x => x.id === visibilitySelect.dataset.id);
+        if (f) f.visibility = visibilitySelect.value;
+      }
     });
 
     fileRows.addEventListener('click', e => {
@@ -1490,6 +1584,16 @@
       updateMigrationSelectionText();
     });
 
+    migrationRows.addEventListener('click', e => {
+      const button = e.target.closest('.access-history');
+      if (button) showAccessHistory(button.dataset.path);
+    });
+
+    migrationRows.addEventListener('click', e => {
+      const historyBtn = e.target.closest('.migration-history');
+      if (historyBtn) showMigrationHistory(historyBtn.dataset.path);
+    });
+
     migrationSelectAll.addEventListener('change', () => {
       if (migrationSelectAll.checked) {
         for (const rec of migrationRecords) selectedMigrationPaths.add(rec.path);
@@ -1502,6 +1606,8 @@
     migrationTargetProfile.addEventListener('change', () => {
       migrationTargetCategory.value = getProfileCategory(migrationTargetProfile.value);
     });
+    migrationViewMode.addEventListener('change', filterMigrationRecords);
+    migrationSearch.addEventListener('input', filterMigrationRecords);
 
     // Batch action
     batchAction.addEventListener('change', () => {
@@ -1518,6 +1624,7 @@
     btnLoadMigration.addEventListener('click', loadMigrationSummary);
     btnApplyMigration.addEventListener('click', applyMigrationSummary);
     btnConfirmMigration.addEventListener('click', confirmSelectedMigration);
+    btnConfirmAccessMigration.addEventListener('click', confirmSelectedAccessMigration);
     btnProposeExtension.addEventListener('click', proposeSelectedExtension);
 
     // Stop
@@ -1565,7 +1672,6 @@
 
     // ─── Init ───────────────────────────────────────────────
     (async function initProfileRegistry() {
-      if (!documentToken()) return;
       try {
         const resp = await fetch('/api/documents/profile-registry');
         const data = await resp.json();
@@ -1573,7 +1679,7 @@
           profileRegistry = data.profiles;
         }
       } catch (e) {
-        statusText.textContent = 'Profile 注册表加载失败，请检查 Token 后重试';
+        statusText.textContent = 'Profile 注册表加载失败，请检查当前登录会话后重试';
         return;
       }
       renderProfileTargetOptions();
@@ -1623,5 +1729,6 @@
   })();
 
 </script>
+<script src="/static/page_i18n.js"></script>
 </body>
 </html>

@@ -75,6 +75,37 @@ def _filter_by_enabled_profiles(docs: list[dict], profiles: set[str]) -> list[di
         if normalized["profile"] in profiles
     ]
 
+
+def _filter_by_access_scope(docs: list[dict], access_scope: Optional[dict]) -> list[dict]:
+    """Enforce RAG visibility server-side; legacy corpus remains public."""
+    if not access_scope:
+        return docs
+    tenant_id = str(access_scope.get("tenant_id") or "")
+    user_id = str(access_scope.get("user_id") or "")
+    agent_id = str(access_scope.get("agent_id") or "")
+    knowledge_base_id = str(access_scope.get("knowledge_base_id") or "")
+    allowed = []
+    for doc in docs:
+        if knowledge_base_id:
+            doc_kb = str(doc.get("knowledge_base_id") or "")
+            # Legacy public entries have no KB metadata and remain visible only
+            # when the selected KB is the public baseline.
+            if doc_kb and doc_kb != knowledge_base_id:
+                continue
+            if not doc_kb and knowledge_base_id != "kb-public-general":
+                continue
+        visibility = str(doc.get("visibility") or "public")
+        if visibility == "public":
+            allowed.append(doc)
+        elif visibility == "tenant" and tenant_id and doc.get("tenant_id") == tenant_id:
+            allowed.append(doc)
+        elif visibility == "private" and tenant_id and user_id and (
+            doc.get("tenant_id") == tenant_id and doc.get("owner_user_id") == user_id
+            and (not doc.get("agent_id") or doc.get("agent_id") == agent_id)
+        ):
+            allowed.append(doc)
+    return allowed
+
 # ---- 熔断器（简单版，专给Reranker用） ----
 
 
@@ -299,6 +330,11 @@ class CyberRetriever:
                 "profile": pdata.get("profile", ""),
                 "scope": pdata.get("scope", ""),
                 "industry": pdata.get("industry", ""),
+                "visibility": pdata.get("visibility", "public"),
+                "tenant_id": pdata.get("tenant_id", ""),
+                "owner_user_id": pdata.get("owner_user_id", ""),
+                "agent_id": pdata.get("agent_id", ""),
+                "document_id": pdata.get("document_id", ""),
                 "score": 99.0,
                 "rerank_score": None,
                 "source": "parent_injection",
@@ -399,13 +435,18 @@ class CyberRetriever:
                 "profile": pdata.get("profile", ""),
                 "scope": pdata.get("scope", ""),
                 "industry": pdata.get("industry", ""),
+                "visibility": pdata.get("visibility", "public"),
+                "tenant_id": pdata.get("tenant_id", ""),
+                "owner_user_id": pdata.get("owner_user_id", ""),
+                "agent_id": pdata.get("agent_id", ""),
+                "document_id": pdata.get("document_id", ""),
             })
 
         self._bm25 = BM25Okapi(texts)
         self._bm25_docs = docs
         logger.info(f"BM25 索引构建完成: {len(docs)} 条 ({time.time() - t0:.2f}s)")
 
-    def _bm25_search(self, query: str, top_k: int) -> list[dict]:
+    def _bm25_search(self, query: str, top_k: int, access_scope: Optional[dict] = None) -> list[dict]:
         """BM25 关键词检索"""
         self._build_bm25_index()
         if not self._bm25_docs:
@@ -427,6 +468,7 @@ class CyberRetriever:
                 doc["source"] = "bm25"
                 results.append(doc)
 
+        results = _filter_by_access_scope(results, access_scope)
         elapsed = time.time() - t0
         logger.info(f"BM25 检索: {len(results)} 条 ({elapsed:.3f}s)")
         return results
@@ -490,7 +532,9 @@ class CyberRetriever:
             d.pop("_rrf_contrib", None)
         return sorted_docs[:top_k]
 
-    def _resolve_parent_docs(self, child_docs: list[dict], top_k: int) -> list[dict]:
+    def _resolve_parent_docs(
+        self, child_docs: list[dict], top_k: int, access_scope: Optional[dict] = None,
+    ) -> list[dict]:
         """将子chunk列表按 parent_id 分组去重，返回父节完整文本
 
         流程：
@@ -530,6 +574,16 @@ class CyberRetriever:
             parent_data = self._parent_index.get(pid)
             if not parent_data:
                 continue
+            parent_access = _filter_by_access_scope(
+                [{
+                    "visibility": parent_data.get("visibility", "public"),
+                    "tenant_id": parent_data.get("tenant_id", ""),
+                    "owner_user_id": parent_data.get("owner_user_id", ""),
+                    "agent_id": parent_data.get("agent_id", ""),
+                }], access_scope,
+            )
+            if not parent_access:
+                continue
             score, src = parent_best[pid]
             result.append({
                 "content": parent_data["text"],
@@ -541,6 +595,11 @@ class CyberRetriever:
                 "profile": parent_data.get("profile", ""),
                 "scope": parent_data.get("scope", ""),
                 "industry": parent_data.get("industry", ""),
+                "visibility": parent_data.get("visibility", "public"),
+                "tenant_id": parent_data.get("tenant_id", ""),
+                "owner_user_id": parent_data.get("owner_user_id", ""),
+                "agent_id": parent_data.get("agent_id", ""),
+                "document_id": parent_data.get("document_id", ""),
                 "score": score if not use_rerank_score else None,
                 "rerank_score": score if use_rerank_score else None,
                 "source": src,
@@ -561,6 +620,7 @@ class CyberRetriever:
         metadata_filter: Optional[MetadataFilterSpec | dict] = None,
         use_chroma_where: bool = False,
         profiles: Optional[set[str] | list[str] | tuple[str, ...]] = None,
+        access_scope: Optional[dict] = None,
     ) -> list[dict]:
         """执行检索
 
@@ -619,6 +679,11 @@ class CyberRetriever:
                             "profile": doc.metadata.get("profile", ""),
                             "scope": doc.metadata.get("scope", ""),
                             "industry": doc.metadata.get("industry", ""),
+                            "visibility": doc.metadata.get("visibility", "public"),
+                            "tenant_id": doc.metadata.get("tenant_id", ""),
+                            "owner_user_id": doc.metadata.get("owner_user_id", ""),
+                            "agent_id": doc.metadata.get("agent_id", ""),
+                            "document_id": doc.metadata.get("document_id", ""),
                             "score": round(score, 4),
                             "rerank_score": None,
                             "source": "faiss",
@@ -661,6 +726,11 @@ class CyberRetriever:
                             "profile": meta.get("profile", ""),
                             "scope": meta.get("scope", ""),
                             "industry": meta.get("industry", ""),
+                            "visibility": meta.get("visibility", "public"),
+                            "tenant_id": meta.get("tenant_id", ""),
+                            "owner_user_id": meta.get("owner_user_id", ""),
+                            "agent_id": meta.get("agent_id", ""),
+                            "document_id": meta.get("document_id", ""),
                             "score": round(results["distances"][0][j], 4),
                             "rerank_score": None,
                             "source": "chroma",
@@ -672,7 +742,7 @@ class CyberRetriever:
             # 双库都失败时，尝试 BM25 兜底
             logger.warning("双库检索均失败，尝试 BM25 兜底检索")
             try:
-                bm25_fallback = self._bm25_search(query, candidate_k)
+                bm25_fallback = self._bm25_search(query, candidate_k, access_scope)
                 if bm25_fallback:
                     logger.info(f"BM25 兜底成功: {len(bm25_fallback)} 条")
                     docs = bm25_fallback
@@ -687,14 +757,19 @@ class CyberRetriever:
 
         # ---- BM25 混合检索 + RRF 融合 ----
         if use_hybrid and seen:
-            bm25_results = self._bm25_search(query, candidate_k)
+            bm25_results = self._bm25_search(query, candidate_k, access_scope)
             trace["counts"]["bm25"] = len(bm25_results)
             if bm25_results:
                 docs = self._rrf_merge(docs, bm25_results, candidate_k)
         # ---------------------------------
         trace["counts"]["merged"] = len(docs)
 
-        # --- Profile scope filter: generic core is isolated from industry extensions by default. ---
+        # Access control is the first boundary. Profile narrowing is applied only
+        # to documents the caller is already allowed to see.
+        before_access = len(docs)
+        docs = _filter_by_access_scope(docs, access_scope)
+        trace["counts"]["after_access_filter"] = len(docs)
+        trace["access_filter_excluded"] = before_access - len(docs)
         before_profile = len(docs)
         docs = _filter_by_enabled_profiles(docs, enabled_profiles)
         trace["counts"]["after_profile_filter"] = len(docs)
@@ -734,6 +809,7 @@ class CyberRetriever:
             injected = self._inject_parent_sections(docs, doc_ids)
             if injected:
                 allowed_injected = _filter_by_enabled_profiles(injected, enabled_profiles)
+                allowed_injected = _filter_by_access_scope(allowed_injected, access_scope)
                 docs.extend(allowed_injected)
                 logger.info(f"父节注入: {len(allowed_injected)}/{len(injected)} 条通过 profile 过滤")
         # ------------------------
@@ -759,7 +835,7 @@ class CyberRetriever:
         trace["counts"]["after_rerank"] = len(docs)
 
         if use_parent:
-            docs = self._resolve_parent_docs(docs, top_k)
+            docs = self._resolve_parent_docs(docs, top_k, access_scope)
         else:
             docs = docs[:top_k]
         trace["counts"]["returned"] = len(docs)
@@ -786,6 +862,7 @@ class CyberRetriever:
         rerank_query: Optional[str] = None,
         use_chroma_where: bool = False,
         profiles: Optional[set[str] | list[str] | tuple[str, ...]] = None,
+        access_scope: Optional[dict] = None,
     ) -> list[dict]:
         """多 Query 召回后统一融合、过滤、重排和父文档聚合。"""
         unique_queries = []
@@ -812,6 +889,7 @@ class CyberRetriever:
                 metadata_filter=filter_spec,
                 use_chroma_where=use_chroma_where,
                 profiles=profiles,
+                access_scope=access_scope,
             )
             branch_results.append(docs)
             branch_traces.append(dict(self.last_trace))
@@ -833,7 +911,7 @@ class CyberRetriever:
             docs = sorted(docs, key=lambda x: x["score"])
 
         if use_parent:
-            docs = self._resolve_parent_docs(docs, top_k)
+            docs = self._resolve_parent_docs(docs, top_k, access_scope)
         else:
             docs = docs[:top_k]
 

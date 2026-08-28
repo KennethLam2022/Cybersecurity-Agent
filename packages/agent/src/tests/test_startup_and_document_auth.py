@@ -1,12 +1,13 @@
 from pathlib import Path
 
 
-def test_document_page_requires_token_before_profile_request():
+def test_document_page_uses_logged_in_user_session_for_management_requests():
     content = (Path(__file__).parents[1] / "static" / "data_preview.html").read_text(encoding="utf-8")
 
-    assert "if (!documentToken()) return;" in content
-    assert "showDocumentTokenModal('');" in content
-    assert "showDocumentTokenModal('Token 无效或已过期');" in content
+    assert "credentials = 'same-origin'" in content
+    assert "Authorization" not in content
+    assert "if (resp.status === 401) window.location.href = '/';" in content
+    assert "documentToken" not in content
 
 
 def test_retriever_does_not_build_bm25_during_constructor():

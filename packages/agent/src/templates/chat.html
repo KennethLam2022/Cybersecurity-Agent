@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>网络安全 Agent</title>
+<title>安枢 SecureNexus</title>
 <style>
 :root{--bg:#f5f5f7;--c:#fff;--t:#1d1d1f;--t2:#6e6e73;--b:#e5e5ea;--a:#0071e3;--g:#34c759;--f:-apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -33,19 +33,23 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;displ
 </head>
 <body>
 <div class="header">
-  <h1>网络安全知识助手</h1>
-  <div class="sub">基于行业标准法规的智能问答</div>
+  <h1>安枢 SecureNexus</h1>
+  <div class="sub">连接安全知识，驱动可信行动。</div>
 </div>
 <div class="chat" id="chat"></div>
 <div class="input-area">
   <div class="input-row">
+    <label for="input" class="sr-only">输入网络安全问题</label>
     <input type="text" id="input" placeholder="输入你的问题..." autofocus />
-    <button id="send-btn" onclick="send()">发送</button>
+    <button id="send-btn" aria-label="发送问题" onclick="send()">发送</button>
   </div>
   <div id="status" class="typing" style="display:none">Agent 正在思考</div>
 </div>
 
 <script>
+document.addEventListener('keydown', function(event) {
+  if (event.key === 'Escape') document.getElementById('input')?.focus();
+});
 let convId = null;
 
 function addMsg(role, text, sources) {

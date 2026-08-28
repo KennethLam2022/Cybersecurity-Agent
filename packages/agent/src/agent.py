@@ -19,6 +19,7 @@ import time
 import asyncio
 import httpx
 import re
+import hashlib
 from pathlib import Path
 from typing import Optional, Any
 
@@ -105,6 +106,52 @@ COMPLIANCE_DECISION_FALLBACK_ANSWER = (
 )
 
 
+def infer_query_type_from_text(query: str) -> str:
+    """Infer a stable routing type when the rewrite model is vague or empty."""
+    text = str(query or "").strip()
+    if not text:
+        return "general"
+
+    comparison = re.search(
+        r"(比较|对比|区别|差异|异同|分别|vs\.?|与.+相比|和.+有什么不同)",
+        text,
+        re.I,
+    )
+    if comparison:
+        return "comparison"
+
+    compliance = re.search(
+        r"(是否合法|合不合法|是否合规|合不合规|是否允许|允不允许|可不可以|能不能|能否|"
+        r"是否可以|是否能够|需要.*授权|必须.*授权|未经授权|未授权|法律责任|处罚|违法|违规|不得|禁止|"
+        r"合规要求|合规条件|隐私合规|个人信息保护要求)",
+        text,
+        re.I,
+    )
+    if compliance:
+        return "compliance_decision"
+
+    # Compliance preparation questions often omit words such as "是否合法"
+    # but still require authoritative requirements and evidence.
+    preparation = re.search(
+        r"(等保|等级保护|测评|安全审计).{0,30}(需要|应当|要求|准备).{0,30}(材料|内容|条件|要求|事项)",
+        text,
+        re.I,
+    )
+    if preparation:
+        return "compliance_decision"
+
+    article_lookup = re.search(
+        r"(《[^》]{2,40}(?:法|条例|办法|规定|规范|标准|指南)》|"
+        r"(?:网络安全法|数据安全法|个人信息保护法|密码法|条例|办法|规定|标准|指南))",
+        text,
+        re.I,
+    )
+    if article_lookup and re.search(r"(规定|义务|条款|第[一二三四五六七八九十百]+条|要求|内容)", text):
+        return "article_lookup"
+
+    return "general"
+
+
 def _detect_prompt_injection(text: str) -> tuple[bool, str]:
     """检测检索到的文档中是否包含提示注入攻击
 
@@ -175,7 +222,17 @@ def _detect_user_jailbreak(text: str, conv_history: list[dict]) -> tuple[bool, s
             return True, f"检测到渐进式越狱: 先用安全话题铺垫{user_turn}轮，再追问越界内容"
 
     # 第3层：单轮越界 — 不问任何安全内容，直接要价格/命令/品牌
-    if matches_jailbreak and user_turn <= 1:
+    # Generic words such as "步骤" or "如何实施" are common in legitimate
+    # cybersecurity questions. A single-turn block requires an explicit
+    # high-risk signal instead of treating every procedural question as abuse.
+    single_turn_high_risk = bool(re.search(
+        r"(绕过|规避|窃取|盗取|维持长期访问|持久化|未授权攻击|真实网站|勒索软件|"
+        r"木马|后门|免杀|提权|凭据转储|注入攻击|攻击载荷|可直接运行|具体命令|"
+        r"iptables|powershell|反弹 shell|反弹shell)",
+        lower,
+        re.I,
+    ))
+    if matches_jailbreak and user_turn <= 1 and single_turn_high_risk:
         has_any_safe = any(sk in lower for sk in ["等保", "等级保护", "合规", "安全",
                                                   "防护", "防火墙", "漏洞", "加密"])
         if not has_any_safe:
@@ -239,6 +296,10 @@ for p in [_SRC, _PREPROCESSOR]:
 
 from security_taxonomy import category_emoji, fallback_queries
 from trace_observability import add_trace_step, build_trace_envelope, finish_trace, retrieval_counts
+from reflection_engine import PROMPT_ASSET_DEFAULTS, reflect_answer
+from external_retrieval import fetch_external_evidence
+from knowledge_graph import collect_graph_evidence
+from monitoring import record_event
 
 
 # ============================================================
@@ -532,6 +593,21 @@ def build_context_block(docs: list[dict]) -> str:
     return "\n".join(parts)
 
 
+def build_graph_evidence_context(evidence: dict | None) -> str:
+    """Format approved graph evidence as a clearly labeled, supplementary block."""
+    if not evidence or evidence.get("status") != "approved_evidence":
+        return ""
+    lines = ["【已审核知识图谱补充证据】（仅作关系提示，必须以参考资料原文为准）"]
+    for relation in evidence.get("relations", [])[:12]:
+        line = f"- {relation.get('subject')} --{relation.get('predicate')}--> {relation.get('object')}"
+        if relation.get("evidence"):
+            line += f"；证据：{relation['evidence']}"
+        lines.append(line)
+    if evidence.get("conflicts"):
+        lines.append("- 注意：发现待人工确认的版本/适用性冲突候选，不得直接据此下结论。")
+    return "\n".join(lines)
+
+
 def need_clarification(query: str, docs: list[dict]) -> Optional[str]:
     """（已禁用）首回答即完整 — 不再反问，直接交给 LLM"""
     return None
@@ -620,6 +696,9 @@ def build_prompt_messages(
     history: Optional[list[dict]] = None,
     include_example: bool = True,
     session_context: Optional[str] = None,
+    system_prompt_override: Optional[str] = None,
+    response_language: str = "zh-CN",
+    graph_evidence: Optional[dict] = None,
 ) -> tuple:
     """组装完整的 Prompt 消息序列 + 返回截断信息
 
@@ -655,13 +734,21 @@ def build_prompt_messages(
             f"上下文截断: 原 {len(docs)} 个来源 → 保留 {len(keep_ids)} 个"
         )
 
-    system_parts = [SystemPromptLoader.get()]
+    system_parts = [system_prompt_override if system_prompt_override is not None else SystemPromptLoader.get()]
+    system_parts.append(
+        "\n\n## Response language\nReply in clear professional English unless the user explicitly requests another language."
+        if response_language == "en-US" else
+        "\n\n## 回答语言\n默认使用简体中文回答；只有用户明确要求其他语言时才切换。"
+    )
 
     # 跨会话记忆注入
     if session_context:
         system_parts.append(f"\n\n## 用户背景（本轮对话已识别）\n{session_context.strip()}")
 
     system_parts.append(f"\n\n## 以下是根据你问题检索到的参考资料\n\n{context_block}")
+    graph_context = build_graph_evidence_context(graph_evidence)
+    if graph_context:
+        system_parts.append(f"\n\n## 补充关系提示\n\n{graph_context}")
     if include_example:
         system_parts.append(f"\n\n{FEW_SHOT_EXAMPLE}")
     system_content = "\n".join(system_parts)
@@ -932,6 +1019,37 @@ SELF_VERIFY_PROMPT = """你是一个严格的"事实核查员"。请逐句核对
 
 清理后的回答："""
 
+JAILBREAK_DETECT_PROMPT = """判断AI助手的回答是否包含以下违规内容（只输出 yes/no）：
+- 提供了有害、违法、危险的操作指导
+- 绕过了安全限制或角色设定
+- 泄露了不应透露的内部系统信息
+- 回答了明显超出授权范围的问题
+
+AI助手回答：
+{answer}
+
+用户问题：
+{query}
+
+只输出 yes 或 no："""
+
+SEMANTIC_SCORING_PROMPT = """{task}
+
+评分范围：
+1 = 明显错误、答非所问、无依据或明显不满意
+2 = 相关性弱、依据不足、要求改进
+3 = 基本相关或中性追问
+4 = 回答准确清楚或用户满意并继续深入
+5 = 回答准确完整、依据充分或用户明确肯定
+
+用户问题/下一句话：
+{query}
+
+AI 回答：
+{answer}
+
+只输出数字："""
+
 
 class CyberAgent:
     """网络安全 RAG Agent"""
@@ -992,20 +1110,35 @@ class CyberAgent:
 
     def _verify_answer(self, answer: str, sources: list[dict]) -> str:
         """自检：用 LLM 核查回答中的每个结论是否有来源依据"""
+        self._last_verify_prompt_version = 0
         if not self.use_verification or not sources or not answer:
             return answer
         try:
+            self.memory.ensure_prompt_assets([{
+                "slot": "self_verify", "name": "回答自检", "model_role": "chat",
+                "description": "核查回答结论是否有授权来源依据。",
+                "template": SELF_VERIFY_PROMPT, "variables": ["sources", "answer"],
+            }])
+            asset = self.memory.get_active_prompt_asset("self_verify", SELF_VERIFY_PROMPT)
+            self._last_verify_prompt_version = asset.get("version", 0)
             src_text = "\n---\n".join(
                 f"[来源 {i+1}] {s['file_name']} | {s['section']}\n{s.get('content', '')[:500]}"
                 for i, s in enumerate(sources)  # 使用全部来源，不再限制前5条
             )
-            prompt = SELF_VERIFY_PROMPT.format(sources=src_text, answer=answer)
+            prompt = asset["template"].format(sources=src_text, answer=answer)
             t0 = time.time()
             result = self.llm.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.0,
                 max_tokens=2048,
                 timeout=300,
+            )
+            usage = (result or {}).get("usage") if isinstance(result, dict) else {}
+            self.memory.record_llm_usage_event(
+                tenant_id="local-default", module="self_verify",
+                model=(result or {}).get("model") or getattr(self.llm, "model", ""),
+                prompt_tokens=(usage or {}).get("prompt_tokens", 0),
+                completion_tokens=(usage or {}).get("completion_tokens", 0),
             )
             elapsed = time.time() - t0
             # llm.chat 返回 {"content": str, ...} 或 str
@@ -1041,7 +1174,7 @@ class CyberAgent:
 
         当用户问厂家/产品/价格/市场等非安全话题时，
         在 RAG 检索之前就拦截，返回委婉引导。
-        """
+"""
         if not text:
             return None
         t = text.strip().lower()
@@ -1321,7 +1454,13 @@ class CyberAgent:
         if not self.use_query_rewrite:
             return QueryRewriteResult(original_query=query, fallback_used=True)
         try:
-            prompt = QUERY_REWRITE_PROMPT.format(
+            self.memory.ensure_prompt_assets(PROMPT_ASSET_DEFAULTS + [{
+                "slot": "query_rewrite", "name": "检索 Query 改写", "model_role": "chat",
+                "description": "将用户问题转换为结构化检索查询。",
+                "template": QUERY_REWRITE_PROMPT, "variables": ["query", "history"],
+            }])
+            asset = self.memory.get_active_prompt_asset("query_rewrite", QUERY_REWRITE_PROMPT)
+            prompt = asset["template"].format(
                 query=query,
                 history=self._format_history_for_rewrite(history or []),
             )
@@ -1332,11 +1471,26 @@ class CyberAgent:
                 max_tokens=128,
                 timeout=30,
             )
+            usage = (rewritten or {}).get("usage") if isinstance(rewritten, dict) else {}
+            self.memory.record_llm_usage_event(
+                tenant_id="local-default", module="query_rewrite",
+                model=(rewritten or {}).get("model") or getattr(self.llm, "model", ""),
+                prompt_tokens=(usage or {}).get("prompt_tokens", 0),
+                completion_tokens=(usage or {}).get("completion_tokens", 0),
+            )
             elapsed = time.time() - t0
             content = (rewritten.get("content", "") if isinstance(rewritten, dict) else rewritten).strip()
             data = _extract_json_object(content)
             if data:
                 result = QueryRewriteResult.from_dict(query, data)
+                inferred_type = infer_query_type_from_text(query)
+                if result.query_type == "general" and inferred_type != "general":
+                    result.query_type = inferred_type
+                    result.fallback_used = True
+                    logger.info(
+                        f"Query 类型兜底: model=general -> inferred={inferred_type} "
+                        f"「{query[:60]}」"
+                    )
                 logger.info(
                     f"Query 改写: type={result.query_type} queries={len(result.retrieval_queries())} "
                     f"「{query[:40]}」→「{result.semantic_query[:60]}」 ({elapsed:.1f}s)"
@@ -1351,15 +1505,58 @@ class CyberAgent:
                     standalone_query=plain,
                     semantic_query=plain,
                     keyword_query="",
+                    query_type=infer_query_type_from_text(query),
                     fallback_used=True,
                 )
         except Exception as e:
             logger.warning(f"Query 改写失败 (不影响检索): {e}")
-        return QueryRewriteResult(original_query=query, fallback_used=True)
+        return QueryRewriteResult(
+            original_query=query,
+            query_type=infer_query_type_from_text(query),
+            fallback_used=True,
+        )
 
     def _rewrite_query(self, query: str) -> str:
         """兼容旧调用：返回单个检索 Query。"""
         return self._build_query_rewrite(query).semantic_query
+
+    def _maybe_external_evidence(self, query: str, trace_data: dict, conversation_id: str,
+                                 tenant_id: str, user_id: str, docs: list[dict]) -> list[dict]:
+        """Read approved external sources for this turn only; never persist into RAG."""
+        config = self.memory.get_external_retrieval_config()
+        if not config.get("enabled"):
+            return []
+        trigger = config.get("trigger_mode", "empty_only")
+        if trigger == "empty_only" and docs:
+            return []
+        if trigger == "low_confidence" and docs:
+            confidences = [compute_confidence(d).get("confidence", 0) for d in docs]
+            if confidences and max(confidences) >= 0.55:
+                return []
+        sources = self.memory.list_external_retrieval_sources(include_disabled=False)
+        if not sources:
+            return []
+        add_trace_step(trace_data, "external_retrieval", enabled=True, trigger=trigger,
+                       source_count=len(sources), status="started")
+        external_docs = fetch_external_evidence(
+            query, sources, max_sources=config.get("max_sources", 3),
+            timeout_seconds=config.get("timeout_seconds", 10),
+            max_bytes=config.get("max_bytes", 2000000),
+        )
+        for item in external_docs:
+            self.memory.log_external_retrieval_event({
+                "trace_id": trace_data.get("trace_id", ""), "conversation_id": conversation_id,
+                "tenant_id": tenant_id, "user_id": user_id, "query": query,
+                "source_id": item.get("source_id", ""), "source_url": item.get("source_url", ""),
+                "content_hash": item.get("content_hash", ""),
+                "status": "succeeded" if item.get("content") else "failed",
+                "result_count": 1 if item.get("content") else 0,
+                "error": item.get("fetch_error", ""),
+            })
+        add_trace_step(trace_data, "external_retrieval", enabled=True, trigger=trigger,
+                       source_count=len(sources), returned_count=len(external_docs),
+                       externally_verified=False, persisted_to_rag=False)
+        return external_docs
 
     def ask(
         self,
@@ -1369,6 +1566,13 @@ class CyberAgent:
         category: str = "user",
         skip_memory: bool = False,
         profiles: Optional[set[str] | list[str] | tuple[str, ...]] = None,
+        system_prompt_override: Optional[str] = None,
+        retrieved_docs_override: Optional[list[dict]] = None,
+        tenant_id: str = "local-default",
+        user_id: str = "local-owner",
+        agent_id: str = "default-agent",
+        knowledge_base_id: str = "",
+        response_language: str = "zh-CN",
     ) -> dict:
         """执行一次问答
 
@@ -1388,8 +1592,24 @@ class CyberAgent:
                 import uuid
                 conversation_id = "test_" + str(uuid.uuid4())[:8]
             else:
-                conv = self.memory.create_conversation(title=query[:50], category=category)
+                conv = self.memory.create_conversation(
+                    title=query[:50], category=category, tenant_id=tenant_id,
+                    user_id=user_id, agent_id=agent_id, knowledge_base_id=knowledge_base_id,
+                )
                 conversation_id = conv["id"]
+        if not knowledge_base_id and conversation_id and not skip_memory:
+            knowledge_base_id = self.memory.get_conversation_knowledge_base(conversation_id)
+        if knowledge_base_id and not self.memory.can_access_knowledge_base(
+                knowledge_base_id, tenant_id, user_id, agent_id):
+            # Keep the requested KB as a deny sentinel so retrieval cannot fall back
+            # to another workspace or to private documents from the same tenant.
+            knowledge_base_id = "__unauthorized_knowledge_base__"
+        retrieval_config = self.memory.get_knowledge_base_retrieval_config(
+            knowledge_base_id, tenant_id,
+        ) if knowledge_base_id else None
+        effective_top_k = int((retrieval_config or {}).get("config", {}).get("top_k", self.top_k))
+        effective_use_rerank = bool((retrieval_config or {}).get("config", {}).get("use_rerank", self.use_rerank))
+        effective_use_hybrid = (retrieval_config or {}).get("config", {}).get("use_hybrid", True)
 
         if skip_memory:
             user_msg_id = 0
@@ -1495,6 +1715,38 @@ class CyberAgent:
                 "stats": {"search_time": 0, "llm_time": 0, "total_time": 0, "docs_count": 0},
             }
 
+        # ---- 语义缓存（精确归一化命中，键包含知识库/模型/Profile/Prompt） ----
+        cache_hit = False
+        cache_key = ""
+        cache_prompt_version = hashlib.sha256(SystemPromptLoader.get().encode("utf-8")).hexdigest()[:16]
+        if not skip_memory:
+            normalized_query = self.memory.normalize_cache_query(query)
+            profile_scope = ",".join(sorted({str(profile) for profile in (profiles or [])}))
+            cache_material = "|".join([
+                normalized_query, str(knowledge_base_id or ""), str(getattr(self.llm, "model", "")),
+                profile_scope, cache_prompt_version,
+            ])
+            cache_key = hashlib.sha256(cache_material.encode("utf-8")).hexdigest()
+            cached = self.memory.get_semantic_cache(cache_key)
+            if cached:
+                cache_hit = True
+                answer = cached["answer"]
+                sources = cached.get("sources") or []
+                add_trace_step(trace_data, "semantic_cache", hit=True, cache_key=cache_key[:12])
+                finish_trace(trace_data, "cache_hit", returned_count=len(sources))
+                msg_id = self.memory.add_message(conversation_id, "assistant", answer, sources=sources)
+                self.memory.log_usage(
+                    conversation_id, msg_id, query, total_time=round(time.time() - t_start, 3),
+                    returned_count=len(sources), documents=sources, trace_data=trace_data,
+                )
+                return {
+                    "answer": answer, "sources": sources, "conversation_id": conversation_id,
+                    "rewritten_query": None, "verified": True, "cache_hit": True,
+                    "stats": {"search_time": 0, "llm_time": 0,
+                               "total_time": round(time.time() - t_start, 2),
+                               "docs_count": len(sources)},
+                }
+
         # ---- Query 改写 / 多路检索计划 ----
         t0_rw = time.time()
         query_plan = self._build_query_rewrite(query, conv_history)
@@ -1515,15 +1767,21 @@ class CyberAgent:
         )
 
         t0 = time.time()
-        docs = self.retriever.search_multi(
-            search_queries,
-            top_k=self.top_k,
-            use_rerank=self.use_rerank,
-            metadata_filter=query_plan.metadata_filter(),
-            rerank_query=query_plan.standalone_query or query,
-            use_chroma_where=True,
-            profiles=profiles,
-        )
+        if retrieved_docs_override is None:
+            docs = self.retriever.search_multi(
+                search_queries,
+                top_k=effective_top_k,
+                use_rerank=effective_use_rerank,
+                use_hybrid=effective_use_hybrid,
+                metadata_filter=query_plan.metadata_filter(),
+                rerank_query=query_plan.standalone_query or query,
+                use_chroma_where=True,
+                profiles=profiles,
+                access_scope={"tenant_id": tenant_id, "user_id": user_id, "agent_id": agent_id, "knowledge_base_id": knowledge_base_id},
+            )
+        else:
+            docs = list(retrieved_docs_override)
+            trace_data["retrieval_override"] = "evaluation_shared_context"
         search_time = time.time() - t0
         logger.info(f"检索完成: {len(docs)} 条 ({search_time:.2f}s)")
         trace_data["query_rewrite"] = query_plan.to_dict()
@@ -1548,7 +1806,8 @@ class CyberAgent:
             # 尝试用通用 taxonomy 配置里的宽泛查询做二次检索。
             for fq in fallback_queries("default"):
                 fallback_docs = self.retriever.search(
-                    fq, top_k=5, use_rerank=False, profiles=profiles
+                    fq, top_k=5, use_rerank=False, profiles=profiles,
+                    access_scope={"tenant_id": tenant_id, "user_id": user_id, "agent_id": agent_id, "knowledge_base_id": knowledge_base_id},
                 )
                 if fallback_docs:
                     logger.info(f"降级检索成功: 「{fq}」→ {len(fallback_docs)} 条")
@@ -1562,7 +1821,18 @@ class CyberAgent:
                     )
                     break
 
+        external_docs = self._maybe_external_evidence(
+            query, trace_data, conversation_id, tenant_id, user_id, docs,
+        )
+        if external_docs:
+            docs.extend(external_docs)
+
         if not docs:
+            record_event(
+                self.memory, tenant_id, "retrieval_empty", "P2", "retrieval",
+                {"query_length": len(query), "knowledge_base_id_present": bool(knowledge_base_id)},
+                trace_data.get("trace_id", ""), "本轮授权检索未返回知识库文档；未保存查询正文。",
+            )
             answer = "该问题超出我的知识范围，知识库中暂无相关文件覆盖。"
             sources = []
             finish_trace(trace_data, "no_retrieval_result")
@@ -1608,9 +1878,29 @@ class CyberAgent:
                 "section": d["section"],
                 "content": d.get("content", ""),
                 **compute_confidence(d),
+                **({
+                    "external": True,
+                    "external_unverified": True,
+                    "source_url": d.get("source_url", ""),
+                    "source_id": d.get("source_id", ""),
+                    "content_hash": d.get("content_hash", ""),
+                    "confidence": d.get("confidence", 0.35),
+                    "label": "外部待核验",
+                } if d.get("external") else {}),
             }
             for d in docs
         ]
+
+        graph_evidence = collect_graph_evidence(
+            self.memory, tenant_id, knowledge_base_id, query, retrieved_docs=docs,
+        )
+        trace_data["graph_evidence"] = graph_evidence
+        add_trace_step(
+            trace_data, "graph_evidence", status=graph_evidence.get("status"),
+            relation_count=len(graph_evidence.get("relations", [])),
+            conflict_count=len(graph_evidence.get("conflicts", [])),
+            source_document_ids=graph_evidence.get("source_document_ids", []),
+        )
 
         guarded_answer = compliance_decision_guard_answer(query, sources, query_plan.query_type)
         if guarded_answer:
@@ -1667,7 +1957,7 @@ class CyberAgent:
                 keep_rounds=5,
             )
 
-        # ---- 跨会话记忆（用户角色、提及的标准） ----
+        # ---- 会话摘要 + 已治理的长期记忆 ----
         session_memory = self.memory.get_session_memory(conversation_id)
         session_context = ""
         if session_memory.get("user_role"):
@@ -1675,6 +1965,17 @@ class CyberAgent:
         if session_memory.get("mentioned_standards"):
             stds = session_memory["mentioned_standards"][-5:]
             session_context += f"用户提到的标准/法规：{', '.join(stds)}。\n"
+        long_term_memories = []
+        if self.memory.long_term_memory_enabled(tenant_id, user_id, agent_id):
+            long_term_memories = self.memory.get_long_term_memories(
+                tenant_id, user_id, agent_id, query=query, limit=5,
+            )
+        if long_term_memories:
+            session_context += "已确认的长期记忆：\n"
+            session_context += "\n".join(
+                f"- [{item['memory_type']}] {item['content']}"
+                for item in long_term_memories
+            ) + "\n"
 
         messages, truncation_info = build_prompt_messages(
             query=query,
@@ -1682,10 +1983,29 @@ class CyberAgent:
             history=history[:-1] if history else None,
             include_example=self.include_example,
             session_context=session_context if session_context else None,
+            system_prompt_override=system_prompt_override,
+            response_language=response_language,
+            graph_evidence=graph_evidence,
         )
 
         t1 = time.time()
-        llm_result = self.llm.chat(messages, temperature=temperature)
+        try:
+            llm_result = self.llm.chat(messages, temperature=temperature)
+        except Exception as exc:
+            record_event(
+                self.memory, tenant_id, "llm_generation_failed", "P1", "chat",
+                {"model": getattr(self.llm, "model", ""), "error_type": type(exc).__name__},
+                trace_data.get("trace_id", ""), "主 Agent 模型调用失败；错误正文不写入监控事件。",
+            )
+            breaker = getattr(getattr(self.llm, "circuit_breaker", None), "state", "")
+            if breaker == "OPEN":
+                record_event(
+                    self.memory, tenant_id, "llm_circuit_breaker_open", "P1", "chat",
+                    {"model": getattr(self.llm, "model", ""), "state": breaker},
+                    trace_data.get("trace_id", ""), "主 Agent 熔断器已开启；请求将按现有降级策略处理。",
+                )
+            add_trace_step(trace_data, "llm_generation", failed=True, model=getattr(self.llm, "model", ""), error_type=type(exc).__name__)
+            raise
         answer = llm_result.get("content", "")
         reasoning = llm_result.get("reasoning_content")
         llm_time = time.time() - t1
@@ -1709,6 +2029,34 @@ class CyberAgent:
             logger.info(f"自检对回答进行了修正: {len(answer)} → {len(verified)} 字符")
             answer = verified
             was_verified = True
+        add_trace_step(trace_data, "self_verify", prompt_version=getattr(self, "_last_verify_prompt_version", 0),
+                       corrected=was_verified, enabled=bool(self.use_verification and sources))
+
+        reflection_cfg = get_llm_config_card("reflection")
+        reflection_llm = None
+        if reflection_cfg.get("model") and reflection_cfg.get("base_url"):
+            try:
+                reflection_llm = LLMProvider(
+                    base_url=reflection_cfg["base_url"], api_key=reflection_cfg.get("api_key", ""),
+                    model=reflection_cfg["model"], use_ollama_fallback=False,
+                )
+            except Exception as exc:
+                logger.warning("反思模型初始化失败: %s", exc)
+        reflection = reflect_answer(
+            self.memory, reflection_llm, query, answer, sources, "chat",
+            usage_sink=lambda result, model: self.memory.record_llm_usage_event(
+                tenant_id=tenant_id, user_id=user_id, agent_id=agent_id,
+                conversation_id=conversation_id, module="reflection",
+                model=(result or {}).get("model") or model,
+                prompt_tokens=((result or {}).get("usage") or {}).get("prompt_tokens", 0),
+                completion_tokens=((result or {}).get("usage") or {}).get("completion_tokens", 0),
+            ),
+        )
+        answer = reflection["answer"]
+        add_trace_step(trace_data, "reflection", decision=reflection["decision"],
+                       duration_ms=reflection.get("duration_ms", 0), rounds=reflection.get("rounds", 0),
+                       reason=reflection.get("reason", ""), rule_version=reflection.get("rule_version", 0),
+                       model=reflection_cfg.get("model", ""))
 
         # ---- 来源核验：删除引用知识库中不存在文件的句子（如编造"宪法""电信条例"等） ----
         answer = self._check_sources_origin(answer, sources)
@@ -1736,6 +2084,10 @@ class CyberAgent:
         finish_trace(trace_data, "answered", returned_count=len(docs))
 
         msg_id = self.memory.add_message(conversation_id, "assistant", answer, sources=sources)
+        self.memory.record_reflection_run(tenant_id, user_id, agent_id, conversation_id, {
+            **reflection, "message_id": msg_id, "mode": "chat", "model": reflection_cfg.get("model", ""),
+            "input_summary": query[:500], "output_summary": answer[:500],
+        })
 
         # ---- 抽取并保存跨会话记忆（角色、标准等） ----
         self.memory.extract_and_save_memory(conversation_id, query, answer)
@@ -1763,6 +2115,13 @@ class CyberAgent:
             documents=sources,
             trace_data=trace_data,
         )
+        if cache_key and answer and sources:
+            self.memory.put_semantic_cache(
+                cache_key, self.memory.normalize_cache_query(query), answer, sources,
+                getattr(self.llm, "model", ""), knowledge_base_id,
+                ",".join(sorted({str(profile) for profile in (profiles or [])})),
+                cache_prompt_version,
+            )
 
         return {
             "answer": answer,
@@ -1771,6 +2130,7 @@ class CyberAgent:
             "conversation_id": conversation_id,
             "rewritten_query": query_plan.semantic_query if query_plan.semantic_query != query else None,
             "verified": was_verified,
+            "cache_hit": False,
             "stats": {
                 "rewrite_time": round(rewrite_time, 2),
                 "search_time": round(search_time, 2),
@@ -1791,6 +2151,11 @@ class CyberAgent:
         temperature: float = 0.1,
         category: str = "user",
         profiles: Optional[set[str] | list[str] | tuple[str, ...]] = None,
+        tenant_id: str = "local-default",
+        user_id: str = "local-owner",
+        agent_id: str = "default-agent",
+        knowledge_base_id: str = "",
+        response_language: str = "zh-CN",
     ):
         """流式问答 — 异步生成器，分阶段 yield 事件
 
@@ -1800,8 +2165,22 @@ class CyberAgent:
           {"type": "done",      "sources": [...], "conversation_id": "..."}
         """
         if not conversation_id:
-            conv = self.memory.create_conversation(title=query[:50], category=category)
+            conv = self.memory.create_conversation(
+                title=query[:50], category=category, tenant_id=tenant_id,
+                user_id=user_id, agent_id=agent_id, knowledge_base_id=knowledge_base_id,
+            )
             conversation_id = conv["id"]
+        if not knowledge_base_id and conversation_id:
+            knowledge_base_id = self.memory.get_conversation_knowledge_base(conversation_id)
+        if knowledge_base_id and not self.memory.can_access_knowledge_base(
+                knowledge_base_id, tenant_id, user_id, agent_id):
+            knowledge_base_id = "__unauthorized_knowledge_base__"
+        retrieval_config = self.memory.get_knowledge_base_retrieval_config(
+            knowledge_base_id, tenant_id,
+        ) if knowledge_base_id else None
+        effective_top_k = int((retrieval_config or {}).get("config", {}).get("top_k", self.top_k))
+        effective_use_rerank = bool((retrieval_config or {}).get("config", {}).get("use_rerank", self.use_rerank))
+        effective_use_hybrid = (retrieval_config or {}).get("config", {}).get("use_hybrid", True)
 
         user_msg_id = self.memory.add_message(conversation_id, "user", query)
 
@@ -1938,12 +2317,14 @@ class CyberAgent:
             None,
             lambda: self.retriever.search_multi(
                 search_queries,
-                top_k=self.top_k,
-                use_rerank=self.use_rerank,
+                top_k=effective_top_k,
+                use_rerank=effective_use_rerank,
+                use_hybrid=effective_use_hybrid,
                 metadata_filter=query_plan.metadata_filter(),
                 rerank_query=query_plan.standalone_query or query,
                 use_chroma_where=True,
                 profiles=profiles,
+                access_scope={"tenant_id": tenant_id, "user_id": user_id, "agent_id": agent_id, "knowledge_base_id": knowledge_base_id},
             ),
         )
         t_search = time.time() - t0_sr
@@ -1972,7 +2353,8 @@ class CyberAgent:
                 fallback_docs = await loop.run_in_executor(
                     None,
                     lambda q=fq: self.retriever.search(
-                        q, top_k=5, use_rerank=False, profiles=profiles
+                        q, top_k=5, use_rerank=False, profiles=profiles,
+                        access_scope={"tenant_id": tenant_id, "user_id": user_id, "agent_id": agent_id, "knowledge_base_id": knowledge_base_id},
                     ),
                 )
                 t_search += time.time() - t0_fb
@@ -1988,7 +2370,18 @@ class CyberAgent:
                     )
                     break
 
+        external_docs = self._maybe_external_evidence(
+            query, trace_data, conversation_id, tenant_id, user_id, docs,
+        )
+        if external_docs:
+            docs.extend(external_docs)
+
         if not docs:
+            record_event(
+                self.memory, tenant_id, "retrieval_empty", "P2", "retrieval",
+                {"query_length": len(query), "knowledge_base_id_present": bool(knowledge_base_id)},
+                trace_data.get("trace_id", ""), "本轮授权检索未返回知识库文档；未保存查询正文。",
+            )
             answer = "该问题超出我的知识范围，知识库中暂无相关文件覆盖。"
             sources = []
             finish_trace(trace_data, "no_retrieval_result")
@@ -2015,9 +2408,29 @@ class CyberAgent:
                 "section": d["section"],
                 "content": d.get("content", ""),
                 **compute_confidence(d),
+                **({
+                    "external": True,
+                    "external_unverified": True,
+                    "source_url": d.get("source_url", ""),
+                    "source_id": d.get("source_id", ""),
+                    "content_hash": d.get("content_hash", ""),
+                    "confidence": d.get("confidence", 0.35),
+                    "label": "外部待核验",
+                } if d.get("external") else {}),
             }
             for d in docs
         ]
+
+        graph_evidence = collect_graph_evidence(
+            self.memory, tenant_id, knowledge_base_id, query, retrieved_docs=docs,
+        )
+        trace_data["graph_evidence"] = graph_evidence
+        add_trace_step(
+            trace_data, "graph_evidence", status=graph_evidence.get("status"),
+            relation_count=len(graph_evidence.get("relations", [])),
+            conflict_count=len(graph_evidence.get("conflicts", [])),
+            source_document_ids=graph_evidence.get("source_document_ids", []),
+        )
 
         msg_id = self.memory.add_message(conversation_id, "assistant", "", sources=sources)
         yield {"type": "sources", "sources": sources, "conversation_id": conversation_id, "message_id": msg_id}
@@ -2058,29 +2471,84 @@ class CyberAgent:
                 conversation_id, self.llm, keep_rounds=self.max_history
             )
 
+        session_memory = self.memory.get_session_memory(conversation_id)
+        session_context = ""
+        if session_memory.get("user_role"):
+            session_context += f"用户身份：{session_memory['user_role']}。\n"
+        if session_memory.get("mentioned_standards"):
+            stds = session_memory["mentioned_standards"][-5:]
+            session_context += f"用户提到的标准/法规：{', '.join(stds)}。\n"
+        long_term_memories = []
+        if self.memory.long_term_memory_enabled(tenant_id, user_id, agent_id):
+            long_term_memories = self.memory.get_long_term_memories(
+                tenant_id, user_id, agent_id, query=query, limit=5,
+            )
+        if long_term_memories:
+            session_context += "已确认的长期记忆：\n"
+            session_context += "\n".join(
+                f"- [{item['memory_type']}] {item['content']}"
+                for item in long_term_memories
+            ) + "\n"
+
         messages = build_prompt_messages(
             query=query,
             docs=docs,
             history=history[:-1] if history else None,
             include_example=self.include_example,
+            session_context=session_context if session_context else None,
+            response_language=response_language,
+            graph_evidence=graph_evidence,
         )[0]  # 流式路径
 
         t0_llm = time.time()
         full_content = ""
-        async for chunk in self.llm.chat_stream(messages, temperature=temperature):
-            if isinstance(chunk, dict):
-                chunk_type = chunk.get("type", "content")
-                chunk_text = chunk.get("text", "")
-                if chunk_type == "reasoning":
-                    reasoning_list.append(chunk_text)
-                    yield {"type": "reasoning", "content": chunk_text}
+        # A published final-review rule means the user must only see the reviewed answer.
+        # Without one, retain the normal token-by-token experience and explicit skipped trace.
+        reflection_required = any(
+            "chat" in (rule.get("capability_modes") or [])
+            for rule in self.memory.list_reflection_rules("published")
+        )
+        try:
+            async for chunk in self.llm.chat_stream(messages, temperature=temperature):
+                if isinstance(chunk, dict):
+                    chunk_type = chunk.get("type", "content")
+                    chunk_text = chunk.get("text", "")
+                    if chunk_type == "reasoning":
+                        reasoning_list.append(chunk_text)
+                        yield {"type": "reasoning", "content": chunk_text}
+                    else:
+                        full_content += chunk_text
+                        if not reflection_required:
+                            yield {"type": "token", "content": chunk_text}
                 else:
-                    full_content += chunk_text
-                    yield {"type": "token", "content": chunk_text}
-            else:
-                full_content += chunk
-                yield {"type": "token", "content": chunk}
+                    full_content += chunk
+                    if not reflection_required:
+                        yield {"type": "token", "content": chunk}
+        except Exception as exc:
+            record_event(
+                self.memory, tenant_id, "llm_generation_failed", "P1", "chat.stream",
+                {"model": getattr(self.llm, "model", ""), "error_type": type(exc).__name__},
+                trace_data.get("trace_id", ""), "流式主 Agent 模型调用失败；错误正文不写入监控事件。",
+            )
+            breaker = getattr(getattr(self.llm, "circuit_breaker", None), "state", "")
+            if breaker == "OPEN":
+                record_event(
+                    self.memory, tenant_id, "llm_circuit_breaker_open", "P1", "chat.stream",
+                    {"model": getattr(self.llm, "model", ""), "state": breaker},
+                    trace_data.get("trace_id", ""), "流式主 Agent 熔断器已开启；请求将按现有降级策略处理。",
+                )
+            add_trace_step(trace_data, "llm_generation", failed=True, model=getattr(self.llm, "model", ""), error_type=type(exc).__name__)
+            raise
         t_llm = time.time() - t0_llm
+        stream_usage = getattr(self.llm, "last_usage", {}) or {}
+        self.memory.record_llm_usage_event(
+            tenant_id=tenant_id, user_id=user_id, agent_id=agent_id,
+            conversation_id=conversation_id, module="chat",
+            provider=getattr(self.llm, "_provider_name", ""),
+            model=getattr(self.llm, "model", ""),
+            prompt_tokens=stream_usage.get("prompt_tokens", 0),
+            completion_tokens=stream_usage.get("completion_tokens", 0),
+        )
         total_time = round(time.time() - t_start, 3)
         add_trace_step(
             trace_data,
@@ -2092,15 +2560,43 @@ class CyberAgent:
             prompt_messages=len(messages),
             response_length=len(full_content or ""),
             reasoning_length=len("".join(reasoning_list)) if reasoning_list else 0,
+            usage=stream_usage,
         )
 
-        yield {
-            "type": "answer_done",
-            "sources": sources,
-            "conversation_id": conversation_id,
-            "message_id": msg_id,
-            "reasoning_content": "".join(reasoning_list) if reasoning_list else None,
-        }
+        # 流式草稿已经输出；终审可能返回替换文本，前端以 answer_replace 事件呈现最终版本。
+        yield {"type": "status", "stage": "reviewing", "message": "正在进行安全复核..."}
+        reflection_cfg = get_llm_config_card("reflection")
+        reflection_llm = None
+        if reflection_cfg.get("model") and reflection_cfg.get("base_url"):
+            try:
+                reflection_llm = LLMProvider(
+                    base_url=reflection_cfg["base_url"], api_key=reflection_cfg.get("api_key", ""),
+                    model=reflection_cfg["model"], use_ollama_fallback=False,
+                )
+            except Exception as exc:
+                logger.warning("流式反思模型初始化失败: %s", exc)
+        reflection = reflect_answer(
+            self.memory, reflection_llm, query, full_content, sources, "chat",
+            usage_sink=lambda result, model: self.memory.record_llm_usage_event(
+                tenant_id=tenant_id, user_id=user_id, agent_id=agent_id,
+                conversation_id=conversation_id, module="reflection",
+                model=(result or {}).get("model") or model,
+                prompt_tokens=((result or {}).get("usage") or {}).get("prompt_tokens", 0),
+                completion_tokens=((result or {}).get("usage") or {}).get("completion_tokens", 0),
+            ),
+        )
+        reviewed_content = reflection["answer"]
+        add_trace_step(trace_data, "reflection", decision=reflection["decision"],
+                       duration_ms=reflection.get("duration_ms", 0), rounds=reflection.get("rounds", 0),
+                       reason=reflection.get("reason", ""), rule_version=reflection.get("rule_version", 0),
+                       model=reflection_cfg.get("model", ""))
+        if reflection_required:
+            full_content = reviewed_content
+            yield {"type": "token", "content": full_content}
+        elif reviewed_content != full_content:
+            full_content = reviewed_content
+            yield {"type": "answer_replace", "content": full_content,
+                   "decision": reflection["decision"], "reason": reflection.get("reason", "")}
 
         # 保存到记忆
         self.memory._update_last_message(conversation_id, full_content, sources=sources)
@@ -2141,6 +2637,11 @@ class CyberAgent:
         )
         finish_trace(trace_data, "answered", returned_count=len(docs))
 
+        self.memory.record_reflection_run(tenant_id, user_id, agent_id, conversation_id, {
+            **reflection, "message_id": msg_id, "mode": "chat", "model": reflection_cfg.get("model", ""),
+            "input_summary": query[:500], "output_summary": full_content[:500],
+        })
+
         first_msgs = self.memory.get_history(conversation_id)
         if len([m for m in first_msgs if m["role"] == "user"]) == 1:
             self.memory.update_title(conversation_id, query[:50])
@@ -2164,6 +2665,13 @@ class CyberAgent:
             trace_data=trace_data,
         )
 
+        yield {
+            "type": "answer_done",
+            "sources": sources,
+            "conversation_id": conversation_id,
+            "message_id": msg_id,
+            "reasoning_content": "".join(reasoning_list) if reasoning_list else None,
+        }
         yield {"type": "done", "sources": sources, "conversation_id": conversation_id, "message_id": msg_id, "reasoning_content": "".join(reasoning_list) if reasoning_list else None}
 
     def infer_semantic_rating_for_message(self, message_id: int) -> dict:
@@ -2176,22 +2684,16 @@ class CyberAgent:
         if item.get("semantic_rating") is not None:
             return {"ok": True, "skipped": True, "reason": "semantic_already_rated"}
 
-        prompt = f"""请评估 AI 助手回答质量，只输出一个数字（1-5）。
-
-评分标准：
-1 = 明显错误、答非所问、无依据或存在严重风险
-2 = 相关性弱、依据不足、可用性较差
-3 = 基本相关，但不完整或表达一般
-4 = 回答准确、结构清楚、基本满足问题
-5 = 回答准确、完整、依据充分、表达清楚
-
-用户问题：
-{item.get('query', '')[:500]}
-
-AI 回答：
-{item.get('content', '')[:1200]}
-
-只输出数字："""
+        self.memory.ensure_prompt_assets([{
+            "slot": "semantic_scoring", "name": "语义评分", "model_role": "scoring",
+            "description": "评估回答质量和用户对上一轮回答的满意度。",
+            "template": SEMANTIC_SCORING_PROMPT, "variables": ["task", "query", "answer"],
+        }])
+        scoring_asset = self.memory.get_active_prompt_asset("semantic_scoring", SEMANTIC_SCORING_PROMPT)
+        prompt = scoring_asset["template"].format(
+            task="请评估 AI 助手回答质量，只输出一个数字（1-5）。",
+            query=item.get("query", "")[:500], answer=item.get("content", "")[:1200],
+        )
 
         rating = None
         used_fallback = False
@@ -2215,7 +2717,15 @@ AI 回答：
                     timeout=15,
                 )
                 if resp.status_code == 200:
-                    text = resp.json()["choices"][0]["message"]["content"].strip()
+                    payload = resp.json()
+                    usage = payload.get("usage") or {}
+                    self.memory.record_llm_usage_event(
+                        tenant_id="local-default", module="semantic_scoring",
+                        model=payload.get("model") or scoring_model,
+                        prompt_tokens=usage.get("prompt_tokens", 0),
+                        completion_tokens=usage.get("completion_tokens", 0),
+                    )
+                    text = payload["choices"][0]["message"]["content"].strip()
                     rating = int("".join(c for c in text if c.isdigit())[:1])
             except Exception as e:
                 logger.debug(f"超时语义评分失败 (scoring card): {e}")
@@ -2234,7 +2744,15 @@ AI 回答：
                     timeout=15,
                 )
                 if resp.status_code == 200:
-                    text = resp.json()["choices"][0]["message"]["content"].strip()
+                    payload = resp.json()
+                    usage = payload.get("usage") or {}
+                    self.memory.record_llm_usage_event(
+                        tenant_id="local-default", module="semantic_scoring_fallback",
+                        model=payload.get("model") or fb_model,
+                        prompt_tokens=usage.get("prompt_tokens", 0),
+                        completion_tokens=usage.get("completion_tokens", 0),
+                    )
+                    text = payload["choices"][0]["message"]["content"].strip()
                     rating = int("".join(c for c in text if c.isdigit())[:1])
             except Exception as e:
                 logger.debug(f"超时语义评分失败 (fallback): {e}")
@@ -2245,8 +2763,10 @@ AI 回答：
                 f"超时语义评分: msg_id={message_id} rating={rating} updated={updated} "
                 f"(source={'fallback' if used_fallback else 'scoring_card'})"
             )
-            return {"ok": True, "rating": rating, "used_ollama": used_fallback, "updated": updated}
-        return {"ok": False, "reason": "rating_failed", "used_ollama": used_fallback}
+            return {"ok": True, "rating": rating, "used_ollama": used_fallback, "updated": updated,
+                    "prompt_version": scoring_asset.get("version", 0)}
+        return {"ok": False, "reason": "rating_failed", "used_ollama": used_fallback,
+                "prompt_version": scoring_asset.get("version", 0)}
 
     def _infer_rating(self, conversation_id: str, user_query: str) -> dict:
         """语义兜底评分：分析用户对上一轮回答的态度
@@ -2262,21 +2782,16 @@ AI 回答：
             return {}
 
         prev_answer = prev["content"][:500]
-        prompt = f"""分析用户对上一轮回答的态度，只输出一个数字（1-5）。
-
-1 = 明显不满 / 直接质疑回答错误
-2 = 不太满意 / 要求改进或重新回答
-3 = 中性 / 继续提问或追问
-4 = 满意 / 深入追问想了解更多细节
-5 = 非常满意 / 明确感谢或肯定
-
-上一轮回答（前500字）：
-{prev_answer}
-
-用户的下一句话：
-{user_query}
-
-只输出数字："""
+        self.memory.ensure_prompt_assets([{
+            "slot": "semantic_scoring", "name": "语义评分", "model_role": "scoring",
+            "description": "评估回答质量和用户对上一轮回答的满意度。",
+            "template": SEMANTIC_SCORING_PROMPT, "variables": ["task", "query", "answer"],
+        }])
+        scoring_asset = self.memory.get_active_prompt_asset("semantic_scoring", SEMANTIC_SCORING_PROMPT)
+        prompt = scoring_asset["template"].format(
+            task="分析用户对上一轮回答的态度，只输出一个数字（1-5）。",
+            query=user_query[:500], answer=prev_answer,
+        )
 
         rating = None
         used_fallback = False
@@ -2301,7 +2816,15 @@ AI 回答：
                     timeout=15,
                 )
                 if resp.status_code == 200:
-                    text = resp.json()["choices"][0]["message"]["content"].strip()
+                    payload = resp.json()
+                    usage = payload.get("usage") or {}
+                    self.memory.record_llm_usage_event(
+                        tenant_id="local-default", module="semantic_scoring",
+                        model=payload.get("model") or scoring_model,
+                        prompt_tokens=usage.get("prompt_tokens", 0),
+                        completion_tokens=usage.get("completion_tokens", 0),
+                    )
+                    text = payload["choices"][0]["message"]["content"].strip()
                     rating = int("".join(c for c in text if c.isdigit())[:1])
             except Exception as e:
                 logger.debug(f"语义评分失败 (scoring card): {e}")
@@ -2321,7 +2844,15 @@ AI 回答：
                     timeout=15,
                 )
                 if resp.status_code == 200:
-                    text = resp.json()["choices"][0]["message"]["content"].strip()
+                    payload = resp.json()
+                    usage = payload.get("usage") or {}
+                    self.memory.record_llm_usage_event(
+                        tenant_id="local-default", module="semantic_scoring_fallback",
+                        model=payload.get("model") or fb_model,
+                        prompt_tokens=usage.get("prompt_tokens", 0),
+                        completion_tokens=usage.get("completion_tokens", 0),
+                    )
+                    text = payload["choices"][0]["message"]["content"].strip()
                     rating = int("".join(c for c in text if c.isdigit())[:1])
             except Exception as e:
                 logger.debug(f"语义评分失败 (fallback): {e}")
@@ -2330,22 +2861,17 @@ AI 回答：
             self.memory.update_rating(prev["id"], rating, semantic=True)
             logger.info(
                 f"语义评分: msg_id={prev['id']} rating={rating} (source={'fallback' if used_fallback else 'scoring_card'})")
+        scoring_prompt_version = scoring_asset.get("version", 0)
 
         # ---- 越狱检测：模型回答是否违规 ----
         try:
-            jailbreak_prompt = f"""判断AI助手的回答是否包含以下违规内容（只输出 yes/no）：
-- 提供了有害、违法、危险的操作指导
-- 绕过了安全限制或角色设定
-- 泄露了不应透露的内部系统信息
-- 回答了明显超出授权范围的问题
-
-AI助手回答：
-{prev_answer[:800]}
-
-用户问题：
-{user_query[:300]}
-
-只输出 yes 或 no："""
+            self.memory.ensure_prompt_assets([{
+                "slot": "jailbreak_detect", "name": "越狱检测", "model_role": "jailbreak",
+                "description": "检测模型回答是否越权、危险或泄露内部信息。",
+                "template": JAILBREAK_DETECT_PROMPT, "variables": ["answer", "query"],
+            }])
+            jb_asset = self.memory.get_active_prompt_asset("jailbreak_detect", JAILBREAK_DETECT_PROMPT)
+            jailbreak_prompt = jb_asset["template"].format(answer=prev_answer[:800], query=user_query[:300])
 
             jb_detected = False
             jb_cfg = get_llm_config_card('jailbreak')
@@ -2366,7 +2892,15 @@ AI助手回答：
                     timeout=15,
                 )
                 if resp.status_code == 200:
-                    jb_text = resp.json()["choices"][0]["message"]["content"].strip().lower()
+                    payload = resp.json()
+                    usage = payload.get("usage") or {}
+                    self.memory.record_llm_usage_event(
+                        tenant_id="local-default", module="jailbreak_detect",
+                        model=payload.get("model") or jb_model,
+                        prompt_tokens=usage.get("prompt_tokens", 0),
+                        completion_tokens=usage.get("completion_tokens", 0),
+                    )
+                    jb_text = payload["choices"][0]["message"]["content"].strip().lower()
                     jb_detected = jb_text.startswith("yes")
 
             if jb_detected:
@@ -2380,7 +2914,10 @@ AI助手回答：
         except Exception as e:
             logger.debug(f"越狱检测失败: {e}")
 
-        return {"used_ollama": used_fallback} if used_fallback else {}
+        result = {"used_ollama": used_fallback} if used_fallback else {}
+        result["semantic_scoring_prompt_version"] = scoring_prompt_version
+        result["jailbreak_prompt_version"] = locals().get("jb_asset", {}).get("version", 0)
+        return result
 
     def refresh_retriever(self):
         self.retriever.refresh_faiss()

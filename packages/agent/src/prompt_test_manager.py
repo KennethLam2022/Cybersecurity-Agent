@@ -73,7 +73,7 @@ JSON:
 """
 
 
-def generate_test_set(keywords: str, llm=None) -> list:
+def generate_test_set(keywords: str, llm=None, usage_sink=None) -> list:
     """根据关键词生成 20 条测试题
 
     Args:
@@ -99,6 +99,8 @@ def generate_test_set(keywords: str, llm=None) -> list:
     try:
         raw = llm.chat([{"role": "user", "content": prompt}],
                        temperature=0.3, max_tokens=4000, timeout=30)
+        if usage_sink:
+            usage_sink(raw, getattr(llm, "model", ""))
         items = validate_generated_test_items(json.loads(_extract_json(raw)))
         if len(items) >= 5:
             return items[:20]
@@ -183,7 +185,8 @@ def _mock_generate(keywords: str) -> list:
     ]
 
 
-def run_single_test(item: dict, agent, retrieved_docs: Optional[list] = None) -> dict:
+def run_single_test(item: dict, agent, retrieved_docs: Optional[list] = None,
+                    system_prompt_override: Optional[str] = None) -> dict:
     """运行单条 Prompt 测试（仅域A规则评分，不调用 LLM）
 
     Args:
@@ -199,7 +202,11 @@ def run_single_test(item: dict, agent, retrieved_docs: Optional[list] = None) ->
     category = item.get("category", "")
 
     start = time.time()
-    result = agent.ask(query=query, conversation_id=None, temperature=0.1, category="prompt_test")
+    result = agent.ask(
+        query=query, conversation_id=None, temperature=0.1, category="prompt_test",
+        system_prompt_override=system_prompt_override,
+        retrieved_docs_override=retrieved_docs,
+    )
     duration = time.time() - start
     answer = result.get("answer", "")
 
@@ -253,7 +260,7 @@ def run_test_set(items: list, agent, on_progress: Optional[Callable] = None) -> 
     return results
 
 
-def suggest_fix(failed_item: dict, current_system_prompt: str, llm=None) -> dict:
+def suggest_fix(failed_item: dict, current_system_prompt: str, llm=None, usage_sink=None) -> dict:
     """分析失败原因并生成修复建议
 
     Args:
@@ -293,6 +300,8 @@ def suggest_fix(failed_item: dict, current_system_prompt: str, llm=None) -> dict
     try:
         raw = llm.chat([{"role": "user", "content": prompt}],
                        temperature=0.2, max_tokens=4000, timeout=30)
+        if usage_sink:
+            usage_sink(raw, getattr(llm, "model", ""))
         result = json.loads(_extract_json(raw))
         return {
             "analysis": result.get("analysis", fail_reason),

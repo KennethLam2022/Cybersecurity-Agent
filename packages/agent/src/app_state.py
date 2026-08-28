@@ -10,7 +10,9 @@ from llm_config_manager import (
     _hash_api_key, _encrypt_api_key, _decrypt_api_key, _make_key_mask,
     _get_project_root,
 )
-from auth import verify_admin_token, is_admin_route, validate_llm_url
+from auth import is_admin_route, validate_llm_url
+from notification_delivery import publish_system_event
+from monitoring import record_event
 from deduplicator import Deduplicator
 import os
 import sys
@@ -201,7 +203,7 @@ def _get_current_config() -> dict:
 
 
 _CONFIG_CARD_MODULES = [
-    "chat", "jailbreak", "scoring", "fallback", "chunk", "promptEval",
+    "chat", "jailbreak", "scoring", "fallback", "reflection", "chunk", "promptEval",
     "embedding", "reranker",
 ]
 
@@ -223,7 +225,7 @@ def _get_backend_eval_llm():
         return None
 
 
-def _generate_eval_summary(eval_llm, tab_type: str, result: dict, items: list) -> str:
+def _generate_eval_summary(eval_llm, tab_type: str, result: dict, items: list, usage_sink=None) -> str:
     prompt = ""
     if tab_type == "retrieval_quality":
         total = result.get("total", 0)
@@ -404,6 +406,8 @@ def _generate_eval_summary(eval_llm, tab_type: str, result: dict, items: list) -
 
     try:
         resp = eval_llm.chat([{"role": "user", "content": prompt}])
+        if usage_sink:
+            usage_sink(resp, getattr(eval_llm, "model", ""))
         text = resp.get("content", "") if isinstance(resp, dict) else str(resp)
         text = text.strip()
         if text:
@@ -507,6 +511,24 @@ _MAX_FILE_SIZE = 50 * 1024 * 1024
 
 _doc_tasks: dict[str, dict] = {}
 _doc_tasks_lock = threading.Lock()
+
+
+def _record_ingestion_stage(task_id: str, file_name: str, stage: str,
+                            status: str, error: str = "", metrics: dict | None = None,
+                            error_type: str = "") -> None:
+    """Persist per-document pipeline state while keeping the fast in-memory task view."""
+    with _doc_tasks_lock:
+        task = _doc_tasks.get(task_id, {})
+        document_id = (task.get("document_map") or {}).get(file_name, "")
+    if document_id:
+        try:
+            agent.memory.update_ingestion_item(task_id, document_id, stage, status, error)
+            agent.memory.record_ingestion_stage_event(
+                task_id, document_id, stage, status, metrics=metrics,
+                error=error, error_type=error_type,
+            )
+        except Exception as exc:
+            logger.warning("入库步骤状态写入失败: %s", exc)
 
 
 def _cleanup_staging():
@@ -615,10 +637,13 @@ def _parse_single_file(file_path: str, task_id: str, skip_layer2: bool = False) 
             if task_id in _doc_tasks:
                 _doc_tasks[task_id]["stage"] = "parsing"
                 _doc_tasks[task_id]["current_file"] = file_path_obj.name
+        _record_ingestion_stage(task_id, file_path_obj.name, "parsing", "processing")
 
         parser = OdlParser()
         parse_data = parser.parse(str(file_path))
         raw_text = parse_data["full_markdown"]
+        parse_metrics = {"file_type": file_path_obj.suffix.lower(),
+                         "raw_characters": len(raw_text)}
 
         if not skip_layer2:
             dedup = _get_dedup()
@@ -627,9 +652,11 @@ def _parse_single_file(file_path: str, task_id: str, skip_layer2: bool = False) 
                 logger.warning(f"  ⚠️ Layer 2 检测到文本重复: {file_path_obj.name} ({dedup2.reason})")
                 return None
 
+        _record_ingestion_stage(task_id, file_path_obj.name, "parsing", "completed", metrics=parse_metrics)
         return (raw_text, file_path_obj.stem)
     except Exception as e:
         logger.error(f"  ❌ 解析失败 {file_path}: {e}")
+        _record_ingestion_stage(task_id, Path(file_path).name, "parsing", "failed", str(e))
         return None
 
 
@@ -641,14 +668,20 @@ def _clean_and_save(raw_text: str, file_stem: str, category: str, task_id: str, 
         with _doc_tasks_lock:
             if task_id in _doc_tasks:
                 _doc_tasks[task_id]["stage"] = "cleaning"
+        _record_ingestion_stage(task_id, str((file_meta or {}).get("source_name") or file_stem),
+                                "cleaning", "processing")
 
-        cleaner = LlmCleaner()
+        cleaner = LlmCleaner(prompt_memory=agent.memory)
         clean_data = cleaner.clean_document(raw_text, file_stem)
         cleaned = clean_data["cleaned_markdown"]
+        clean_metrics = {"cleaned_characters": len(cleaned), "output_format": "markdown"}
 
         cleaned_dir = _PROJECT_ROOT / "RAG_DATA" / "03_cleaned" / category
         cleaned_dir.mkdir(parents=True, exist_ok=True)
-        md_name = file_stem.replace(" ", "_").replace("-", "_") + ".md"
+        safe_stem = file_stem.replace(" ", "_").replace("-", "_")
+        document_id = str((file_meta or {}).get("document_id") or "").strip()
+        # Document IDs keep same-named uploads from different workspaces independent.
+        md_name = f"{document_id}__{safe_stem}.md" if document_id else f"{safe_stem}.md"
         md_path = cleaned_dir / md_name
         md_path.write_text(cleaned, encoding="utf-8")
         if file_meta:
@@ -663,12 +696,29 @@ def _clean_and_save(raw_text: str, file_stem: str, category: str, task_id: str, 
                 "profile_reason": file_meta.get("profile_reason", ""),
                 "profile_confirmed": bool(file_meta.get("profile_confirmed", False)),
                 "profile_source": file_meta.get("profile_source", "manual_confirmed"),
+                "document_id": file_meta.get("document_id", ""),
+                "visibility": file_meta.get("visibility", "public"),
+                "tenant_id": file_meta.get("tenant_id", ""),
+                "owner_user_id": file_meta.get("owner_user_id", ""),
+                "agent_id": file_meta.get("agent_id", ""),
+                "knowledge_base_id": file_meta.get("knowledge_base_id", ""),
+                "source_metadata": file_meta.get("source_metadata", {}),
             }
             meta_path.write_text(json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            document_id = str(meta_payload.get("document_id") or "")
+            if document_id:
+                try:
+                    agent.memory.mark_document_indexed(document_id, str(md_path))
+                    _record_ingestion_stage(task_id, str(file_meta.get("source_name") or file_stem),
+                                            "cleaning", "completed", metrics=clean_metrics)
+                except Exception as exc:
+                    logger.warning("文档登记状态更新失败: %s", exc)
         logger.info(f"  ✅ 已保存: {md_path}")
         return str(md_path)
     except Exception as e:
         logger.error(f"  ❌ 清洗/保存失败 {file_stem}: {e}")
+        _record_ingestion_stage(task_id, str((file_meta or {}).get("source_name") or file_stem),
+                                "cleaning", "failed", str(e), error_type=type(e).__name__)
         return None
 
 
@@ -697,16 +747,21 @@ def _incremental_index(task_id: str, md_paths: list[str]):
             with _doc_tasks_lock:
                 if task_id in _doc_tasks:
                     _doc_tasks[task_id]["error"] = f"增量索引失败: {result.stderr[:200]}"
-            return False
+            return {"ok": False, "files": len(md_paths), "return_code": result.returncode,
+                    "stderr_characters": len(result.stderr or "")}
         logger.info(f"  ✅ 增量索引完成")
         agent.refresh_retriever()
-        return True
+        return {"ok": True, "files": len(md_paths), "return_code": result.returncode,
+                "stdout_characters": len(result.stdout or "")}
     except subprocess.TimeoutExpired:
         logger.error(f"  ❌ 增量索引超时")
         with _doc_tasks_lock:
             if task_id in _doc_tasks:
                 _doc_tasks[task_id]["error"] = f"增量索引超时"
-        return False
+        return {"ok": False, "files": len(md_paths), "error": "timeout"}
+    except Exception as exc:
+        logger.error(f"  ❌ 增量索引异常: {exc}")
+        return {"ok": False, "files": len(md_paths), "error": type(exc).__name__}
 
 
 def _run_processing_task(task_id: str, files: list[dict], category: str):
@@ -790,12 +845,14 @@ def _run_processing_task(task_id: str, files: list[dict], category: str):
         def _slot_worker(slot_idx: int, batch: list):
             try:
                 md_paths = []
+                indexed_items = []
                 for raw_text, file_stem, file_meta in batch:
                     file_category = file_meta.get("category", category) or category
                     logger.info(f"  [Slot {slot_idx}] 开始清洗: {file_stem}")
                     md_path = _clean_and_save(raw_text, file_stem, file_category, task_id, file_meta)
                     if md_path:
                         md_paths.append(md_path)
+                        indexed_items.append(file_meta)
                         success_count[0] += 1
                         logger.info(f"  [Slot {slot_idx}] ✅ 清洗完成: {file_stem}")
                     else:
@@ -808,7 +865,60 @@ def _run_processing_task(task_id: str, files: list[dict], category: str):
                             _doc_tasks[task_id]["progress"] = min(pct, 90)
                 if md_paths:
                     logger.info(f"  [Slot {slot_idx}] 开始增量索引 ({len(md_paths)} 个文件)")
-                    _incremental_index(task_id, md_paths)
+                    for file_meta in indexed_items:
+                        _record_ingestion_stage(
+                            task_id, str(file_meta.get("source_name") or ""),
+                            "incremental_index", "processing",
+                        )
+                    index_result = _incremental_index(task_id, md_paths)
+                    index_ok = bool(index_result.get("ok"))
+                    for file_meta in indexed_items:
+                        _record_ingestion_stage(
+                            task_id, str(file_meta.get("source_name") or ""),
+                            "done" if index_ok else "incremental_index",
+                            "completed" if index_ok else "failed",
+                            "增量索引失败" if not index_ok else "",
+                            metrics=index_result,
+                            error_type="IndexProcessError" if not index_ok else "",
+                        )
+                    if index_ok:
+                        # Indexing is the stable point at which graph extraction can
+                        # safely read the cleaned document. Candidates remain pending
+                        # review and therefore cannot affect answers yet.
+                        from knowledge_graph import extract_document_graph
+                        for file_meta in indexed_items:
+                            knowledge_base_id = str(file_meta.get("knowledge_base_id") or "")
+                            document_id = str(file_meta.get("document_id") or "")
+                            if not knowledge_base_id or not document_id:
+                                continue
+                            source_name = str(file_meta.get("source_name") or "")
+                            _record_ingestion_stage(
+                                task_id, source_name, "graph_extraction", "processing",
+                            )
+                            try:
+                                document = agent.memory.get_document(
+                                    document_id, str(file_meta.get("tenant_id") or "local-default"),
+                                )
+                                if not document:
+                                    raise ValueError("图谱抽取文档不存在")
+                                graph_run = extract_document_graph(
+                                    agent.memory, document,
+                                    str(file_meta.get("owner_user_id") or "system"),
+                                )
+                                _record_ingestion_stage(
+                                    task_id, source_name, "graph_extraction", "completed",
+                                    metrics={"run_id": graph_run.get("id", ""),
+                                             "entity_count": graph_run.get("entity_count", 0),
+                                             "relation_count": graph_run.get("relation_count", 0)},
+                                )
+                            except Exception as exc:
+                                # Graph extraction is additive; it must not turn a
+                                # successfully indexed document into a failed upload.
+                                logger.warning("自动图谱候选抽取失败 %s: %s", source_name, exc)
+                                _record_ingestion_stage(
+                                    task_id, source_name, "graph_extraction", "failed",
+                                    "图谱候选抽取失败", error_type=type(exc).__name__,
+                                )
                     logger.info(f"  [Slot {slot_idx}] ✅ 增量索引完成")
             finally:
                 with staging_locks[slot_idx]:
@@ -827,6 +937,7 @@ def _run_processing_task(task_id: str, files: list[dict], category: str):
 
                 if parsed is None:
                     fail_count[0] += 1
+                    _record_ingestion_stage(task_id, f.get("name", ""), "parsing", "failed", "解析或去重失败")
                     continue
 
                 raw_text, file_stem = parsed
@@ -841,6 +952,7 @@ def _run_processing_task(task_id: str, files: list[dict], category: str):
                                     raw_text,
                                     file_stem,
                                     {
+                                        "source_name": f.get("name", ""),
                                         "category": f.get("category", category) or category,
                                         "profile": f.get("profile", "general"),
                                         "scope": f.get("scope", "general"),
@@ -849,6 +961,12 @@ def _run_processing_task(task_id: str, files: list[dict], category: str):
                                         "profile_reason": f.get("profile_reason", ""),
                                         "profile_confirmed": f.get("profile_confirmed", False),
                                         "profile_source": f.get("profile_source", "manual_confirmed"),
+                                        "document_id": f.get("document_id", ""),
+                                        "visibility": f.get("visibility", "public"),
+                                        "tenant_id": f.get("tenant_id", ""),
+                                        "owner_user_id": f.get("owner_user_id", ""),
+                                        "agent_id": f.get("agent_id", ""),
+                                        "knowledge_base_id": f.get("knowledge_base_id", ""),
                                     },
                                 ))
                                 full = len(staging_buffers[i]) >= _STAGING_BATCH
@@ -913,6 +1031,27 @@ def _run_processing_task(task_id: str, files: list[dict], category: str):
                 _doc_tasks[task_id]["summary"] = {
                     "total": total, "success": success_count[0], "fail": fail_count[0]
                 }
+        try:
+            agent.memory.finish_ingestion_job(
+                task_id, "completed", success_count[0], fail_count[0],
+            )
+            job = agent.memory.get_ingestion_job(task_id) or {}
+            if fail_count[0]:
+                record_event(
+                    agent.memory, job.get("tenant_id") or "local-default", "ingestion_partial_failure", "P2", "ingestion",
+                    {"job_id": task_id, "total": total, "success_count": success_count[0], "fail_count": fail_count[0]},
+                    "", "入库任务完成但存在失败文件；文件内容和错误正文不写入监控事件。",
+                )
+            publish_system_event(agent.memory, event_bus, "ingestion.completed", {
+                "tenant_id": job.get("tenant_id") or "local-default",
+                "user_id": job.get("user_id") or "",
+                "agent_id": job.get("agent_id") or "",
+                "job_id": task_id, "success_count": success_count[0],
+                "fail_count": fail_count[0],
+                "notification_body": f"入库任务完成：成功 {success_count[0]} 篇，失败 {fail_count[0]} 篇。",
+            })
+        except Exception as exc:
+            logger.warning("入库任务状态写入失败: %s", exc)
     except Exception as e:
         logger.error(f"处理任务 {task_id} 异常: {e}")
         _clean_staging_task_dir(task_id)
@@ -920,6 +1059,26 @@ def _run_processing_task(task_id: str, files: list[dict], category: str):
             if task_id in _doc_tasks:
                 _doc_tasks[task_id]["status"] = "error"
                 _doc_tasks[task_id]["error"] = str(e)
+        try:
+            agent.memory.finish_ingestion_job(
+                task_id, "error", success_count[0], fail_count[0], str(e),
+            )
+            job = agent.memory.get_ingestion_job(task_id) or {}
+            record_event(
+                agent.memory, job.get("tenant_id") or "local-default", "ingestion_failed", "P1", "ingestion",
+                {"job_id": task_id, "success_count": success_count[0], "fail_count": fail_count[0],
+                 "error_type": type(e).__name__},
+                "", "入库任务整体失败；错误正文不写入监控事件。",
+            )
+            publish_system_event(agent.memory, event_bus, "ingestion.failed", {
+                "tenant_id": job.get("tenant_id") or "local-default",
+                "user_id": job.get("user_id") or "",
+                "agent_id": job.get("agent_id") or "",
+                "job_id": task_id, "error": str(e)[:500],
+                "notification_body": f"入库任务失败：{str(e)[:160]}",
+            })
+        except Exception as exc:
+            logger.warning("入库失败任务状态写入失败: %s", exc)
 
 
 def _build_report_doc(title: str, date_line: str, summary_cards: list, headers: list, rows: list) -> BytesIO:
@@ -1191,6 +1350,23 @@ def _init_on_startup():
         logger.info(f"已迁移内置测试集: {migrated} 条")
 
     _cleanup_staging()
+
+    # Delayed account deletion removes private document namespaces from every
+    # retrieval store after the configured retention period.
+    try:
+        purged = agent.memory.purge_due_deleted_accounts()
+        if purged:
+            preprocessor_dir = Path(__file__).resolve().parent.parent.parent.parent / "packages" / "preprocessor" / "src"
+            document_ids = [document_id for item in purged for document_id in item["document_ids"]]
+            if document_ids:
+                subprocess.run(
+                    [sys.executable, "incremental_index.py", "--remove-document-ids", *document_ids],
+                    cwd=preprocessor_dir, capture_output=True, text=True, timeout=600, check=False,
+                )
+            agent.refresh_retriever()
+            logger.info("已完成 %s 个到期账号的数据清理", len(purged))
+    except Exception as exc:
+        logger.error("到期账号数据清理失败，将在下次启动重试: %s", exc)
 
     try:
         import sqlite3

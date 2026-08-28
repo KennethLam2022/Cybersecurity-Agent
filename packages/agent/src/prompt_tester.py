@@ -109,7 +109,7 @@ def _eval_efficiency(duration: float, max_duration: float = 30.0) -> tuple[bool,
 # 域B: Context Precision/Recall
 # ============================================================
 
-def _eval_context_precision(answer: str, retrieved_docs: list) -> tuple[float, str]:
+def _eval_context_precision(answer: str, retrieved_docs: list, usage_sink=None) -> tuple[float, str]:
     """Context Precision: 回答中引用检索内容的准确率"""
     if not retrieved_docs:
         return 0.0, "无检索文档可评估"
@@ -142,6 +142,8 @@ def _eval_context_precision(answer: str, retrieved_docs: list) -> tuple[float, s
 
     try:
         resp = llm.chat([{"role": "user", "content": prompt}])
+        if usage_sink:
+            usage_sink(resp, getattr(llm, "model", ""))
         text = resp.get("content", "")
         import json
         result = json.loads(text)
@@ -153,7 +155,7 @@ def _eval_context_precision(answer: str, retrieved_docs: list) -> tuple[float, s
         return 0.5, f"LLM 评估异常: {e}"
 
 
-def _eval_context_recall(answer: str, retrieved_docs: list) -> tuple[float, str]:
+def _eval_context_recall(answer: str, retrieved_docs: list, usage_sink=None) -> tuple[float, str]:
     """Context Recall: 检索文档中关键信息被引用的比例"""
     if not retrieved_docs:
         return 0.0, "无检索文档可评估"
@@ -181,6 +183,8 @@ def _eval_context_recall(answer: str, retrieved_docs: list) -> tuple[float, str]
 
     try:
         resp = llm.chat([{"role": "user", "content": prompt}])
+        if usage_sink:
+            usage_sink(resp, getattr(llm, "model", ""))
         text = resp.get("content", "")
         import json
         result = json.loads(text)
@@ -196,7 +200,7 @@ def _eval_context_recall(answer: str, retrieved_docs: list) -> tuple[float, str]
 # 域C: 生成质量 (Faithfulness / Relevancy / Hallucination)
 # ============================================================
 
-def _eval_faithfulness(answer: str, retrieved_docs: list) -> tuple[float, str]:
+def _eval_faithfulness(answer: str, retrieved_docs: list, usage_sink=None) -> tuple[float, str]:
     """Faithfulness: 回答是否忠实于检索文档"""
     if not retrieved_docs:
         return 0.0, "无检索文档可评估忠实度"
@@ -226,6 +230,8 @@ def _eval_faithfulness(answer: str, retrieved_docs: list) -> tuple[float, str]:
 
     try:
         resp = llm.chat([{"role": "user", "content": prompt}])
+        if usage_sink:
+            usage_sink(resp, getattr(llm, "model", ""))
         text = resp.get("content", "")
         import json
         result = json.loads(text)
@@ -237,7 +243,7 @@ def _eval_faithfulness(answer: str, retrieved_docs: list) -> tuple[float, str]:
         return 0.5, f"LLM 评估异常: {e}"
 
 
-def _eval_relevancy(answer: str, query: str) -> tuple[float, str]:
+def _eval_relevancy(answer: str, query: str, usage_sink=None) -> tuple[float, str]:
     """Relevancy: 回答是否针对问题"""
     from llm_provider import get_llm
     llm = get_llm()
@@ -265,6 +271,8 @@ def _eval_relevancy(answer: str, query: str) -> tuple[float, str]:
 
     try:
         resp = llm.chat([{"role": "user", "content": prompt}])
+        if usage_sink:
+            usage_sink(resp, getattr(llm, "model", ""))
         text = resp.get("content", "")
         import json
         result = json.loads(text)
@@ -274,9 +282,9 @@ def _eval_relevancy(answer: str, query: str) -> tuple[float, str]:
         return 0.5, f"LLM 评估异常: {e}"
 
 
-def _eval_hallucination(answer: str, retrieved_docs: list) -> tuple[float, str]:
+def _eval_hallucination(answer: str, retrieved_docs: list, usage_sink=None) -> tuple[float, str]:
     """Hallucination: 幻觉检测"""
-    faithfulness_score, faithfulness_detail = _eval_faithfulness(answer, retrieved_docs)
+    faithfulness_score, faithfulness_detail = _eval_faithfulness(answer, retrieved_docs, usage_sink=usage_sink)
     return 1.0 - faithfulness_score, f"忠实度={faithfulness_score:.2f}，幻觉风险={1-faithfulness_score:.2f}"
 
 
@@ -394,7 +402,7 @@ def run_elastic_test(agent_instance, base_query: str) -> dict:
 # 单条测试
 # ============================================================
 
-def run_single_test(agent_instance, test_case: dict, retrieved_docs: list = None) -> dict:
+def run_single_test(agent_instance, test_case: dict, retrieved_docs: list = None, usage_sink=None) -> dict:
     """运行一条测试用例"""
     query = test_case["query"]
     expected = test_case["expected"]
@@ -460,8 +468,8 @@ def run_single_test(agent_instance, test_case: dict, retrieved_docs: list = None
 
     # ---- 域B: Context Precision/Recall ----
     try:
-        context_precision, cp_detail = _eval_context_precision(answer, retrieved_docs)
-        context_recall, cr_detail = _eval_context_recall(answer, retrieved_docs)
+        context_precision, cp_detail = _eval_context_precision(answer, retrieved_docs, usage_sink=usage_sink)
+        context_recall, cr_detail = _eval_context_recall(answer, retrieved_docs, usage_sink=usage_sink)
     except Exception as e:
         context_precision, context_recall = 0.0, 0.0
         cp_detail = cr_detail = str(e)
@@ -474,9 +482,9 @@ def run_single_test(agent_instance, test_case: dict, retrieved_docs: list = None
 
     # ---- 域C: 生成质量 ----
     try:
-        faithfulness, f_detail = _eval_faithfulness(answer, retrieved_docs)
-        relevancy, r_detail = _eval_relevancy(answer, query)
-        hallucination, h_detail = _eval_hallucination(answer, retrieved_docs)
+        faithfulness, f_detail = _eval_faithfulness(answer, retrieved_docs, usage_sink=usage_sink)
+        relevancy, r_detail = _eval_relevancy(answer, query, usage_sink=usage_sink)
+        hallucination, h_detail = _eval_hallucination(answer, retrieved_docs, usage_sink=usage_sink)
     except Exception as e:
         faithfulness = relevancy = hallucination = 0.0
         f_detail = r_detail = h_detail = str(e)

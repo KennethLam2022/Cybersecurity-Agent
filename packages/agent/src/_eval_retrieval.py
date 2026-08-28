@@ -187,7 +187,7 @@ def evaluate(profile: str = "general"):
     return results_summary
 
 
-def generate_test_set_from_keywords(keywords: str, llm=None) -> list:
+def generate_test_set_from_keywords(keywords: str, llm=None, usage_sink=None) -> list:
     """用 LLM 根据关键词生成检索测试集"""
     prompt = f"""你是一个 RAG 检索质量评估专家。根据以下关键词，生成 30 条检索质量测试查询。
 
@@ -210,6 +210,8 @@ def generate_test_set_from_keywords(keywords: str, llm=None) -> list:
     if llm is not None:
         try:
             resp = llm.chat([{"role": "user", "content": prompt}])
+            if usage_sink:
+                usage_sink(resp, getattr(llm, "model", ""))
             text = resp.get("content", "")
             text = text.strip()
             if text.startswith("```"):

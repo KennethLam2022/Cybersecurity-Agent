@@ -5,18 +5,16 @@
 使用示例：
     from agent import CyberAgent
     from app_state import agent, event_bus
-    from auth import verify_admin_token
 """
 
 from agent import CyberAgent
 from memory import ConversationMemory
 from llm_provider import LLMProvider
-from auth import verify_admin_token, is_admin_route
+from auth import is_admin_route
 
 __all__ = [
     "CyberAgent",
     "ConversationMemory",
     "LLMProvider",
-    "verify_admin_token",
     "is_admin_route",
 ]

@@ -1,4 +1,7 @@
 [
+  {"case_key":"P5-ROUTE-CHAT-001","profile":"general","case_type":"capability_route","domain":"能力路由","query":"等保三级的安全审计要求有哪些？","fields":{},"expected":{"mode":"chat","clarification_required":false}},
+  {"case_key":"P5-WRITE-CLARIFY-001","profile":"general","case_type":"capability_route","domain":"网络安全写作","query":"帮我起草一份网络安全管理制度","fields":{},"expected":{"mode":"writing","clarification_required":true,"missing_fields":["audience","scope"]}},
+  {"case_key":"P5-PPT-READY-001","profile":"general","case_type":"generation","domain":"网络安全 PPT","query":"制作网络安全培训PPT，5页","fields":{"audience":"新入职员工","purpose":"网络安全培训","scenario":"培训","scope":"网络安全通用场景"},"expected":{"mode":"presentation","clarification_required":false,"missing_fields":[],"outline_count":5}},
   {"case_key":"ROUTE-GEN-001","profile":"general","case_type":"router","domain":"等级保护","query":"等保三级测评前，安全审计需要准备哪些材料？","expected":{"expected_query_type":"compliance_decision","agent_path":["query_rewrite"]}},
   {"case_key":"ROUTE-GEN-002","profile":"general","case_type":"router","domain":"数据安全","query":"数据分类分级通常包括哪些步骤？","expected":{"expected_query_type":"general","agent_path":["query_rewrite"]}},
   {"case_key":"ROUTE-GEN-003","profile":"general","case_type":"router","domain":"法规标准","query":"网络安全法对网络运营者的安全保护义务有哪些规定？","expected":{"expected_query_type":"article_lookup","agent_path":["query_rewrite"]}},

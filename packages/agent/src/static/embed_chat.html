@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>安枢 SecureNexus</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#1f2937;background:#fff}
+    *{box-sizing:border-box}body{margin:0}.box{height:100vh;display:flex;flex-direction:column;border:1px solid #e5e7eb}
+    header{padding:12px 14px;border-bottom:1px solid #e5e7eb;font-weight:700;color:#0f4c81;display:flex;justify-content:space-between;align-items:center}main{flex:1;overflow:auto;padding:14px}
+    .msg{margin:0 0 12px;line-height:1.6;white-space:pre-wrap}.user{color:#0f4c81}.assistant{color:#374151}
+    footer{display:flex;gap:8px;padding:10px;border-top:1px solid #e5e7eb}textarea{flex:1;resize:none;min-height:42px;border:1px solid #d1d5db;border-radius:6px;padding:9px;font:inherit}button{border:0;border-radius:6px;background:#0f6fb5;color:#fff;padding:0 14px;font-weight:600;cursor:pointer}button:disabled{opacity:.5;cursor:wait}.error{color:#b91c1c;font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="box"><header><span id="brand">安枢 SecureNexus</span><select id="language" aria-label="Language"><option value="zh-CN">中文</option><option value="en-US">English</option></select></header><main id="messages"><div class="msg assistant" id="welcome">您好，请输入您的网络安全问题。</div></main><footer><textarea id="query" placeholder="输入问题" aria-label="问题"></textarea><button id="send">发送</button></footer></div>
+  <script>
+    const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const token = params.get('token') || '';
+    const messages = document.getElementById('messages');
+    const query = document.getElementById('query');
+    const send = document.getElementById('send');
+    const language = document.getElementById('language');
+    let responseLanguage = localStorage.getItem('securenexus_language') || 'zh-CN';
+    language.value = responseLanguage;
+    const translations = {
+      'zh-CN': { welcome:'您好，请输入您的网络安全问题。', placeholder:'输入问题', send:'发送', processing:'正在处理…', missingToken:'嵌入令牌缺失', requestFailed:'请求失败', noAnswer:'未返回答案' },
+      'en-US': { welcome:'Hello. Please enter your cybersecurity question.', placeholder:'Enter your question', send:'Send', processing:'Processing…', missingToken:'Embed token is missing', requestFailed:'Request failed', noAnswer:'No answer returned' },
+    };
+    function tr(key) { return (translations[responseLanguage] || translations['zh-CN'])[key]; }
+    function applyLanguage() { document.getElementById('welcome').textContent=tr('welcome'); query.placeholder=tr('placeholder'); query.setAttribute('aria-label', tr('placeholder')); send.textContent=tr('send'); }
+    language.addEventListener('change', () => { responseLanguage=language.value; localStorage.setItem('securenexus_language',responseLanguage); applyLanguage(); }); applyLanguage();
+    function add(role, text) { const el=document.createElement('div'); el.className='msg '+role; el.textContent=text; messages.appendChild(el); messages.scrollTop=messages.scrollHeight; return el; }
+    async function ask() {
+      const text=query.value.trim(); if(!text || !token) { if(!token) add('error',tr('missingToken')); return; }
+      query.value=''; send.disabled=true; add('user',text); const pending=add('assistant',tr('processing'));
+      try { const r=await fetch('/api/embed/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Embed-Token':token},body:JSON.stringify({query:text, language:responseLanguage})}); const d=await r.json(); if(!r.ok) throw new Error(d.detail||tr('requestFailed')); pending.textContent=d.answer||tr('noAnswer'); }
+      catch(e) { pending.textContent=tr('requestFailed')+': '+e.message; pending.className='msg error'; } finally { send.disabled=false; query.focus(); }
+    }
+    send.addEventListener('click',ask); query.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();ask();}});
+  </script>
+</body>
+</html>

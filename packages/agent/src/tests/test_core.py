@@ -2,10 +2,9 @@
 
 运行：python -m pytest tests/ -v
 """
-from fastapi import HTTPException, Request
-from unittest.mock import Mock
 import os
-from auth import validate_llm_url, is_admin_route, verify_admin_token
+from auth import validate_llm_url, is_admin_route, is_platform_only_admin_route
+from main import _csrf_is_valid
 from llm_provider import CircuitBreaker
 from _eval_generation import _extract_json, _clean_answer
 from _eval_common import compute_avg_stats
@@ -193,6 +192,7 @@ class TestValidateLlmUrl:
 class TestIsAdminRoute:
     def test_admin_document_path(self):
         assert is_admin_route("/api/documents/scan") is True
+        assert is_admin_route("/admin/knowledge-bases") is True
 
     def test_admin_llm_configs(self):
         assert is_admin_route("/api/llm/configs/save") is True
@@ -219,26 +219,44 @@ class TestIsAdminRoute:
 
 
 # ============================================================
-# 5. auth: verify_admin_token
+# 5. auth: management route classifications
 # ============================================================
 
 
-class TestVerifyAdminToken:
-    def test_invalid_token(self):
-        """使用默认 Token 'change-me-in-production' 验证"""
-        req = Mock(spec=Request)
-        req.headers = {"X-Admin-Token": "wrong-token"}
-        import asyncio
-        with pytest.raises(HTTPException) as exc:
-            asyncio.run(verify_admin_token(req))
-        assert exc.value.status_code == 403
+class TestPlatformOnlyAdminRoutes:
+    def test_legacy_admin_domain_is_platform_only(self):
+        assert is_platform_only_admin_route('/api/admin/email-notifications/config') is True
 
-    def test_missing_token_header(self):
-        req = Mock(spec=Request)
-        req.headers = {}
-        import asyncio
-        with pytest.raises(HTTPException):
-            asyncio.run(verify_admin_token(req))
+    def test_platform_configuration_pages_are_not_public(self):
+        for path in (
+            '/admin/model-config',
+            '/admin/langfuse-config',
+            '/admin/sso-config',
+            '/admin/email-notifications',
+        ):
+            assert is_admin_route(path) is True
+            assert is_platform_only_admin_route(path) is True
+
+    def test_document_governance_is_platform_only_during_migration(self):
+        assert is_platform_only_admin_route('/api/documents/migration-summary') is True
+
+    def test_tenant_scoped_operational_routes_are_not_platform_only(self):
+        assert is_platform_only_admin_route('/api/admin/notifications') is False
+        assert is_platform_only_admin_route('/api/admin/reflection-runs') is False
+        assert is_platform_only_admin_route('/api/admin/ingestion-jobs') is False
+        assert is_platform_only_admin_route('/api/admin/extensions/ext-1/grants/tenant-1/agent-1') is False
+
+    def test_tenant_scoped_workspace_route_is_not_platform_only(self):
+        assert is_platform_only_admin_route('/api/admin/workspaces') is False
+
+
+class TestCsrfValidation:
+    def test_cookie_csrf_requires_matching_header(self):
+        from types import SimpleNamespace
+        request = SimpleNamespace(cookies={"securenexus_csrf": "csrf-1"}, headers={"X-CSRF-Token": "csrf-1"})
+        assert _csrf_is_valid(request) is True
+        request.headers["X-CSRF-Token"] = "csrf-2"
+        assert _csrf_is_valid(request) is False
 
 
 class TestLlmEncryption:
@@ -311,9 +329,13 @@ class TestAuthMiddleware:
 
     def test_public_routes(self):
         from auth import is_admin_route
-        public = ["/", "/api/conversations", "/api/chat/stream", "/admin"]
+        public = ["/", "/login", "/register", "/api/conversations", "/api/chat/stream"]
         for path in public:
             assert is_admin_route(path) is False, f"{path} should be public"
+
+    def test_admin_page_requires_authenticated_admin(self):
+        from auth import is_admin_route
+        assert is_admin_route("/admin") is True
 
 
 class TestSseStream:

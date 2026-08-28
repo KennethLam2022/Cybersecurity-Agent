@@ -18,6 +18,16 @@ import requests as http_requests
 router = APIRouter()
 
 
+def _record_eval_usage(module: str, response: dict | None, model: str = "") -> None:
+    usage = (response or {}).get("usage") or {}
+    agent.memory.record_llm_usage_event(
+        tenant_id="local-default", module=module,
+        model=(response or {}).get("model") or model,
+        prompt_tokens=usage.get("prompt_tokens", 0),
+        completion_tokens=usage.get("completion_tokens", 0),
+    )
+
+
 def _check_llm_conflict() -> dict:
     """检查 chat 卡和 promptEval 卡是否配置了相同的 LLM。
 
@@ -156,6 +166,7 @@ def e2e_eval_generate_items(data: dict = None):
     if eval_llm:
         try:
             resp = eval_llm.chat([{"role": "user", "content": prompt}])
+            _record_eval_usage("e2e_testset_generation", resp, getattr(eval_llm, "model", ""))
             text = resp.get("content", "")
             text = text.strip()
             if text.startswith("```"):
@@ -274,6 +285,7 @@ def e2e_eval_run(data: dict = None):
             use_llm=use_llm,
             output_file=output_json,
             eval_llm=eval_llm,
+            usage_sink=lambda response, model: _record_eval_usage("e2e_judge", response, model),
         )
 
         html_file = _Path(str(_HTML_DIR)) / f"eval_e2e_report_{ts}.html"
@@ -285,7 +297,14 @@ def e2e_eval_run(data: dict = None):
         try:
             eval_llm = _get_backend_eval_llm()
             if eval_llm:
-                _generate_eval_summary(eval_llm, "e2e_quality", stats, results)
+                _generate_eval_summary(
+                    eval_llm, "e2e_quality", stats, results,
+                    usage_sink=lambda response, model: agent.memory.record_llm_usage_event(
+                        "local-default", module="e2e_evaluation", model=(response or {}).get("model") or model,
+                        prompt_tokens=((response or {}).get("usage") or {}).get("prompt_tokens", 0),
+                        completion_tokens=((response or {}).get("usage") or {}).get("completion_tokens", 0),
+                    ),
+                )
         except Exception as e:
             logger.warning(f"生成综合质量分析建议失败: {e}")
 
@@ -393,6 +412,7 @@ def get_e2e_eval_analysis():
 
     try:
         resp = eval_llm.chat([{"role": "user", "content": prompt}])
+        _record_eval_usage("e2e_analysis", resp, getattr(eval_llm, "model", ""))
         text = resp.get("content", "") if isinstance(resp, dict) else str(resp)
         text = text.strip()
         ts = latest.get("timestamp", "")[:19] if latest.get("timestamp") else ""
@@ -548,6 +568,14 @@ def llm_test_connection(data: dict = Body(...)):
         api_key=api_key,
         model=model,
     )
+    if result.get("ok"):
+        usage = result.get("usage") or {}
+        agent.memory.record_llm_usage_event(
+            tenant_id="local-default", module="connection_test",
+            provider=result.get("provider") or "api", model=result.get("model") or model,
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+        )
     return result
 
 
@@ -711,6 +739,13 @@ def llm_configs_test(data: dict = Body(...)):
         resp.raise_for_status()
         rdata = resp.json()
         content = rdata["choices"][0]["message"]["content"] if rdata.get("choices") else ""
+        usage = rdata.get("usage") or {}
+        agent.memory.record_llm_usage_event(
+            tenant_id="local-default", module="connection_test",
+            model=rdata.get("model") or model,
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+        )
         elapsed = _time.time() - t0
         return {"ok": True, "time_s": round(elapsed, 2), "reply": content[:50], "message": "连接成功"}
     except Exception as e:

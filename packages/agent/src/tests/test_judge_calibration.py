@@ -29,3 +29,15 @@ def test_calibration_report_keeps_missing_scores_out_of_denominator():
 
     assert report["compared_score_count"] == 1
     assert report["per_metric"]["relevancy"]["agreement_rate"] is None
+
+
+def test_calibration_requires_sample_and_quality_thresholds():
+    one = {
+        "result_key": "r1",
+        "judge_scores": {"answer_completeness": 0.9, "faithfulness": 0.9, "relevancy": 0.9},
+        "human_scores": {"answer_completeness": 0.9, "faithfulness": 0.9, "relevancy": 0.9},
+    }
+    assert build_judge_calibration_report([one])["passed"] is False
+    report = build_judge_calibration_report([dict(one, result_key=f"r{i}") for i in range(3)])
+    assert report["passed"] is True
+    assert report["min_reviewed"] == 3

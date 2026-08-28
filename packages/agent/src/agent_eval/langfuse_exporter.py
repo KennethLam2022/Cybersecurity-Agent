@@ -17,9 +17,10 @@ def _enabled(value: str | None) -> bool:
 
 
 class LangfuseExporter:
-    def __init__(self, client: Any = None, export_content: bool = False):
+    def __init__(self, client: Any = None, export_content: bool = False, annotation_queue: str = ""):
         self.client = client
         self.export_content = export_content
+        self.annotation_queue = annotation_queue
         self.last_error = ""
 
     @property
@@ -31,6 +32,20 @@ class LangfuseExporter:
         if self.export_content:
             return redact_text(text)
         return {"sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "length": len(text)}
+
+    def verify_connection(self) -> dict[str, Any]:
+        """Perform the SDK's credential check without exporting evaluation data."""
+        if not self.client:
+            return {"ok": False, "error": self.last_error or "Langfuse 未启用或 SDK 未安装"}
+        if not hasattr(self.client, "auth_check"):
+            return {"ok": False, "error": "当前 Langfuse SDK 不支持凭证校验"}
+        try:
+            if self.client.auth_check() is not True:
+                return {"ok": False, "error": "Langfuse 未通过凭证校验"}
+            return {"ok": True, "message": "已验证 Langfuse 网络连接与项目凭证"}
+        except Exception as exc:
+            self.last_error = str(exc)
+            return {"ok": False, "error": f"Langfuse 连接或凭证校验失败：{self.last_error}"}
 
     def export_cases_to_dataset(self, cases: list[dict[str, Any]], dataset_name: str) -> dict[str, Any]:
         """Best-effort Dataset projection; SQLite remains the canonical test set."""
@@ -78,8 +93,8 @@ class LangfuseExporter:
                 metadata={
                     "profile_counts": summary.get("profile_counts", {}),
                     "case_type_counts": summary.get("case_type_counts", {}),
-                    "annotation_queue_candidate": bool(os.environ.get("LANGFUSE_ANNOTATION_QUEUE")),
-                    "annotation_queue": os.environ.get("LANGFUSE_ANNOTATION_QUEUE", ""),
+                    "annotation_queue_candidate": bool(self.annotation_queue),
+                    "annotation_queue": self.annotation_queue,
                 },
             ) as root:
                 for result in run.get("results", []):
@@ -89,10 +104,8 @@ class LangfuseExporter:
                         "profile": result.get("profile") or "general",
                         "case_type": result.get("case_type") or "answer_quality",
                         "status": result.get("status", ""),
-                        "annotation_queue_candidate": bool(
-                            os.environ.get("LANGFUSE_ANNOTATION_QUEUE")
-                        ),
-                        "annotation_queue": os.environ.get("LANGFUSE_ANNOTATION_QUEUE", ""),
+                        "annotation_queue_candidate": bool(self.annotation_queue),
+                        "annotation_queue": self.annotation_queue,
                     }
                     with root.start_as_current_observation(
                         as_type="span",
@@ -129,16 +142,23 @@ class LangfuseExporter:
             return False
 
 
-def build_langfuse_exporter() -> LangfuseExporter:
+def build_langfuse_exporter(config: dict | None = None) -> LangfuseExporter:
     """Build an exporter from env without making Langfuse a hard dependency."""
-    if not _enabled(os.environ.get("LANGFUSE_ENABLED")):
+    config = config or {}
+    enabled = config.get("enabled") if config else _enabled(os.environ.get("LANGFUSE_ENABLED"))
+    if not enabled:
         return LangfuseExporter()
     try:
-        from langfuse import get_client
-
+        from langfuse import Langfuse
+        client = Langfuse(
+            public_key=config.get("public_key") or os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
+            secret_key=config.get("secret_key") or os.environ.get("LANGFUSE_SECRET_KEY", ""),
+            base_url=config.get("host") or os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+        )
         return LangfuseExporter(
-            client=get_client(),
-            export_content=_enabled(os.environ.get("LANGFUSE_EXPORT_CONTENT")),
+            client=client,
+            export_content=bool(config.get("export_content")) if config else _enabled(os.environ.get("LANGFUSE_EXPORT_CONTENT")),
+            annotation_queue=str(config.get("annotation_queue") or os.environ.get("LANGFUSE_ANNOTATION_QUEUE", "")).strip(),
         )
     except Exception as exc:
         exporter = LangfuseExporter()

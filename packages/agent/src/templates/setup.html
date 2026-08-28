@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>首次初始化 | 安枢 SecureNexus</title>
+  <style>
+    :root{--ink:#172033;--muted:#64748b;--line:#dce4ee;--blue:#1463b8;--blue-dark:#0d4e93;--paper:#fff;--canvas:#f3f6fa;--danger:#b42318;--focus:#0f6cbd}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--canvas);color:var(--ink);font-family:"Segoe UI","Microsoft YaHei",sans-serif;display:grid;place-items:center;padding:24px}.shell{width:min(860px,100%);display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,.9fr);background:var(--paper);border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 18px 52px rgba(15,42,77,.12)}.identity{padding:48px;background:#173b65;color:#fff;display:flex;flex-direction:column;justify-content:space-between;min-height:540px}.brand{font-size:28px;font-weight:700;letter-spacing:0}.brand span{font-size:14px;font-weight:500;opacity:.86;margin-left:7px}.identity p{font-size:17px;line-height:1.65;max-width:310px;margin:20px 0 auto;color:#d9e7f5}.identity small{font-size:12px;line-height:1.55;color:#b9d2ea}.form{padding:42px 40px}.form h1{font-size:23px;margin:0 0 8px}.lead{font-size:13px;color:var(--muted);margin:0 0 24px;line-height:1.6}.note{border-left:3px solid #6ca6dd;background:#f3f8fd;color:#35516e;padding:10px 11px;font-size:12px;line-height:1.55;margin-bottom:18px}label{display:block;font-size:12px;font-weight:600;color:#334155;margin:14px 0 6px}input{width:100%;border:1px solid #bcc8d6;border-radius:5px;padding:11px 12px;font:14px inherit;color:var(--ink);outline:none}input:focus{border-color:var(--focus);box-shadow:0 0 0 3px rgba(15,108,189,.14)}button{width:100%;margin-top:22px;border:0;border-radius:5px;background:var(--blue);color:#fff;padding:12px;font:600 14px inherit;cursor:pointer}button:hover{background:var(--blue-dark)}button:disabled{opacity:.6;cursor:wait}.status{min-height:20px;color:var(--danger);font-size:12px;margin-top:12px;line-height:1.45}.hidden{display:none!important}@media(max-width:720px){body{padding:0;place-items:stretch}.shell{border:0;border-radius:0;grid-template-columns:1fr;box-shadow:none}.identity{min-height:180px;padding:28px}.identity p{margin:12px 0 0}.identity small{display:none}.form{padding:32px 24px}}
+  </style>
+</head>
+<body>
+  <main class="shell" aria-labelledby="setupTitle">
+    <section class="identity"><div><div class="brand">安枢 <span>SecureNexus</span></div><p>连接安全知识，驱动可信行动。</p></div><small>首次初始化只激活一次，并绑定现有的本地平台工作区。</small></section>
+    <section class="form"><h1 id="setupTitle">初始化平台管理员</h1><p class="lead">创建用于系统配置、组织治理与安全审计的首个管理员账号。</p><div class="note">密码至少 8 位，且必须包含大写字母、小写字母和数字。初始化成功后，此入口会自动关闭。</div>
+      <form id="setupForm"><label for="displayName">显示名称</label><input id="displayName" maxlength="80" autocomplete="name" required><label for="email">邮箱</label><input id="email" type="email" autocomplete="email" required><label for="password">密码</label><input id="password" type="password" minlength="8" autocomplete="new-password" required><label for="passwordConfirm">确认密码</label><input id="passwordConfirm" type="password" minlength="8" autocomplete="new-password" required><button id="submitButton" type="submit">完成初始化</button><div class="status" id="status" role="alert"></div></form>
+    </section>
+  </main>
+  <script>
+    async function setupState(){try{const response=await fetch('/api/auth/bootstrap-status');const data=await response.json();if(!data.setup_required)location.replace('/login')}catch(_){document.getElementById('status').textContent='无法读取初始化状态。'}}
+    document.getElementById('setupForm').addEventListener('submit',async event=>{event.preventDefault();const button=document.getElementById('submitButton');const status=document.getElementById('status');const password=document.getElementById('password').value;if(password!==document.getElementById('passwordConfirm').value){status.textContent='两次输入的密码不一致。';return}button.disabled=true;status.textContent='正在初始化...';try{const response=await fetch('/api/auth/bootstrap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({display_name:document.getElementById('displayName').value.trim(),email:document.getElementById('email').value.trim(),password})});const data=await response.json();if(!response.ok)throw new Error(data.detail||'初始化失败');location.replace('/admin')}catch(error){status.textContent=error.message||'初始化失败，请重试。';button.disabled=false}});setupState();
+  </script>
+</body>
+</html>

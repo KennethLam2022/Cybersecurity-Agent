@@ -9,9 +9,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PNPM = "pnpm.cmd" if sys.platform == "win32" else "pnpm"
 LOCAL_CHECKS = (
+    ("workspace dependency install", [PNPM, "install", "--frozen-lockfile"]),
     ("full test suite", [PNPM, "test"]),
     ("deterministic evaluation smoke", [PNPM, "smoke"]),
     ("python build", [PNPM, "build"]),
+    ("shared type build", [PNPM, "--filter", "@cybersec/shared", "build"]),
     ("agent-core build", [PNPM, "--filter", "@cybersec/agent-core", "build"]),
 )
 EXTERNAL_CONFIRMATIONS = (

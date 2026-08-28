@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSO / 企业身份配置</title>
+<style>
+  :root { --bg:#f5f5f7; --card:#fff; --t:#1d1d1f; --t2:#6e6e73; --b:#e5e5ea; --a:#0071e3; --g:#34c759; --r:#ff3b30; --f:-apple-system,BlinkMacSystemFont,'SF Pro SC','PingFang SC','Microsoft YaHei',sans-serif; }
+  * { box-sizing:border-box; } body { margin:0; padding:40px; background:var(--bg); color:var(--t); font-family:var(--f); }
+  .wrap { max-width:1080px; margin:auto; } h1 { margin:0; font-size:22px; } .lead { color:var(--t2); font-size:13px; margin:7px 0 24px; }
+  .notice,.card { background:var(--card); border:1px solid var(--b); border-radius:8px; } .notice { padding:14px 18px; border-left:3px solid var(--a); margin-bottom:18px; font-size:12px; line-height:1.7; color:var(--t2); }
+  .card { padding:20px; margin-bottom:18px; } .card h2 { font-size:15px; margin:0 0 14px; } .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+  label { display:block; color:var(--t2); font-size:12px; font-weight:600; margin-bottom:6px; } input,select { width:100%; padding:8px 10px; border:1px solid var(--b); border-radius:6px; font:13px var(--f); color:var(--t); background:#fff; } input:focus,select:focus { outline:0; border-color:var(--a); }
+  .hint { color:var(--t2); font-size:11px; margin-top:5px; line-height:1.5; } .switch-row { display:flex; align-items:center; gap:10px; font-size:13px; } .switch-row input { width:auto; }
+  .actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; border-top:1px solid var(--b); padding-top:16px; margin-top:16px; } button { border:0; border-radius:6px; padding:9px 14px; font:600 12px var(--f); cursor:pointer; } button:disabled { opacity:.5; cursor:not-allowed; } .primary { background:var(--a); color:#fff; } .outline { background:#fff; border:1px solid var(--b); color:var(--t2); } .danger { background:#fff; border:1px solid var(--r); color:var(--r); } .status { font-size:12px; color:var(--t2); } .status.ok { color:var(--g); } .status.error { color:var(--r); }
+  .provider-row { border:1px solid var(--b); border-radius:8px; padding:12px 14px; margin-bottom:10px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; } .provider-row .name { font-weight:600; font-size:13px; } .provider-row .meta { font-size:11px; color:var(--t2); flex:1; min-width:160px; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; } .badge.on { background:#e8f7ee; color:var(--g); } .badge.off { background:#f2f2f5; color:var(--t2); }
+  table { width:100%; border-collapse:collapse; font-size:12px; } th,td { text-align:left; padding:9px 8px; border-bottom:1px solid var(--b); vertical-align:top; } th { color:var(--t2); font-weight:600; }
+  .inline-actions { display:flex; gap:6px; flex-wrap:wrap; } .inline-actions button { padding:5px 9px; font-size:11px; }
+  @media (max-width:760px) { body { padding:18px; } .grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <select data-page-language aria-label="Language" style="float:right"><option value="zh-CN">中文</option><option value="en-US">English</option></select>
+  <h1 data-i18n="SSO / 企业身份集成">SSO / 企业身份集成</h1>
+  <p class="lead" data-i18n="配置 LDAP/AD 绑定登录或 OIDC 授权码登录；首次登录按企业策略自动开通或进入管理员审批。">配置 LDAP/AD 绑定登录或 OIDC 授权码登录；首次登录按企业策略自动开通或进入管理员审批。</p>
+  <div class="notice"><strong data-i18n="用途与边界">用途与边界</strong><br>SSO 与本地密码账号并存，管理员可启用任意组合。LDAP 服务账号与 OIDC Client Secret 只以加密形式存储，前台接口仅返回启用中的登录入口，不暴露密钥。新建账号沿用现有工作区、角色与 Agent 隔离边界。</div>
+
+  <section class="card">
+    <h2 data-i18n="已配置登录方式">已配置登录方式</h2>
+    <div id="providerList">加载中...</div>
+  </section>
+
+  <section class="card">
+    <h2 id="formTitle" data-i18n="新增登录方式">新增登录方式</h2>
+    <input type="hidden" id="providerId">
+    <div class="grid">
+      <div><label for="providerType">类型</label><select id="providerType"><option value="ldap">LDAP / AD 绑定登录</option><option value="oidc">OIDC 授权码登录</option></select></div>
+      <div><label for="oidcPreset">OIDC 预设模板</label><select id="oidcPreset"><option value="">通用 OIDC（手动填写）</option><option value="wechat_work">企业微信</option><option value="dingtalk">钉钉</option><option value="feishu">飞书</option></select><div class="hint">预设只提供字段映射和参考地址，Issuer、Client ID 与密钥仍需管理员确认。</div></div>
+      <div><label for="providerName">名称</label><input id="providerName" maxlength="120" placeholder="例如：公司 AD / 企业 SSO"></div>
+      <div class="switch-row" style="align-items:flex-end;padding-bottom:9px"><input id="providerEnabled" type="checkbox"><label for="providerEnabled" style="margin:0">启用</label></div>
+      <div class="switch-row" style="align-items:flex-end;padding-bottom:9px"><input id="autoProvision" type="checkbox"><label for="autoProvision" style="margin:0">首次登录自动开通账号</label></div>
+      <div><label for="defaultRole">默认角色</label><select id="defaultRole"><option value="user">普通用户</option><option value="agent_admin">Agent 管理员</option><option value="org_admin">组织管理员</option></select></div>
+      <div><label for="defaultTenant">默认工作区（留空则自动新建）</label><input id="defaultTenant" placeholder="org-xxxx 或 local-default"></div>
+    </div>
+
+    <div id="ldapFields" style="margin-top:16px">
+      <div class="grid">
+        <div><label for="ldapServerUrl">服务器地址</label><input id="ldapServerUrl" placeholder="ldaps://ad.example.com"><div class="hint">支持 ldap:// 与 ldaps://。</div></div>
+        <div><label for="ldapBindDn">服务账号 DN（可留空匿名）</label><input id="ldapBindDn" placeholder="CN=svc-nexus,OU=Service,DC=example,DC=com"></div>
+        <div><label for="ldapBindPassword">服务账号密码</label><input id="ldapBindPassword" type="password" autocomplete="new-password" placeholder="留空则保留已有密钥"><div class="hint" id="ldapSecretMask"></div></div>
+        <div><label for="ldapBaseDn">基础 DN</label><input id="ldapBaseDn" placeholder="DC=example,DC=com"></div>
+        <div><label for="ldapUserAttr">用户名字段</label><input id="ldapUserAttr" value="sAMAccountName"></div>
+        <div><label for="ldapDisplayAttr">显示名字段</label><input id="ldapDisplayAttr" value="displayName"></div>
+        <div><label for="ldapEmailAttr">邮箱字段</label><input id="ldapEmailAttr" value="mail"></div>
+        <div><label for="ldapFilter">搜索过滤条件</label><input id="ldapFilter" value="(objectClass=person)"></div>
+        <div class="switch-row" style="align-items:flex-end;padding-bottom:9px"><input id="ldapUseTls" type="checkbox"><label for="ldapUseTls" style="margin:0">连接使用 TLS</label></div>
+        <div><label for="ldapTimeout">连接超时（秒）</label><input id="ldapTimeout" type="number" min="1" max="60" value="5"></div>
+      </div>
+    </div>
+
+    <div id="oidcFields" style="margin-top:16px;display:none">
+      <div class="grid">
+        <div><label for="oidcIssuer">颁发者地址</label><input id="oidcIssuer" placeholder="https://login.example.com/realms/company"></div>
+        <div><label for="oidcClientId">Client ID</label><input id="oidcClientId" autocomplete="off"></div>
+        <div><label for="oidcClientSecret">Client Secret</label><input id="oidcClientSecret" type="password" autocomplete="new-password" placeholder="留空则保留已有密钥"><div class="hint" id="oidcSecretMask"></div></div>
+        <div><label for="oidcRedirect">回调地址</label><input id="oidcRedirect" placeholder="http://127.0.0.1:8000/api/auth/sso/oidc/callback"><div class="hint">需与企业 IdP 白名单一致。</div></div>
+        <div><label for="oidcScopes">Scopes</label><input id="oidcScopes" value="openid profile email"></div>
+        <div><label for="oidcEmailAttr">邮箱字段</label><input id="oidcEmailAttr" value="email"></div>
+        <div><label for="oidcDisplayAttr">显示名字段</label><input id="oidcDisplayAttr" value="name"></div>
+        <div><label for="oidcTimeout">连接超时（秒）</label><input id="oidcTimeout" type="number" min="1" max="60" value="8"></div>
+      </div>
+    </div>
+
+    <div class="actions"><button class="primary" id="saveBtn">保存配置</button><button class="outline" id="cancelBtn" style="display:none">取消编辑</button><span class="status" id="formStatus"></span></div>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="首次登录审批">首次登录审批</h2>
+    <div class="hint" style="margin-bottom:12px">未开启自动开通时，首次 SSO 登录会在此等待审批。审批时可为账号指定角色与工作区。</div>
+    <table>
+      <thead><tr><th>登录方式</th><th>邮箱</th><th>身份标识</th><th>申请时间</th><th style="width:220px">操作</th></tr></thead>
+      <tbody id="approvalList"><tr><td colspan="5">加载中...</td></tr></tbody>
+    </table>
+  </section>
+</main>
+<script src="/static/page_i18n.js"></script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function headers() {
+    var csrf = (document.cookie.match(/(?:^|; )securenexus_csrf=([^;]+)/) || [])[1];
+    return Object.assign({'Content-Type':'application/json'}, csrf ? {'X-CSRF-Token': decodeURIComponent(csrf)} : {});
+  }
+  function setStatus(el, text, kind) { el.textContent = text; el.className = 'status ' + (kind || ''); }
+  function esc(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]; }); }
+  async function request(url, options) {
+    var response = await fetch(url, Object.assign({}, options || {}, {headers:Object.assign({}, headers(), (options || {}).headers || {})}));
+    var data = await response.json().catch(function () { return {}; });
+    if (!response.ok) throw new Error(data.detail || data.error || ('请求失败 (' + response.status + ')'));
+    return data;
+  }
+
+  function collectProvider() {
+    var type = $('providerType').value;
+    var config = {};
+    var secrets = {};
+    if (type === 'ldap') {
+      config = {
+        server_url: $('ldapServerUrl').value.trim(),
+        bind_dn: $('ldapBindDn').value.trim(),
+        base_dn: $('ldapBaseDn').value.trim(),
+        user_attr: $('ldapUserAttr').value.trim(),
+        display_attr: $('ldapDisplayAttr').value.trim(),
+        email_attr: $('ldapEmailAttr').value.trim(),
+        filter: $('ldapFilter').value.trim(),
+        use_tls: $('ldapUseTls').checked,
+        connect_timeout: Number($('ldapTimeout').value || 5)
+      };
+      if ($('ldapBindPassword').value) secrets.bind_password = $('ldapBindPassword').value;
+    } else {
+      config = {
+        issuer_url: $('oidcIssuer').value.trim(),
+        client_id: $('oidcClientId').value.trim(),
+        redirect_uri: $('oidcRedirect').value.trim(),
+        scopes: $('oidcScopes').value.split(/\s*,\s*|\s+/).filter(Boolean),
+        email_attr: $('oidcEmailAttr').value.trim(),
+        display_attr: $('oidcDisplayAttr').value.trim(),
+        connect_timeout: Number($('oidcTimeout').value || 8)
+      };
+      if ($('oidcClientSecret').value) secrets.client_secret = $('oidcClientSecret').value;
+    }
+    return {
+      provider_type: type,
+      name: $('providerName').value.trim(),
+      enabled: $('providerEnabled').checked,
+      auto_provision: $('autoProvision').checked,
+      default_role: $('defaultRole').value,
+      default_tenant_id: $('defaultTenant').value.trim(),
+      config: config,
+      secrets: secrets
+    };
+  }
+
+  function fillProvider(item) {
+    var c = item.config || {};
+    $('providerId').value = item.id || '';
+    $('providerType').value = item.provider_type || 'ldap';
+    $('providerName').value = item.name || '';
+    $('providerEnabled').checked = !!item.enabled;
+    $('autoProvision').checked = !!item.auto_provision;
+    $('defaultRole').value = item.default_role || 'user';
+    $('defaultTenant').value = item.default_tenant_id || '';
+    $('ldapServerUrl').value = c.server_url || '';
+    $('ldapBindDn').value = c.bind_dn || '';
+    $('ldapBaseDn').value = c.base_dn || '';
+    $('ldapUserAttr').value = c.user_attr || 'sAMAccountName';
+    $('ldapDisplayAttr').value = c.display_attr || 'displayName';
+    $('ldapEmailAttr').value = c.email_attr || 'mail';
+    $('ldapFilter').value = c.filter || '(objectClass=person)';
+    $('ldapUseTls').checked = !!c.use_tls;
+    $('ldapTimeout').value = c.connect_timeout || 5;
+    $('oidcIssuer').value = c.issuer_url || '';
+    $('oidcClientId').value = c.client_id || '';
+    $('oidcRedirect').value = c.redirect_uri || '';
+    $('oidcScopes').value = (c.scopes || []).join(' ');
+    $('oidcEmailAttr').value = c.email_attr || 'email';
+    $('oidcDisplayAttr').value = c.display_attr || 'name';
+    $('oidcTimeout').value = c.connect_timeout || 8;
+    $('ldapSecretMask').textContent = item.has_secrets ? '当前已配置服务账号密码' : '尚未配置';
+    $('oidcSecretMask').textContent = item.has_secrets ? '当前已配置 Client Secret' : '尚未配置';
+    $('ldapBindPassword').value = '';
+    $('oidcClientSecret').value = '';
+    syncType();
+    $('formTitle').textContent = item.id ? '编辑登录方式' : '新增登录方式';
+    $('cancelBtn').style.display = item.id ? '' : 'none';
+    setStatus($('formStatus'), '', '');
+  }
+
+  function resetForm() {
+    fillProvider({provider_type: 'ldap'});
+    $('formTitle').textContent = '新增登录方式';
+    $('cancelBtn').style.display = 'none';
+  }
+
+  function syncType() {
+    var type = $('providerType').value;
+    $('ldapFields').style.display = type === 'ldap' ? '' : 'none';
+    $('oidcFields').style.display = type === 'oidc' ? '' : 'none';
+  }
+
+  function renderProviders(items) {
+    var box = $('providerList');
+    if (!items || !items.length) { box.innerHTML = '<div class="hint">尚未配置 SSO 登录方式。</div>'; return; }
+    box.innerHTML = items.map(function (item) {
+      var badge = item.enabled ? '<span class="badge on">已启用</span>' : '<span class="badge off">已停用</span>';
+      var typeLabel = item.provider_type === 'ldap' ? 'LDAP/AD' : 'OIDC';
+      var target = item.provider_type === 'ldap' ? (item.config.server_url || '') : (item.config.issuer_url || '');
+      var auto = item.auto_provision ? ' · 自动开通' : ' · 审批开通';
+      return '<div class="provider-row"><div class="name">' + esc(item.name) + ' ' + badge + '</div>' +
+        '<div class="meta">' + typeLabel + ' · ' + esc(target) + auto + ' · 修改于 ' + esc(item.updated_at || '--') + '</div>' +
+        '<div class="inline-actions">' +
+        '<button class="outline" data-action="toggle" data-id="' + esc(item.id) + '">' + (item.enabled ? '停用' : '启用') + '</button>' +
+        '<button class="outline" data-action="test" data-id="' + esc(item.id) + '">测试</button>' +
+        '<button class="outline" data-action="edit" data-id="' + esc(item.id) + '">编辑</button>' +
+        '<button class="danger" data-action="delete" data-id="' + esc(item.id) + '">删除</button>' +
+        '</div></div>';
+    }).join('');
+    box.querySelectorAll('button[data-action]').forEach(function (button) {
+      button.onclick = function () {
+        var item = (items || []).find(function (entry) { return entry.id === button.dataset.id; });
+        if (button.dataset.action === 'edit') { fillProvider(item); }
+        else if (button.dataset.action === 'delete') { deleteProvider(item); }
+        else if (button.dataset.action === 'test') { testProvider(item); }
+        else { toggleProvider(item); }
+      };
+    });
+  }
+
+  function renderApprovals(items) {
+    var tbody = $('approvalList');
+    if (!items || !items.length) { tbody.innerHTML = '<tr><td colspan="5">暂无待审批账号。</td></tr>'; return; }
+    tbody.innerHTML = items.map(function (item) {
+      return '<tr><td>' + esc(item.provider_name) + ' (' + esc(item.provider_type) + ')</td>' +
+        '<td>' + esc(item.email) + (item.display_name ? '<div class="hint">' + esc(item.display_name) + '</div>' : '') + '</td>' +
+        '<td>' + esc(item.subject) + '</td><td>' + esc(item.created_at || '--') + '</td>' +
+        '<td><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><input data-approve-tenant="' + esc(item.link_id) + '" placeholder="工作区（可选）" style="width:130px;padding:5px"><button class="primary" data-approve="' + esc(item.link_id) + '">批准</button><button class="danger" data-reject="' + esc(item.link_id) + '">拒绝</button></div></td></tr>';
+    }).join('');
+    tbody.querySelectorAll('button[data-approve]').forEach(function (button) {
+      button.onclick = function () {
+        var tenantInput = tbody.querySelector('input[data-approve-tenant="' + button.dataset.approve + '"]');
+        handleApproval(button.dataset.approve, 'approve', tenantInput ? tenantInput.value : '');
+      };
+    });
+    tbody.querySelectorAll('button[data-reject]').forEach(function (button) {
+      button.onclick = function () { handleApproval(button.dataset.reject, 'reject', ''); };
+    });
+  }
+
+  async function loadProviders() { try { var data = await request('/api/admin/sso/providers'); renderProviders(data.items || []); } catch (e) { $('providerList').textContent = '加载失败：' + e.message; } }
+  async function loadApprovals() { try { var data = await request('/api/admin/sso/approvals'); renderApprovals(data.items || []); } catch (e) { $('approvalList').innerHTML = '<tr><td colspan="5">加载失败：' + esc(e.message) + '</td></tr>'; } }
+
+  $('saveBtn').onclick = async function () {
+    $('saveBtn').disabled = true;
+    try {
+      var payload = collectProvider();
+      var id = $('providerId').value;
+      var url = id ? ('/api/admin/sso/providers/' + encodeURIComponent(id)) : '/api/admin/sso/providers';
+      var data = await request(url, {method: id ? 'PUT' : 'POST', body: JSON.stringify(payload)});
+      setStatus($('formStatus'), '配置已保存', 'ok');
+      $('ldapBindPassword').value = ''; $('oidcClientSecret').value = '';
+      await loadProviders();
+      resetForm();
+    } catch (e) { setStatus($('formStatus'), e.message, 'error'); }
+    finally { $('saveBtn').disabled = false; }
+  };
+
+  $('cancelBtn').onclick = function () { resetForm(); };
+  $('providerType').onchange = function () { syncType(); };
+  $('oidcPreset').onchange = function () {
+    var presets = {wechat_work:{name:'企业微信 OIDC',issuer:'https://open.work.weixin.qq.com/wwopen/sso/3rd_qrConnect'},dingtalk:{name:'钉钉 OIDC',issuer:'https://login.dingtalk.com/oauth2'},feishu:{name:'飞书 OIDC',issuer:'https://open.feishu.cn/open-apis/authen/v1/authorize'}};
+    var preset = presets[this.value]; if (!preset) return;
+    $('providerType').value = 'oidc'; syncType(); $('providerName').value = preset.name; $('oidcIssuer').value = preset.issuer; $('oidcEmailAttr').value = 'email'; $('oidcDisplayAttr').value = 'name'; $('oidcScopes').value = 'openid profile email';
+  };
+
+  async function toggleProvider(item) {
+    try { await request('/api/admin/sso/providers/' + encodeURIComponent(item.id) + '/status', {method:'PUT', body:JSON.stringify({enabled: !item.enabled})}); await loadProviders(); }
+    catch (e) { alert(e.message); }
+  }
+  async function deleteProvider(item) {
+    if (!confirm('确认删除 SSO 登录方式「' + item.name + '」？已绑定的身份链接会保留。')) return;
+    try { await request('/api/admin/sso/providers/' + encodeURIComponent(item.id), {method:'DELETE'}); await loadProviders(); }
+    catch (e) { alert(e.message); }
+  }
+  async function testProvider(item) {
+    var btn = event && event.target; if (btn) btn.disabled = true;
+    try { var data = await request('/api/admin/sso/providers/' + encodeURIComponent(item.id) + '/test', {method:'POST'}); alert('测试通过：' + JSON.stringify(data.result || {})); }
+    catch (e) { alert('测试失败：' + e.message); }
+    finally { if (btn) btn.disabled = false; }
+  }
+  async function handleApproval(linkId, action, tenantId) {
+    try { var data = await request('/api/admin/sso/approvals/' + encodeURIComponent(linkId), {method:'POST', body:JSON.stringify({action: action, default_tenant_id: tenantId})}); alert(action === 'approve' ? '已批准，账号可正常登录。' : '已拒绝。'); await loadApprovals(); if (action === 'approve') await loadProviders(); }
+    catch (e) { alert(e.message); }
+  }
+
+  resetForm();
+  loadProviders();
+  loadApprovals();
+})();
+</script>
+</body>
+</html>

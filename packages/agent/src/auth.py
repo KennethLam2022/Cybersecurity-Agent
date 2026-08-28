@@ -1,25 +1,9 @@
-"""认证中间件 + SSRF 域名白名单 + 管理路由检查
+"""会话认证路由辅助 + SSRF 域名白名单 + 管理路由检查
 
 用法：
-  from auth import verify_admin_token, is_admin_route, validate_llm_url
+  from auth import is_admin_route, validate_llm_url
 """
 import os
-import json
-import logging
-from fastapi import Request, HTTPException
-
-logger = logging.getLogger(__name__)
-
-# ---- 管理 Token ----
-_ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "change-me-in-production")
-
-
-async def verify_admin_token(request: Request) -> None:
-    """验证管理端点 Token"""
-    token = request.headers.get("X-Admin-Token", "")
-    if not token or token != _ADMIN_TOKEN:
-        logger.warning(f"⚠️ 未授权访问: {request.url.path}")
-        raise HTTPException(status_code=403, detail="未授权访问")
 
 # ---- SSRF 防护：LLM API 域名白名单 ----
 _ALLOWED_LLM_DOMAINS = {
@@ -59,15 +43,21 @@ def validate_llm_url(url: str) -> bool:
 
 # ---- 管理路由检查 ----
 _ADMIN_PREFIXES = {
+    "/admin",
+    "/admin/",
+    "/api/admin/",
     "/api/documents/",
     "/api/llm/configs/",
     "/api/agent-eval/",
+    "/api/prompt/ab/",
 }
 
 _ADMIN_ROUTES = [
     "/api/conversations/detail",
     "/api/conversations/stats",
     "/api/conversations/{conv_id}/hard",
+    "/api/conversations/{conv_id}/jailbreak-status",
+    "/api/conversations/{conv_id}/jailbreak-report",
     "/api/llm/config",
     "/api/llm/presets",
     "/api/llm/test",
@@ -75,23 +65,46 @@ _ADMIN_ROUTES = [
 ]
 
 PUBLIC_ROUTES = {
-    "/", "/admin",
-    "/api/conversations",
-    "/api/chat/stream",
+    "/", "/login", "/admin/login", "/setup", "/chat",
     "/api/rating",
     # Profile registry only exposes taxonomy metadata; document content and
     # all write/migration endpoints remain protected by /api/documents/.
     "/api/documents/profile-registry",
     "/api/llm/config/current",
-    "/admin/model-config",
-    "/api/admin/stream",
+    "/api/auth/sso/providers",
 }
 
-PUBLIC_PREFIXES = {"/api/conversations/", "/static/"}
+PUBLIC_PREFIXES = {"/static/", "/api/auth/", "/api/shared/", "/shared/"}
+
+# Older administrative domains are retained during the RBAC migration.  They
+# are deliberately platform-only until their handlers have resource-level
+# tenant checks; this is a fail-closed bridge, not a substitute for the final
+# per-resource authorization work.
+_PLATFORM_ONLY_ADMIN_PREFIXES = (
+    "/admin/model-config",
+    "/admin/langfuse-config",
+    "/admin/sso-config",
+    "/admin/email-notifications",
+    "/api/admin/email-notifications",
+    "/api/admin/sso/approvals",
+    "/api/admin/external-retrieval",
+    "/api/admin/reflection-rules",
+    "/api/admin/cleanup",
+    "/api/admin/stream",
+    "/api/admin/semantic-cache",
+    "/api/admin/knowledge-gaps",
+)
+
+
+def is_platform_only_admin_route(path: str) -> bool:
+    """Return whether a legacy admin route is temporarily platform-only."""
+    return (any(path.startswith(prefix) for prefix in _PLATFORM_ONLY_ADMIN_PREFIXES)
+            or path.endswith("/retry-ingestion")
+            or path.startswith(("/api/prompt/ab/", "/api/llm/", "/api/documents/")))
 
 
 def is_admin_route(path: str) -> bool:
-    """判断是否为管理路由（需要 X-Admin-Token）"""
+    """Return whether a route requires an authenticated management principal."""
     if path in PUBLIC_ROUTES:
         return False
 

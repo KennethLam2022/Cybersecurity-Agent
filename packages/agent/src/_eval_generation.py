@@ -59,6 +59,7 @@ def eval_faithfulness(
     retrieved_docs: list[dict],
     answer: str,
     llm=None,
+    usage_sink=None,
 ) -> dict:
     """评估回答是否忠实于检索文档（无编造、无矛盾）
 
@@ -84,7 +85,7 @@ def eval_faithfulness(
             prompt = _FAITHFULNESS_PROMPT.format(
                 query=query, context=context_text, answer=answer_clean
             )
-            result = _llm_judge(llm, prompt)
+            result = _llm_judge(llm, prompt, usage_sink=usage_sink)
             score = max(0.0, min(1.0, float(result.get("score", 0))))
             return {
                 "score": round(score, 4),
@@ -187,6 +188,7 @@ def eval_relevancy(
     answer: str,
     retrieved_docs: Optional[list[dict]] = None,
     llm=None,
+    usage_sink=None,
 ) -> dict:
     """评估回答是否针对问题
 
@@ -210,7 +212,7 @@ def eval_relevancy(
     if llm is not None:
         try:
             prompt = _RELEVANCY_PROMPT.format(query=query, answer=answer_clean)
-            result = _llm_judge(llm, prompt)
+            result = _llm_judge(llm, prompt, usage_sink=usage_sink)
             score = max(0.0, min(1.0, float(result.get("score", 0))))
             return {
                 "score": round(score, 4),
@@ -315,6 +317,7 @@ def eval_hallucination(
     retrieved_docs: list[dict],
     answer: str,
     llm=None,
+    usage_sink=None,
 ) -> dict:
     """检测回答中的幻觉（信息编造）
 
@@ -341,7 +344,7 @@ def eval_hallucination(
             prompt = _HALLUCINATION_PROMPT.format(
                 query=query, context=context_text, answer=answer_clean
             )
-            result = _llm_judge(llm, prompt)
+            result = _llm_judge(llm, prompt, usage_sink=usage_sink)
             score = max(0.0, min(1.0, float(result.get("score", 0))))
             # score 越高 = 幻觉越少
             return {
@@ -484,7 +487,7 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def _llm_judge(llm, prompt: str, timeout: int = 300) -> dict:
+def _llm_judge(llm, prompt: str, timeout: int = 300, usage_sink=None) -> dict:
     """调用 LLM-as-Judge，统一处理调用参数 + JSON 解析
 
     Args:
@@ -503,6 +506,8 @@ def _llm_judge(llm, prompt: str, timeout: int = 300) -> dict:
         temperature=0.01,   # 低温度保证 JSON 格式确定性
         timeout=timeout,
     )
+    if usage_sink:
+        usage_sink(resp, getattr(llm, "model", ""))
     raw = resp.get("content", "")
     text = _extract_json(raw)
 

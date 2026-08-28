@@ -8,6 +8,8 @@
     "test": "python scripts/run_tests.py",
     "smoke": "python scripts/eval_smoke.py",
     "release:check": "python scripts/release_check.py",
+    "release:p5": "python scripts/p5_release_check.py",
+    "smoke:p5:http": "python scripts/p5_http_isolation_smoke.py",
     "lint": "python -m compileall -q packages/agent/src packages/preprocessor/src"
   },
   "engines": {

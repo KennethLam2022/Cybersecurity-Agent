@@ -69,6 +69,18 @@
       "keywords": ["政务", "政府", "公安", "法院", "检察院", "行政审批", "电子政务"],
       "description": "政务行业扩展资料包",
       "default": false
+    },
+    {
+      "profile": "industry/manufacturing",
+      "scope": "industry",
+      "industry": "manufacturing",
+      "category": "15-制造业安全",
+      "category_aliases": ["15-制造业安全", "制造业安全"],
+      "label": "制造业扩展",
+      "keywords": ["制造业", "工业控制", "工控", "PLC", "SCADA", "MES", "OT", "生产线"],
+      "classifier_aliases": ["工业互联网", "工控系统", "智能制造"],
+      "description": "制造业网络安全扩展资料包",
+      "default": false
     }
   ]
 }

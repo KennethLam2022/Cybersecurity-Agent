@@ -14,6 +14,7 @@ for path in (_AGENT_SRC, _PREPROCESSOR_SRC):
 from agent import (
     COMPLIANCE_DECISION_FALLBACK_ANSWER,
     QueryRewriteResult,
+    infer_query_type_from_text,
     _extract_json_object,
     answer_mentions_unbacked_legal_references,
     compliance_decision_guard_answer,
@@ -53,6 +54,31 @@ def test_query_rewrite_result_keeps_original_and_dedupes_queries():
     assert len(queries) == len(set(queries))
     assert result.metadata_filter()["doc_ids"] == ["22239"]
     assert result.metadata_filter()["hard_filter"] is True
+
+
+def test_infer_query_type_covers_common_security_routing_cases():
+    assert infer_query_type_from_text("等保三级测评前，安全审计需要准备哪些材料？") == "compliance_decision"
+    assert infer_query_type_from_text("网络安全法对网络运营者的安全保护义务有哪些规定？") == "article_lookup"
+    assert infer_query_type_from_text("ISO 27001和等保有什么区别？") == "comparison"
+    assert infer_query_type_from_text("数据分类分级通常包括哪些步骤？") == "general"
+
+
+def test_query_rewrite_result_uses_original_query_when_model_fields_are_empty():
+    result = QueryRewriteResult.from_dict(
+        "数据分类分级通常包括哪些步骤？",
+        {"standalone_query": "", "semantic_query": "", "query_type": ""},
+    )
+
+    assert result.semantic_query == "数据分类分级通常包括哪些步骤？"
+    assert result.retrieval_queries()
+
+
+def test_legitimate_single_turn_procedure_question_is_not_jailbreak():
+    from agent import _detect_user_jailbreak
+
+    blocked, _ = _detect_user_jailbreak("数据分类分级的主要依据和实施步骤是什么？", [])
+
+    assert blocked is False
 
 
 def test_infer_metadata_filter_from_standard_and_article():

@@ -22,6 +22,14 @@ def test_trace_envelope_contains_runtime_context():
     assert trace["outcome_detail"]["returned_count"] == 3
 
 
+def test_add_trace_step_allows_nested_trace_payload():
+    trace = build_trace_envelope(original_query="q", rewrite_enabled=True)
+
+    add_trace_step(trace, "retrieval", trace={"counts": {"returned": 2}})
+
+    assert trace["steps"][0]["trace"]["counts"]["returned"] == 2
+
+
 def test_eval_trace_projection_keeps_requested_profiles():
     from agent_eval.trace_schema import normalize_trace
 

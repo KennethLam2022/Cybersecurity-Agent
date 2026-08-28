@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登录 | 安枢 SecureNexus</title>
+  <style>
+    :root{--ink:#172033;--muted:#64748b;--line:#dce4ee;--blue:#1463b8;--blue-dark:#0d4e93;--paper:#fff;--canvas:#f3f6fa;--danger:#b42318;--focus:#0f6cbd}
+    *{box-sizing:border-box} body{margin:0;min-height:100vh;background:var(--canvas);color:var(--ink);font-family:"Segoe UI","Microsoft YaHei",sans-serif;display:grid;place-items:center;padding:24px}
+    .shell{width:min(940px,100%);display:grid;grid-template-columns:minmax(0,1.1fr) minmax(340px,.9fr);background:var(--paper);border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 18px 52px rgba(15,42,77,.12)}
+    .identity{padding:48px;background:#173b65;color:#fff;display:flex;flex-direction:column;justify-content:space-between;min-height:520px}.brand{font-size:28px;font-weight:700;letter-spacing:0}.brand span{font-size:14px;font-weight:500;opacity:.86;margin-left:7px}.tagline{font-size:17px;line-height:1.65;max-width:300px;margin:18px 0 auto;color:#d9e7f5}.identity small{font-size:12px;line-height:1.55;color:#b9d2ea}
+    .form{padding:42px 40px}.form h1{font-size:23px;margin:0 0 8px}.form .lead{font-size:13px;color:var(--muted);margin:0 0 26px;line-height:1.55}.mode{display:flex;border-bottom:1px solid var(--line);margin-bottom:24px;gap:22px}.mode button{background:transparent;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:0 0 10px;color:var(--muted);font:600 13px inherit;cursor:pointer}.mode button.active{color:var(--blue);border-color:var(--blue)}
+    label{display:block;font-size:12px;font-weight:600;color:#334155;margin:15px 0 6px}input{width:100%;border:1px solid #bcc8d6;border-radius:5px;padding:11px 12px;font:14px inherit;color:var(--ink);outline:none}input:focus{border-color:var(--focus);box-shadow:0 0 0 3px rgba(15,108,189,.14)}.hidden{display:none!important}.login-error{min-height:18px;color:var(--danger);font-size:12px;margin-top:6px;line-height:1.45}.submit{width:100%;margin-top:22px;border:0;border-radius:5px;background:var(--blue);color:#fff;padding:12px;font:600 14px inherit;cursor:pointer}.submit:hover{background:var(--blue-dark)}.submit:disabled{opacity:.6;cursor:wait}.status{min-height:20px;color:var(--danger);font-size:12px;margin-top:12px;line-height:1.45}.sso{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}.sso-title{font-size:12px;color:var(--muted);margin-bottom:9px}.sso button{width:100%;text-align:left;border:1px solid var(--line);background:#fff;border-radius:5px;padding:10px 11px;margin-top:7px;color:#334155;font:500 13px inherit;cursor:pointer}.sso button:hover{border-color:var(--blue);color:var(--blue)}.back{display:inline-block;margin-top:20px;font-size:12px;color:var(--blue);text-decoration:none}
+    @media (max-width:720px){body{padding:0;place-items:stretch}.shell{border:0;border-radius:0;grid-template-columns:1fr;box-shadow:none}.identity{min-height:180px;padding:28px}.tagline{margin:12px 0 0}.identity small{display:none}.form{padding:32px 24px}}
+  </style>
+</head>
+<body>
+  <main class="shell" aria-labelledby="loginTitle">
+    <section class="identity"><div><div class="brand">安枢 <span>SecureNexus</span></div><p class="tagline">连接安全知识，驱动可信行动。</p></div><small>网络安全知识与治理工作台</small></section>
+    <section class="form"><h1 id="loginTitle">登录</h1><p class="lead" id="lead">使用你的工作区账户继续。</p>
+      <div class="mode" role="tablist"><button id="loginTab" class="active" role="tab" aria-selected="true" onclick="location.href='/login'+(location.search||'')">登录</button><button id="registerTab" role="tab" aria-selected="false" onclick="location.href='/register'+(new URLSearchParams(location.search).get('next')?'?next='+encodeURIComponent(new URLSearchParams(location.search).get('next')):'')">注册</button></div>
+      <form id="authForm"><div id="nameWrap" class="hidden"><label for="displayName">显示名称</label><input id="displayName" maxlength="80" autocomplete="name"></div><label for="email">邮箱</label><input id="email" type="email" autocomplete="email" required><label for="password">密码</label><input id="password" type="password" autocomplete="current-password" required><div id="loginError" class="login-error" role="alert" aria-live="polite"></div><div id="confirmWrap" class="hidden"><label for="passwordConfirm">确认密码</label><input id="passwordConfirm" type="password" minlength="8" autocomplete="new-password"></div><button class="submit" id="submitButton" type="submit">登录</button><div class="status" id="status" role="alert"></div></form>
+      <div class="sso" id="ssoBox" style="display:none"><div class="sso-title">企业账号</div><div id="ssoItems"></div></div><a class="back" href="/chat">返回前台</a>
+    </section>
+  </main>
+  <script>
+    // The dedicated /register route and the login-page tab must share one form.
+    // Use the URL as the source of truth so a cached or proxied response cannot
+    // accidentally reopen the page in login mode.
+    let mode=(document.body.dataset.authMode==='register'||location.pathname==='/register')?'register':'login'; const nextPath=(()=>{const candidate=new URLSearchParams(location.search).get('next')||'/chat';return candidate.startsWith('/')&&!candidate.startsWith('//')?candidate:'/chat'})();
+    function setMode(value){mode=value;const register=value==='register';document.getElementById('nameWrap').classList.toggle('hidden',!register);document.getElementById('confirmWrap').classList.toggle('hidden',!register);document.getElementById('passwordConfirm').required=register;document.getElementById('loginTab').classList.toggle('active',!register);document.getElementById('registerTab').classList.toggle('active',register);document.getElementById('loginTab').setAttribute('aria-selected',String(!register));document.getElementById('registerTab').setAttribute('aria-selected',String(register));document.getElementById('loginTitle').textContent=register?'注册工作区':'登录';document.getElementById('lead').textContent=register?'注册后将创建独立工作区。密码至少 8 位，且包含大写字母、小写字母和数字。':'使用你的工作区账户继续。';document.getElementById('submitButton').textContent=register?'提交注册':'登录';document.getElementById('password').autocomplete=register?'new-password':'current-password';document.getElementById('loginError').textContent='';document.getElementById('status').textContent=''}
+    setMode(mode);
+    function csrf(){const match=document.cookie.match(/(?:^|; )securenexus_csrf=([^;]+)/);return match?decodeURIComponent(match[1]):''}
+    async function loadSso(){try{const response=await fetch('/api/auth/sso/providers');if(!response.ok)return;const data=await response.json();const items=data.items||[];if(!items.length)return;const container=document.getElementById('ssoItems');container.replaceChildren(...items.map(item=>{const button=document.createElement('button');button.type='button';button.textContent=item.name||'企业登录';button.addEventListener('click',()=>startSso(item.id,item.provider_type));return button}));document.getElementById('ssoBox').style.display='block'}catch(_){}}
+    function escapeHtml(value){const el=document.createElement('div');el.textContent=value||'';return el.innerHTML}
+    async function startSso(providerId,providerType){const status=document.getElementById('status');if(providerType==='oidc'){try{const response=await fetch('/api/auth/sso/oidc/authorize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider_id:providerId})});const data=await response.json();if(!response.ok)throw new Error(data.detail||'企业登录不可用');location.href=data.authorize_url}catch(error){status.textContent=error.message}}else{status.textContent='请使用前台账户菜单中的 LDAP 登录。'}}
+    document.getElementById('authForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = document.getElementById('submitButton');
+      const status = document.getElementById('status');
+      const loginError = document.getElementById('loginError');
+      const password = document.getElementById('password').value;
+      if (mode === 'register' && password !== document.getElementById('passwordConfirm').value) {
+        status.textContent = '两次输入的密码不一致。';
+        return;
+      }
+      button.disabled = true;
+      loginError.textContent = '';
+      status.textContent = mode === 'login' ? '正在登录...' : '正在提交...';
+      try {
+        const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+        const payload = {
+          email: document.getElementById('email').value.trim(),
+          password,
+          display_name: document.getElementById('displayName').value.trim(),
+        };
+        const invite = new URLSearchParams(location.search).get('invite');
+        if (mode === 'register' && invite) payload.invite_token = invite;
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '操作失败');
+        if (data.pending_approval) {
+          status.style.color = '#a15c00';
+          status.textContent = data.message || '注册信息已提交，等待管理员审批。';
+          return;
+        }
+        location.replace(nextPath);
+      } catch (error) {
+        if (mode === 'login') {
+          loginError.textContent = '邮箱或密码错误';
+          status.textContent = '';
+        } else {
+          status.style.color = 'var(--danger)';
+          status.textContent = error.message || '操作失败，请重试。';
+        }
+      } finally {
+        button.disabled = false;
+      }
+    });
+    fetch('/api/auth/bootstrap-status')
+      .then(response => response.ok ? response.json() : null)
+      .then(data => { if (data && data.setup_required) location.replace('/setup'); else loadSso(); })
+      .catch(() => loadSso());
+  </script>
+</body>
+</html>

@@ -23,7 +23,18 @@ def main() -> int:
     env = os.environ.copy()
     source_paths = [str(ROOT / "packages/agent/src"), str(ROOT / "packages/preprocessor/src")]
     env["PYTHONPATH"] = os.pathsep.join(source_paths + [env.get("PYTHONPATH", "")])
-    command = [sys.executable, "-m", "pytest", *TESTS, "-q", "--disable-warnings"]
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        *TESTS,
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "--disable-warnings",
+        "--basetemp",
+        str(ROOT / ".pytest-tmp-smoke"),
+    ]
     return subprocess.run(command, cwd=ROOT, env=env, check=False).returncode
 
 

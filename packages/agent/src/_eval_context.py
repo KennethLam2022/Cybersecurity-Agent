@@ -59,6 +59,7 @@ def eval_context_precision(
     retrieved_docs: list[dict],
     answer: str,
     llm=None,
+    usage_sink=None,
 ) -> dict:
     """评估回答引用检索文档的准确率
 
@@ -84,7 +85,7 @@ def eval_context_precision(
             prompt = _CONTEXT_PRECISION_PROMPT.format(
                 query=query, context=context_text, answer=answer_clean
             )
-            result = _llm_judge(llm, prompt)
+            result = _llm_judge(llm, prompt, usage_sink=usage_sink)
             score = max(0.0, min(1.0, float(result.get("score", 0))))
             return {
                 "score": round(score, 4),
@@ -180,6 +181,7 @@ def eval_context_recall(
     retrieved_docs: list[dict],
     answer: str,
     llm=None,
+    usage_sink=None,
 ) -> dict:
     """评估检索文档关键信息被回答引用的比例
 
@@ -207,7 +209,7 @@ def eval_context_recall(
             prompt = _CONTEXT_RECALL_PROMPT.format(
                 query=query, context=context_text, answer=answer_clean
             )
-            result = _llm_judge(llm, prompt)
+            result = _llm_judge(llm, prompt, usage_sink=usage_sink)
             score = max(0.0, min(1.0, float(result.get("score", 0))))
             return {
                 "score": round(score, 4),
@@ -298,7 +300,7 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def _llm_judge(llm, prompt: str, timeout: int = 300) -> dict:
+def _llm_judge(llm, prompt: str, timeout: int = 300, usage_sink=None) -> dict:
     """调用 LLM-as-Judge，统一处理调用参数 + JSON 解析
 
     Args:
@@ -317,6 +319,8 @@ def _llm_judge(llm, prompt: str, timeout: int = 300) -> dict:
         temperature=0.01,   # 低温度保证 JSON 格式确定性
         timeout=timeout,
     )
+    if usage_sink:
+        usage_sink(resp, getattr(llm, "model", ""))
     raw = resp.get("content", "")
     text = _extract_json(raw)
 

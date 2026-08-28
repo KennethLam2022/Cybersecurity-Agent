@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>注册安枢 SecureNexus</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#172033;background:#f3f6fa}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}
+    .shell{width:min(1060px,100%);min-height:620px;display:grid;grid-template-columns:1fr 1fr;background:#fff;border:1px solid #dbe3ed;border-radius:16px;overflow:hidden;box-shadow:0 20px 50px #193b631c}
+    .identity{background:#204a78;color:#fff;padding:72px 8%;display:flex;flex-direction:column;justify-content:space-between}
+    .brand{font-size:42px;font-weight:800;letter-spacing:0}.brand span{font-size:24px;margin-left:12px;font-weight:650;color:#dbe8f7}.tagline{font-size:28px;color:#dbe8f7;margin:28px 0 0}.identity small{font-size:16px;color:#bed2e8}
+    .form{padding:72px 8%;display:flex;flex-direction:column;justify-content:center}.form h1{font-size:38px;margin:0 0 12px}.lead{font-size:18px;color:#71809a;margin:0 0 28px;line-height:1.6}.switch{color:#176bc1;margin-bottom:24px}.switch a{color:#176bc1;text-decoration:none;margin-left:8px}
+    label{display:block;font-weight:700;margin:16px 0 8px;font-size:16px}input{width:100%;height:54px;border:1px solid #c7d3e1;border-radius:8px;padding:0 14px;font-size:17px}input:focus{outline:3px solid #176bc133;border-color:#176bc1}
+    .hint{font-size:13px;color:#71809a;margin-top:8px;line-height:1.5}.submit{width:100%;height:56px;margin-top:28px;border:0;border-radius:8px;background:#176bc1;color:#fff;font-size:18px;font-weight:700;cursor:pointer}.submit:disabled{opacity:.65;cursor:wait}.status{min-height:24px;margin-top:16px;color:#b42318;line-height:1.5}.back{display:inline-block;margin-top:24px;color:#176bc1;text-decoration:none}
+    @media(max-width:760px){.shell{grid-template-columns:1fr}.identity{min-height:220px;padding:36px 8%}.brand{font-size:34px}.tagline{font-size:22px}.form{padding:40px 8%}.form h1{font-size:32px}}
+  </style>
+</head>
+<body>
+  <main class="shell" aria-labelledby="registerTitle">
+    <section class="identity"><div><div class="brand">安枢 <span>SecureNexus</span></div><p class="tagline">连接安全知识，驱动可信行动。</p></div><small>网络安全知识与治理工作台</small></section>
+    <section class="form">
+      <h1 id="registerTitle">注册安枢</h1>
+      <p class="lead">创建你的工作区账户，开始使用安枢。</p>
+      <div class="switch">已有账户？<a href="/login">返回登录</a></div>
+      <form id="registerForm">
+        <label for="displayName">显示名称</label>
+        <input id="displayName" maxlength="80" autocomplete="name" placeholder="例如：张三">
+        <label for="email">邮箱</label>
+        <input id="email" type="email" autocomplete="email" required placeholder="name@example.com">
+        <label for="password">密码</label>
+        <input id="password" type="password" autocomplete="new-password" minlength="8" required>
+        <div class="hint">至少 8 位，并包含大写字母、小写字母和数字。</div>
+        <label for="passwordConfirm">确认密码</label>
+        <input id="passwordConfirm" type="password" autocomplete="new-password" minlength="8" required>
+        <button class="submit" id="submitButton" type="submit">创建工作区</button>
+        <div class="status" id="status" role="alert" aria-live="polite"></div>
+      </form>
+      <a class="back" href="/chat">返回前台</a>
+    </section>
+  </main>
+  <script>
+    const nextPath=(()=>{const value=new URLSearchParams(location.search).get('next')||'/chat';return value.startsWith('/')&&!value.startsWith('//')?value:'/chat'})();
+    const form=document.getElementById('registerForm'),button=document.getElementById('submitButton'),status=document.getElementById('status');
+    form.addEventListener('submit',async event=>{event.preventDefault();const password=document.getElementById('password').value;if(password!==document.getElementById('passwordConfirm').value){status.textContent='两次输入的密码不一致。';return}button.disabled=true;status.textContent='正在创建工作区...';try{const response=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value.trim(),password,display_name:document.getElementById('displayName').value.trim(),...(new URLSearchParams(location.search).get('invite')?{invite_token:new URLSearchParams(location.search).get('invite')}: {})})});const data=await response.json();if(!response.ok)throw new Error(data.detail||'注册失败');if(data.pending_approval){status.textContent=data.message||'注册信息已提交，等待管理员审批。';return}location.replace(nextPath)}catch(error){status.textContent=error.message||'注册失败，请重试。'}finally{button.disabled=false}});
+  </script>
+</body>
+</html>

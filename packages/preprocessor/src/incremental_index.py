@@ -87,6 +87,30 @@ def _load_sidecar_metadata(file_path: str) -> dict:
         return {}
 
 
+def _access_metadata(file_meta: dict) -> dict:
+    """Normalize visibility metadata; legacy documents remain public."""
+    visibility = str(file_meta.get("visibility") or "public").strip().lower()
+    if visibility not in {"public", "tenant", "private"}:
+        visibility = "public"
+    result = {
+        "visibility": visibility,
+        "tenant_id": str(file_meta.get("tenant_id") or "").strip(),
+        "owner_user_id": str(file_meta.get("owner_user_id") or "").strip(),
+        "agent_id": str(file_meta.get("agent_id") or "").strip(),
+        "document_id": str(file_meta.get("document_id") or "").strip(),
+    }
+    knowledge_base_id = str(file_meta.get("knowledge_base_id") or "").strip()
+    if knowledge_base_id:
+        result["knowledge_base_id"] = knowledge_base_id
+    if visibility == "tenant" and not result["tenant_id"]:
+        result["visibility"] = "public"
+    if visibility == "private" and (
+        not result["tenant_id"] or not result["owner_user_id"]
+    ):
+        result["visibility"] = "public"
+    return result
+
+
 def _update_parent_index(md_paths: list[str]) -> int:
     """增量追加父文档索引，返回新加节数"""
     existing = {}
@@ -99,14 +123,18 @@ def _update_parent_index(md_paths: list[str]) -> int:
         stem = p.stem
         category = p.parent.name
         file_meta = _load_sidecar_metadata(fp)
+        document_id = str(file_meta.get("document_id") or stem).strip()
+        source_name = str(file_meta.get("file_name") or stem).strip()
+        access_meta = _access_metadata(file_meta)
         meta_category = str(file_meta.get("category") or category or "").strip()
         sections = _extract_sections(fp)
         for idx, sec in enumerate(sections):
-            parent_id = f"{stem}__s{idx}"
+            parent_id = f"{document_id}__s{idx}"
             if parent_id not in existing:
                 existing[parent_id] = {
                     "text": sec["text"],
-                    "file_name": stem,
+                    "file_name": source_name,
+                    "document_id": document_id,
                     "category": meta_category,
                     "section": sec["section"],
                     "profile": str(file_meta.get("profile", "")),
@@ -116,6 +144,7 @@ def _update_parent_index(md_paths: list[str]) -> int:
                     "profile_reason": str(file_meta.get("profile_reason", "")),
                     "profile_confirmed": bool(file_meta.get("profile_confirmed", False)),
                     "profile_source": str(file_meta.get("profile_source", "")),
+                    **access_meta,
                 }
                 added += 1
 
@@ -132,6 +161,9 @@ def _chunk_document(file_path: str, category: str, stem: str) -> list[dict]:
 
     text = Path(file_path).read_text(encoding="utf-8")
     file_meta = _load_sidecar_metadata(file_path)
+    access_meta = _access_metadata(file_meta)
+    document_id = str(file_meta.get("document_id") or stem).strip()
+    source_name = str(file_meta.get("file_name") or stem).strip()
     resolved_category = str(file_meta.get("category") or category or "").strip()
     profile = str(file_meta.get("profile", "")).strip()
     scope = str(file_meta.get("scope", "")).strip()
@@ -173,11 +205,12 @@ def _chunk_document(file_path: str, category: str, stem: str) -> list[dict]:
             for i, sub in enumerate(sub_chunks):
                 chunks.append({
                     "content": sub,
-                    "file_name": stem,
+                    "file_name": source_name,
                     "category": resolved_category,
                     "section": sec_title,
-                    "chunk_id": f"{stem}__s{idx}__{i}",
-                    "parent_id": f"{stem}__s{idx}",
+                    "chunk_id": f"{document_id}__s{idx}__{i}",
+                    "parent_id": f"{document_id}__s{idx}",
+                    "document_id": document_id,
                     "profile": profile,
                     "scope": scope,
                     "industry": industry,
@@ -185,15 +218,17 @@ def _chunk_document(file_path: str, category: str, stem: str) -> list[dict]:
                     "profile_reason": profile_reason,
                     "profile_confirmed": profile_confirmed,
                     "profile_source": profile_source,
+                    **access_meta,
                 })
         else:
             chunks.append({
                 "content": sec_text,
-                "file_name": stem,
+                "file_name": source_name,
                 "category": resolved_category,
                 "section": sec_title,
-                "chunk_id": f"{stem}__s{idx}",
-                "parent_id": f"{stem}__s{idx}",
+                "chunk_id": f"{document_id}__s{idx}",
+                "parent_id": f"{document_id}__s{idx}",
+                "document_id": document_id,
                 "profile": profile,
                 "scope": scope,
                 "industry": industry,
@@ -201,6 +236,7 @@ def _chunk_document(file_path: str, category: str, stem: str) -> list[dict]:
                 "profile_reason": profile_reason,
                 "profile_confirmed": profile_confirmed,
                 "profile_source": profile_source,
+                **access_meta,
             })
     return chunks
 
@@ -225,6 +261,11 @@ def _add_to_faiss(chunks: list[dict]):
         "profile_reason": c.get("profile_reason", ""),
         "profile_confirmed": c.get("profile_confirmed", False),
         "profile_source": c.get("profile_source", ""),
+        "visibility": c.get("visibility", "public"),
+        "tenant_id": c.get("tenant_id", ""),
+        "owner_user_id": c.get("owner_user_id", ""),
+        "agent_id": c.get("agent_id", ""),
+        "document_id": c.get("document_id", ""),
     } for c in chunks]
     ids = [c["chunk_id"] for c in chunks]
 
@@ -316,6 +357,11 @@ def _add_to_chroma(chunks: list[dict]):
         "profile_reason": c.get("profile_reason", ""),
         "profile_confirmed": c.get("profile_confirmed", False),
         "profile_source": c.get("profile_source", ""),
+        "visibility": c.get("visibility", "public"),
+        "tenant_id": c.get("tenant_id", ""),
+        "owner_user_id": c.get("owner_user_id", ""),
+        "agent_id": c.get("agent_id", ""),
+        "document_id": c.get("document_id", ""),
     } for c in chunks]
 
     existing_ids = set(collection.get(ids=ids, include=[])["ids"]) if old_count > 0 else set()
@@ -506,6 +552,19 @@ def _remove_from_chroma(stems: list[str]):
     logger.info(f"Chroma 清理: 移除 {old_count - new_count} 条 ({stems}), {time.time()-t0:.2f}s")
 
 
+def _remove_document_ids_from_chroma(document_ids: list[str]):
+    import chromadb
+    from chromadb.config import Settings
+    client = chromadb.PersistentClient(
+        path=_CHROMA_DIR, settings=Settings(anonymized_telemetry=False))
+    try:
+        collection = client.get_collection("cyber_security")
+    except Exception:
+        return
+    for document_id in document_ids:
+        collection.delete(where={"document_id": document_id})
+
+
 def _rebuild_faiss_from_parents():
     """从 parent_texts.json 全量重建 FAISS 索引（用于删除旧 stem 后的重建）"""
     from langchain_community.vectorstores import FAISS
@@ -522,6 +581,10 @@ def _rebuild_faiss_from_parents():
     metadatas = [{
         "file_name": v["file_name"], "category": v.get("category", ""),
         "section": v.get("section", ""), "chunk_id": k, "parent_id": k,
+        "profile": v.get("profile", ""), "scope": v.get("scope", ""),
+        "industry": v.get("industry", ""), "visibility": v.get("visibility", "public"),
+        "tenant_id": v.get("tenant_id", ""), "owner_user_id": v.get("owner_user_id", ""),
+        "agent_id": v.get("agent_id", ""), "document_id": v.get("document_id", ""),
     } for k, v in parent_data.items()]
     ids = list(parent_data.keys())
 
@@ -564,6 +627,25 @@ def remove_stems(stems: list[str]):
     logger.info(f"✅ 清理完成: {stems}")
 
 
+def remove_document_ids(document_ids: list[str]):
+    """Remove a document namespace from parent, Chroma and rebuilt FAISS indexes."""
+    document_ids = [str(item).strip() for item in document_ids if str(item).strip()]
+    if not document_ids:
+        return
+    if _PARENT_FILE.exists():
+        parent_data = json.loads(_PARENT_FILE.read_text(encoding="utf-8"))
+        for key in list(parent_data):
+            item = parent_data[key]
+            if str(item.get("document_id") or "") in document_ids or any(
+                key.startswith(f"{document_id}__") for document_id in document_ids
+            ):
+                del parent_data[key]
+        _PARENT_FILE.write_text(json.dumps(parent_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _remove_document_ids_from_chroma(document_ids)
+    _rebuild_faiss_from_parents()
+    logger.info(f"✅ 已清理 document_id: {document_ids}")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
@@ -578,6 +660,10 @@ if __name__ == "__main__":
             remove_stems(stems)
         else:
             logger.warning("--remove-stems 后未提供 stem 名称")
+        sys.exit(0)
+
+    if args[0] == "--remove-document-ids":
+        remove_document_ids(args[1:])
         sys.exit(0)
 
     # 普通增量索引：逐个处理 .md 文件

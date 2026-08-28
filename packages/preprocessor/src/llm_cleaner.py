@@ -19,7 +19,7 @@ class LlmCleaner:
     回退到系统环境变量 SILICONFLOW_API_KEY / SILICONFLOW_API_BASE / SILICONFLOW_MODEL。
     """
 
-    def __init__(self):
+    def __init__(self, prompt_memory=None):
         # 从 DB 读取文档清洗卡片配置
         chunk_cfg = get_llm_config_card('chunk')
         self.api_key = chunk_cfg.get('api_key') or os.environ.get("SILICONFLOW_API_KEY")
@@ -42,6 +42,7 @@ class LlmCleaner:
             base_url=self.api_base,
             api_key=self.api_key,
         )
+        self.prompt_memory = prompt_memory
 
     def clean_document(self, raw_text: str, file_id: str) -> dict:
         """对单份原始解析文本进行 LLM 清洗与结构化。
@@ -75,6 +76,15 @@ class LlmCleaner:
 3. OCR乱码/特殊字符需修正或删除
 4. 条款编号保持原样
 5. 输出为纯Markdown格式"""
+        if self.prompt_memory is not None:
+            try:
+                from reflection_engine import PROMPT_ASSET_DEFAULTS
+                self.prompt_memory.ensure_prompt_assets(PROMPT_ASSET_DEFAULTS)
+                asset = self.prompt_memory.get_active_prompt_asset("doc_clean", system_prompt)
+                template = asset.get("template") or system_prompt
+                system_prompt = template.format(file_id=file_id, raw_text="")
+            except Exception as exc:
+                logger.warning("文档清洗 Prompt 资产加载失败，使用内置回退: %s", exc)
 
         user_prompt = f"文件标识: {file_id}\n\n原始内容:\n\n{raw_text}"
 

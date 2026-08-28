@@ -110,9 +110,10 @@ def build_trace_envelope(
     }
 
 
-def add_trace_step(trace: dict[str, Any], step: str, **payload: Any) -> dict[str, Any]:
-    trace.setdefault("steps", []).append({"step": step, **payload})
-    return trace
+def add_trace_step(trace_data: dict[str, Any], step: str, **payload: Any) -> dict[str, Any]:
+    """Append one step while allowing ``trace`` in the step payload."""
+    trace_data.setdefault("steps", []).append({"step": step, **payload})
+    return trace_data
 
 
 def finish_trace(trace: dict[str, Any], outcome: str, **payload: Any) -> dict[str, Any]:

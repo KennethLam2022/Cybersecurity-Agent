@@ -173,6 +173,7 @@ def run_evaluation(
     output_file: Optional[Path] = None,
     eval_llm=None,
     answer_llm=None,
+    usage_sink=None,
 ) -> list[dict]:
     """跑评估：提问 → 评分（域B + 域C）
 
@@ -231,11 +232,11 @@ def run_evaluation(
             retrieved_docs = _get_retrieved_docs(result)
 
             # 2. 域B + 域C 评分
-            score_cp = eval_context_precision(query, retrieved_docs, answer, llm=llm)
-            score_cr = eval_context_recall(query, retrieved_docs, answer, llm=llm)
-            score_ft = eval_faithfulness(query, retrieved_docs, answer, llm=llm)
-            score_rl = eval_relevancy(query, answer, retrieved_docs, llm=llm)
-            score_hc = eval_hallucination(query, retrieved_docs, answer, llm=llm)
+            score_cp = eval_context_precision(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)
+            score_cr = eval_context_recall(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)
+            score_ft = eval_faithfulness(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)
+            score_rl = eval_relevancy(query, answer, retrieved_docs, llm=llm, usage_sink=usage_sink)
+            score_hc = eval_hallucination(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)
 
             entry = {
                 "id": q["id"],

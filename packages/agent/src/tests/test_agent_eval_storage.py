@@ -56,3 +56,17 @@ def test_agent_eval_trace_projection_is_stable_and_ordered():
     assert trace["steps"][0]["status"] == "triggered"
     assert trace["steps"][1]["latency_ms"] == 0
     assert trace_step_names(trace) == ["jailbreak_detection", "retrieval"]
+
+
+def test_agent_eval_records_are_isolated_by_tenant(tmp_path):
+    memory = ConversationMemory(str(tmp_path / "agent-eval.db"))
+    case = {"case_key": "TENANT-001", "query": {"text": "test"}}
+    memory.upsert_agent_eval_case(case, tenant_id="tenant-a")
+    assert len(memory.get_agent_eval_cases(tenant_id="tenant-a")) == 1
+    assert memory.get_agent_eval_cases(tenant_id="tenant-b") == []
+    run_id = memory.create_agent_eval_run(tenant_id="tenant-a", agent_id="agent-a", requested_by="user-a")
+    stored_case = memory.get_agent_eval_cases(tenant_id="tenant-a")[0]
+    memory.save_agent_eval_result(run_id, stored_case, {"query": "test", "answer": "ok"}, "tenant-a", "agent-a")
+    assert memory.get_agent_eval_runs(tenant_id="tenant-b") == []
+    assert memory.get_agent_eval_results(run_id, tenant_id="tenant-b") == []
+    assert memory.get_agent_eval_runs(tenant_id="tenant-a")[0]["requested_by"] == "user-a"

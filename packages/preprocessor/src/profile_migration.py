@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ _RAG = _ROOT / "RAG_DATA"
 _CLEANED_DIR = _RAG / "03_cleaned"
 _STORE_DIR = _RAG / "04_vector_store"
 _PARENT_FILE = _STORE_DIR / "parent_texts.json"
+_AUDIT_FILE_NAME = ".profile_assignment_audit.jsonl"
 
 
 @dataclass
@@ -38,6 +40,9 @@ class ProfileMigrationRecord:
     confirmed: bool
     source: str
     needs_review: bool
+    changed_at: str = ""
+    changed_by: str = ""
+    change_reason: str = ""
 
 
 def _load_sidecar(meta_path: Path) -> dict[str, Any]:
@@ -52,7 +57,9 @@ def _load_sidecar(meta_path: Path) -> dict[str, Any]:
 
 def _write_sidecar(md_path: Path, record: ProfileMigrationRecord) -> None:
     meta_path = md_path.with_suffix(".meta.json")
-    meta_payload = {
+    # Preserve ingestion metadata that is unrelated to Profile assignment.
+    meta_payload = _load_sidecar(meta_path)
+    meta_payload.update({
         "file_name": record.file_name,
         "category": record.category,
         "scope": record.scope,
@@ -64,8 +71,44 @@ def _write_sidecar(md_path: Path, record: ProfileMigrationRecord) -> None:
         "profile_source": record.source,
         "needs_review": record.needs_review,
         "migration_path": record.path,
-    }
+        "profile_updated_at": record.changed_at,
+        "profile_updated_by": record.changed_by,
+        "profile_change_reason": record.change_reason,
+    })
     meta_path.write_text(json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _audit_file() -> Path:
+    return _CLEANED_DIR / _AUDIT_FILE_NAME
+
+
+def _append_assignment_audit(event: dict[str, Any]) -> None:
+    audit_file = _audit_file()
+    audit_file.parent.mkdir(parents=True, exist_ok=True)
+    with audit_file.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+def profile_assignment_history(path: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Return newest Profile-assignment audit events for one cleaned document."""
+    resolved_path = str(_resolve_cleaned_md_path(path))
+    audit_file = _audit_file()
+    if not audit_file.exists():
+        return []
+
+    events: list[dict[str, Any]] = []
+    try:
+        for line in audit_file.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and event.get("path") == resolved_path:
+                events.append(event)
+    except OSError as exc:
+        logger.warning(f"读取 Profile 变更审计失败: {exc}")
+        return []
+    return list(reversed(events[-max(1, min(limit, 200)):]))
 
 
 def _profile_config(profile: str) -> dict[str, Any]:
@@ -115,6 +158,9 @@ def _infer_profile(md_path: Path) -> ProfileMigrationRecord:
             confirmed=bool(sidecar.get("profile_confirmed", False)),
             source=str(sidecar.get("profile_source", "existing")),
             needs_review=not bool(sidecar.get("profile_confirmed", False)),
+            changed_at=str(sidecar.get("profile_updated_at", "")),
+            changed_by=str(sidecar.get("profile_updated_by", "")),
+            change_reason=str(sidecar.get("profile_change_reason", "")),
         )
 
     if _known_general_dir(category):
@@ -253,11 +299,26 @@ def confirm_profile_migration(
     paths: list[str],
     profile: str,
     category: str | None = None,
+    change_reason: str | None = None,
+    changed_by: str = "admin",
     update_vector_stores: bool = True,
 ) -> dict[str, Any]:
     profile_cfg = _profile_config(profile)
     resolved_paths = [_resolve_cleaned_md_path(p) for p in paths]
     final_category = str(category or profile_cfg.get("category") or "通用").strip()
+
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    reason = str(change_reason or "").strip()
+    previous_records = {str(path): _infer_profile(path) for path in resolved_paths}
+    reclassified = sum(
+        1 for path in resolved_paths
+        if previous_records[str(path)].confirmed and (
+            previous_records[str(path)].profile != profile
+            or previous_records[str(path)].category != final_category
+        )
+    )
+    if reclassified and not reason:
+        raise ValueError("修改已确认资料的 profile 时必须填写修改原因")
 
     records = [
         ProfileMigrationRecord(
@@ -268,10 +329,17 @@ def confirm_profile_migration(
             scope=str(profile_cfg.get("scope", "general")),
             industry=str(profile_cfg.get("industry", "")),
             confidence=1.0,
-            reason=f"人工批量确认: {profile_cfg.get('label', profile)}",
+            reason=(
+                f"人工重新归属: {profile_cfg.get('label', profile)}"
+                if previous_records[str(md_path)].confirmed else
+                f"人工确认: {profile_cfg.get('label', profile)}"
+            ),
             confirmed=True,
             source="manual_confirmed",
             needs_review=False,
+            changed_at=now,
+            changed_by=str(changed_by or "admin").strip() or "admin",
+            change_reason=reason,
         )
         for md_path in resolved_paths
     ]
@@ -279,6 +347,29 @@ def confirm_profile_migration(
     written = 0
     for rec in records:
         _write_sidecar(Path(rec.path), rec)
+        previous = previous_records[rec.path]
+        _append_assignment_audit({
+            "action": "profile_reclassified" if previous.confirmed else "profile_confirmed",
+            "path": rec.path,
+            "file_name": rec.file_name,
+            "changed_at": now,
+            "changed_by": rec.changed_by,
+            "change_reason": reason,
+            "old": {
+                "profile": previous.profile,
+                "category": previous.category,
+                "scope": previous.scope,
+                "industry": previous.industry,
+                "confirmed": previous.confirmed,
+            },
+            "new": {
+                "profile": rec.profile,
+                "category": rec.category,
+                "scope": rec.scope,
+                "industry": rec.industry,
+                "confirmed": rec.confirmed,
+            },
+        })
         written += 1
 
     parent_updated = faiss_updated = chroma_updated = 0
@@ -291,6 +382,7 @@ def confirm_profile_migration(
         "parent_updated": parent_updated,
         "faiss_updated": faiss_updated,
         "chroma_updated": chroma_updated,
+        "reclassified": reclassified,
     }
 
 

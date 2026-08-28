@@ -85,6 +85,30 @@ def test_runner_keeps_independent_judge_scores_separate(tmp_path):
     assert run["summary"]["judge_avg"]["faithfulness"] == 0.8
     assert run["results"][0]["metrics"]["task_success"] is True
     assert run["results"][0]["metrics"]["judge"]["safety_pass"] is True
+    assert run["results"][0]["metrics"]["judge"]["prompt_version"] == 1
+    assert "judge_relevancy" not in run["results"][0]["metrics"]["judge"].get("prompt_versions", {})
+
+
+def test_runner_uses_independent_relevancy_and_hallucination_judge_slots(tmp_path):
+    class DimensionJudge:
+        def __init__(self): self.calls = 0
+        def chat(self, messages):
+            self.calls += 1
+            prompt = messages[0]["content"]
+            if "相关性评测员" in prompt:
+                return {"content": '{"score":0.9,"rationale":"直接回答问题"}'}
+            if "幻觉风险评测员" in prompt:
+                return {"content": '{"score":0.1,"rationale":"来源支持"}'}
+            return {"content": '{"answer_completeness":0.9,"faithfulness":0.8,"relevancy":0.7,"safety_pass":true,"reason":"有依据"}'}
+
+    memory = ConversationMemory(str(tmp_path / "judge-dimensions.db"))
+    memory.upsert_agent_eval_case({"case_key": "GEN-JUDGE-DIM", "profile": "general", "query": "如何开展风险评估？", "expected": {}})
+    run = run_agent_evaluation(FakeAgent(memory), memory.get_agent_eval_cases(), judge=DimensionJudge())
+    judge = run["results"][0]["metrics"]["judge"]
+    assert judge["relevancy"] == 0.9
+    assert judge["hallucination_risk"] == 0.1
+    assert judge["prompt_versions"]["judge_relevancy"] == 1
+    assert judge["prompt_versions"]["judge_hallucination"] == 1
 
 
 def test_runner_reports_repeatability_and_p95_latency(tmp_path):
@@ -161,3 +185,29 @@ def test_runner_asserts_facts_from_prior_conversation_turns(tmp_path):
     metrics = run["results"][0]["metrics"]
     assert metrics["memory_facts_pass"] is True
     assert metrics["matched_memory_facts"] == ["分类对象"]
+
+
+def test_runner_evaluates_p5_capability_routes_without_calling_an_llm(tmp_path):
+    memory = ConversationMemory(str(tmp_path / "p5-route.db"))
+    cases = [
+        {
+            "case_key": "P5-ROUTE-001", "profile": "general", "case_type": "capability_route",
+            "query": "帮我起草一份网络安全管理制度", "expected": {
+                "mode": "writing", "clarification_required": True,
+                "missing_fields": ["audience", "scope"],
+            },
+        },
+        {
+            "case_key": "P5-PPT-001", "profile": "general", "case_type": "generation",
+            "query": "制作网络安全培训PPT，5页", "fields": {
+                "audience": "新员工", "purpose": "培训", "scenario": "培训",
+                "scope": "网络安全通用场景",
+            }, "expected": {
+                "mode": "presentation", "clarification_required": False,
+                "missing_fields": [], "outline_count": 5,
+            },
+        },
+    ]
+    run = run_agent_evaluation(FakeAgent(memory), cases)
+    assert run["summary"]["passed"] == 2
+    assert run["summary"]["case_type_counts"] == {"capability_route": 1, "generation": 1}
