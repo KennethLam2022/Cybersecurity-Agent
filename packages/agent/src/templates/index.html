@@ -829,10 +829,18 @@ async function loadMessages(convId) {
     }
 
     let previousUserQuery = '';
+    const historyRatings = {};
     messages.forEach(m => {
         if (m.role === 'user') previousUserQuery = m.content || '';
+        const recorded = m.user_rating != null ? m.user_rating : (m.semantic_rating != null ? m.semantic_rating : null);
+        if (m.role === 'assistant' && m.id != null && recorded != null) historyRatings[m.id] = recorded;
         appendMessage(m.role, m.content, m.sources, m.id, previousUserQuery);
     });
+    // Lock already-recorded stars on history replay so they do not reschedule
+    // the semantic fallback timer or allow re-rating old messages.
+    if (Object.keys(historyRatings).length > 0) {
+        appendRating._lockedOverride = historyRatings;
+    }
 
     // 更新标题
     if (messages.length > 0) {
@@ -1201,16 +1209,19 @@ function appendMessage(role, content, sources, messageId, query) {
            </div>`
         : '';
 
-    div.innerHTML = `
-        <div class="message-role">${role === 'user' ? '你' : '助手'}</div>
-        <div class="message-bubble">
-            ${formatContent(content)}
-            ${sourcesHtml}
-            ${feedbackHtml}
-        </div>
-    `;
-    container.appendChild(div);
-}
+        div.innerHTML = `
+            <div class="message-role">${role === 'user' ? '你' : '助手'}</div>
+            <div class="message-bubble">
+                ${formatContent(content)}
+                ${sourcesHtml}
+                ${feedbackHtml}
+            </div>
+        `;
+        container.appendChild(div);
+        if (role === 'assistant' && messageId) {
+            appendRating(div.querySelector('.message-bubble'), messageId);
+        }
+    }
 
 // ===== 简单 Markdown 渲染 =====
 function formatContent(text) {
@@ -1342,23 +1353,24 @@ function appendRating(bubble, messageId) {
     if (!bubble || bubble.querySelector('.rating-bar')) return;
     const bar = document.createElement('div');
     bar.className = 'rating-bar';
-    const lockedRating = _ratedMessages[messageId];
+    // 历史对话场景：locked 参数可预设已记录评分，避免重新触发兜底定时器
+    const locked = _ratedMessages[messageId] || (appendRating._lockedOverride && appendRating._lockedOverride[messageId]);
     let starsHtml = '';
     for (let i = 1; i <= 5; i++) {
-        const active = lockedRating && i <= lockedRating ? ' active' : '';
-        const style = lockedRating && i <= lockedRating ? ' style="color:#ff9500;cursor:default"' : '';
-        const handlers = lockedRating ? '' : `onclick="submitRating(this, ${messageId}, ${i})" onmouseover="hoverStar(this,${i})" onmouseout="resetStars(this)"`;
+        const active = locked && i <= locked ? ' active' : '';
+        const style = locked && i <= locked ? ' style="color:#ff9500;cursor:default"' : '';
+        const handlers = locked ? '' : `onclick="submitRating(this, ${messageId}, ${i})" onmouseover="hoverStar(this,${i})" onmouseout="resetStars(this)"`;
         starsHtml += `<svg class="rating-star${active}" data-val="${i}" viewBox="0 0 24 24" ${handlers}${style}>
             <path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
         </svg>`;
     }
     const labels = ['', '不满意', '不太满意', '一般', '满意', '非常满意'];
-    const labelHtml = lockedRating
-        ? `<span class="rating-locked">⭐ ${labels[lockedRating] || lockedRating}</span>`
+    const labelHtml = locked
+        ? `<span class="rating-locked">⭐ ${labels[locked] || locked}</span>`
         : '<span class="rating-label">评价回答质量</span>';
     bar.innerHTML = starsHtml + labelHtml;
     bubble.appendChild(bar);
-    if (!lockedRating) scheduleSemanticFallbackRating(messageId);
+    if (!locked) scheduleSemanticFallbackRating(messageId);
 }
 
 function scheduleSemanticFallbackRating(messageId) {

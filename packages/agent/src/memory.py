@@ -5717,29 +5717,39 @@ class ConversationMemory:
         conversation_id: str,
         limit: Optional[int] = None,
     ) -> list[dict]:
+        # Carry through message id and recorded ratings so the frontend can
+        # lock history stars instead of rescheduling the semantic fallback.
         query = """
-            SELECT role, content, sources, created_at
-            FROM messages
-            WHERE conversation_id = ?
-            ORDER BY id
+            SELECT m.id, m.role, m.content, m.sources, m.created_at,
+                   u.user_rating, u.semantic_rating
+            FROM messages m
+            LEFT JOIN usage_logs u ON m.id = u.message_id
+            WHERE m.conversation_id = ?
+            ORDER BY m.id
         """
         params = [conversation_id]
         if limit:
             query = f"""
-                SELECT role, content, sources, created_at
-                FROM messages
-                WHERE conversation_id = ?
-                ORDER BY id DESC
-                LIMIT ?
+            SELECT m.id, m.role, m.content, m.sources, m.created_at,
+                   u.user_rating, u.semantic_rating
+            FROM messages m
+            LEFT JOIN usage_logs u ON m.id = u.message_id
+            WHERE m.conversation_id = ?
+            ORDER BY m.id DESC
+            LIMIT ?
             """
             params.append(limit)
         with sqlite3.connect(self._db_path) as conn:
             rows = conn.execute(query, params).fetchall()
         result = []
         for row in rows:
-            msg = {"role": row[0], "content": row[1]}
-            if row[2]:
-                msg["sources"] = json.loads(row[2])
+            msg = {"id": row[0], "role": row[1], "content": row[2]}
+            if row[3]:
+                msg["sources"] = json.loads(row[3])
+            if row[5] is not None:
+                msg["user_rating"] = row[5]
+            if row[6] is not None:
+                msg["semantic_rating"] = row[6]
             result.append(msg)
         if limit:
             result.reverse()
