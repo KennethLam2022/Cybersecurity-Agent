@@ -266,6 +266,9 @@ def _require_resource_tenant(principal, resource_tenant_id: str) -> None:
 def _admin_conversation_scope(request: Request, conversation_id: str, tenant_id: str = ""):
     """Resolve an admin's tenant scope and verify the conversation belongs to it."""
     principal, resolved_tenant = _tenant_admin_scope(request, tenant_id)
+    # 平台管理员可跨工作区查看；普通管理员/审计员只能看自己工作区的对话
+    if principal.role == "platform_admin":
+        return principal, resolved_tenant
     owner = agent.memory.get_conversation_owner(conversation_id)
     if not owner or owner.get("tenant_id") != resolved_tenant:
         raise HTTPException(status_code=404, detail="对话不存在或不属于当前工作区")
@@ -3008,10 +3011,18 @@ def admin_reflection_summary(request: Request, tenant_id: str = ""):
 @router.get("/api/conversations")
 def list_conversations(request: Request, include_deleted: bool = False, include_test: bool = False, jailbreak: str = "all"):
     principal = principal_from_request(request, agent.memory)
-    convs = agent.memory.get_conversations(
-        include_deleted=include_deleted, include_test=include_test, jailbreak=jailbreak,
-        tenant_id=principal.tenant_id, user_id=principal.user_id, agent_id=principal.agent_id,
-    )
+    # 超级管理员查看整个平台；其他角色只能看自己工作区/自己的对话
+    is_platform_admin = principal.role == "platform_admin" and principal.authenticated
+    if is_platform_admin:
+        # 平台级统计/审计需要看到所有租户和所有成员的对话
+        convs = agent.memory.get_conversations(
+            include_deleted=include_deleted, include_test=include_test, jailbreak=jailbreak,
+        )
+    else:
+        convs = agent.memory.get_conversations(
+            include_deleted=include_deleted, include_test=include_test, jailbreak=jailbreak,
+            tenant_id=principal.tenant_id, user_id=principal.user_id, agent_id=principal.agent_id,
+        )
     return JSONResponse(convs)
 
 
