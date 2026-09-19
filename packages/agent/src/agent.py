@@ -853,6 +853,8 @@ def build_prompt_messages(
         "original_count": original_len,
         "truncated_count": original_len - len(keep_ids),
         "kept_count": len(keep_ids),
+        # was_truncated drives the admin dashboard "上下文截断统计" chart.
+        "was_truncated": original_len > len(keep_ids),
     }
     return messages, truncation_info
 
