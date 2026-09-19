@@ -7,7 +7,7 @@ import urllib.parse
 import uuid
 import threading
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import AsyncGenerator, Optional
 from fastapi import APIRouter, Request, Body, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, Response, RedirectResponse
@@ -81,12 +81,15 @@ from prompt_asset_tester import (compare_reflection_asset_versions, evaluate_slo
                                  compare_slot_contract_versions, get_slot_golden_cases,
                                  run_reflection_golden_suite, run_structured_prompt_golden_suite,
                                  compare_structured_prompt_versions, EXECUTABLE_STRUCTURED_SLOTS)
-from identity import principal_from_request, require_permission, require_platform_permission
+from identity import (ADMIN_CSRF_COOKIE, ADMIN_SESSION_COOKIE, FRONT_SESSION_COOKIE,
+                      principal_from_request, require_permission, require_platform_permission,
+                      session_token_from_request, uses_admin_session)
 from capability_router import build_outline, route_capability
 from capability_executor import execute_capability, CapabilityExecutionError
 from generation_manager import artifact_path, render_artifact
 from workflow_engine import execute_workflow
-from knowledge_graph import extract_document_graph, extract_semantic_graph_candidates, graph_impact, scan_graph_conflicts
+from knowledge_graph import (extract_document_graph, extract_semantic_graph_candidates,
+                             graph_impact, is_semantic_graph_relation, scan_graph_conflicts)
 from neo4j_graph_store import get_neo4j_graph_store
 from monitoring import build_issue_report, generate_issue_diagnosis, record_event, scan_cost_spike
 from monitoring_adapters import run_approved_change_action
@@ -118,6 +121,36 @@ from sso_provider import (
 )
 
 router = APIRouter()
+
+_ALLOWED_UPLOAD_EXTENSIONS = {
+    ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".txt", ".md", ".pptx", ".ppt", ".csv",
+}
+_MAX_BATCH_UPLOAD_SIZE = _MAX_FILE_SIZE * 10
+
+
+def _safe_upload_filename(name: str) -> str:
+    """Return a basename safe to write below the upload staging directory."""
+    raw = str(name or "").strip()
+    windows_path = PureWindowsPath(raw)
+    if (
+        not raw
+        or Path(raw).name != raw
+        or windows_path.name != raw
+        or Path(raw).is_absolute()
+        or windows_path.is_absolute()
+        or raw in {".", ".."}
+    ):
+        raise HTTPException(status_code=400, detail="文件名不合法")
+    if Path(raw).suffix.lower() not in _ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="不支持的文件类型")
+    return raw
+
+
+def _validate_upload_batch_size(current_size: int, next_size: int) -> int:
+    total = int(current_size or 0) + int(next_size or 0)
+    if total > _MAX_BATCH_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="本批次文件总大小超过限制")
+    return total
 
 @router.get("/api/admin/rag-documents/sync/preview")
 def admin_preview_existing_rag_documents(request: Request, limit: int | None = None):
@@ -187,28 +220,42 @@ def admin_restore_backup(request: Request, data: dict = Body(...)):
     return JSONResponse(result)
 
 
-def _attach_browser_session(response: Response, token: str, max_age: int = 7 * 24 * 3600) -> Response:
+def _attach_browser_session(response: Response, token: str, max_age: int = 7 * 24 * 3600,
+                            admin: bool = False) -> Response:
     """Issue an HttpOnly session cookie plus a readable CSRF cookie for browser clients."""
     secure = os.environ.get("APP_ENV", "development").strip().lower() in {"production", "prod"}
-    response.set_cookie("securenexus_session", token, max_age=max_age, httponly=True,
+    session_cookie = ADMIN_SESSION_COOKIE if admin else FRONT_SESSION_COOKIE
+    csrf_cookie = ADMIN_CSRF_COOKIE if admin else "securenexus_csrf"
+    response.set_cookie(session_cookie, token, max_age=max_age, httponly=True,
                        secure=secure, samesite="lax", path="/")
-    response.set_cookie("securenexus_csrf", secrets.token_urlsafe(24), max_age=max_age,
+    response.set_cookie(csrf_cookie, secrets.token_urlsafe(24), max_age=max_age,
                        httponly=False, secure=secure, samesite="lax", path="/")
     return response
 
 
 def _request_session_token(request: Request) -> str:
-    authorization = request.headers.get("Authorization", "")
+    authorization = session_token_from_request(request)
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() == "bearer" and token:
         return token
-    return str(request.cookies.get("securenexus_session", "") or "")
+    return authorization
 
 
 def _tenant_admin_scope(request: Request, tenant_id: str = ""):
     """Resolve a tenant administration scope from the authenticated session."""
     principal = require_permission(request, agent.memory, "tenant.manage", tenant_id)
     return principal, (str(tenant_id or principal.tenant_id) if principal.role == "platform_admin" else principal.tenant_id)
+
+
+def _require_ingestion_job_scope(request: Request, job: dict):
+    principal = principal_from_request(request, agent.memory)
+    if principal.role != "platform_admin" and principal.tenant_id != str(job.get("tenant_id") or ""):
+        raise HTTPException(status_code=403, detail="无权访问其他工作区的入库任务")
+    return principal
+
+
+def _require_access_migration_permission(request: Request):
+    return require_platform_permission(request, agent.memory)
 
 
 def _require_resource_tenant(principal, resource_tenant_id: str) -> None:
@@ -755,7 +802,7 @@ def bootstrap_platform_admin(request: Request, data: dict = Body(...)):
         user_agent=request.headers.get("user-agent", ""),
     )
     agent.memory.record_login_event(user["email"], True, "platform_bootstrap")
-    return _attach_browser_session(JSONResponse({"ok": True, "user": user}), token)
+    return _attach_browser_session(JSONResponse({"ok": True, "user": user}), token, admin=True)
 
 
 @router.post("/api/auth/register")
@@ -814,7 +861,7 @@ def admin_login_user(request: Request, data: dict = Body(...)):
         user_agent=request.headers.get("user-agent", ""),
     )
     agent.memory.record_login_event(user.get("email", ""), True, "admin_password")
-    return _attach_browser_session(JSONResponse({"ok": True, "token": token, "user": user}), token)
+    return _attach_browser_session(JSONResponse({"ok": True, "token": token, "user": user}), token, admin=True)
 
 
 @router.post("/api/auth/logout")
@@ -827,8 +874,9 @@ def logout_user(request: Request):
             agent.memory.log_audit(session["tenant_id"], session["user_id"], session["agent_id"],
                                    "auth.logout", "session", session["session_id"])
     response = JSONResponse({"ok": True})
-    response.delete_cookie("securenexus_session", path="/")
-    response.delete_cookie("securenexus_csrf", path="/")
+    admin_context = uses_admin_session(request)
+    response.delete_cookie(ADMIN_SESSION_COOKIE if admin_context else FRONT_SESSION_COOKIE, path="/")
+    response.delete_cookie(ADMIN_CSRF_COOKIE if admin_context else "securenexus_csrf", path="/")
     return response
 
 
@@ -1110,7 +1158,7 @@ def admin_list_sso_approvals(request: Request):
 
 @router.post("/api/admin/sso/approvals/{link_id}")
 def admin_handle_sso_approval(link_id: str, request: Request, data: dict = Body(...)):
-    principal = require_platform_permission(request, agent.memory)
+    require_platform_permission(request, agent.memory)
     action = str(data.get("action") or "")
     if action == "approve":
         identity = agent.memory.approve_sso_identity_link(
@@ -1404,9 +1452,11 @@ def admin_update_user(tenant_id: str, user_id: str, request: Request, data: dict
         principal, tenant_id = _tenant_admin_scope(request, tenant_id)
         requested = data.get("status", "")
         membership_status = "active" if requested == "active" else "disabled"
-        if not agent.memory.update_workspace_member_status(tenant_id, user_id, membership_status):
+        revoked = agent.memory.update_workspace_member_status(
+            tenant_id, user_id, membership_status, return_revoked_count=True,
+        )
+        if revoked is None:
             raise HTTPException(status_code=404, detail="工作区成员不存在")
-        revoked = agent.memory.revoke_user_auth_sessions(tenant_id, user_id) if membership_status == "disabled" else 0
         agent.memory.log_audit(
             tenant_id, principal.user_id, principal.agent_id, "workspace.user.status.update", "user", user_id,
             {"status": membership_status, "revoked_sessions": revoked},
@@ -1871,6 +1921,8 @@ def admin_start_data_source_sync(source_id: str, request: Request, data: dict = 
     source = agent.memory.get_data_source(source_id, tenant_id)
     if not source:
         raise HTTPException(status_code=404, detail="数据源不存在")
+    if source["source_type"] != "url":
+        raise HTTPException(status_code=400, detail="当前仅支持 URL 数据源自动同步，其他类型请使用对应导入流程")
     validation = validate_data_source_config(
         source["source_type"], source["endpoint"], source["config"],
     )
@@ -1906,6 +1958,9 @@ def admin_retry_data_source_sync(run_id: str, request: Request, data: dict = Bod
         run = agent.memory.retry_data_source_sync_run(run_id, tenant_id)
         if not run:
             raise HTTPException(status_code=404, detail="同步任务不存在")
+        source = agent.memory.get_data_source(run["data_source_id"], tenant_id)
+        if not source or source["source_type"] != "url":
+            raise HTTPException(status_code=400, detail="当前仅支持 URL 数据源自动同步，其他类型请使用对应导入流程")
         threading.Thread(target=_run_data_source_sync, args=(run["id"],), daemon=True).start()
         return JSONResponse({"ok": True, "sync_run": run})
     except ValueError as exc:
@@ -2107,17 +2162,22 @@ def admin_list_knowledge_graph(request: Request, tenant_id: str = "local-default
 @router.get("/api/admin/knowledge-graph/network")
 def admin_knowledge_graph_network(request: Request, tenant_id: str = "local-default",
                                   knowledge_base_id: str = "", status: str = "approved",
-                                  document_id: str = "", limit: int = 120):
+                                  document_id: str = "", limit: int = 120,
+                                  semantic_only: bool = True):
     principal = require_permission(request, agent.memory, "graph.read", tenant_id)
     tenant_id = principal.tenant_id if principal.role != "platform_admin" else tenant_id
     if status not in {"", "pending_review", "approved", "rejected", "archived"}:
         raise HTTPException(status_code=400, detail="图谱状态不合法")
-    neo4j_result = get_neo4j_graph_store().network(tenant_id, knowledge_base_id, status, limit)
+    neo4j_result = get_neo4j_graph_store().network(
+        tenant_id, knowledge_base_id, status, limit, document_id, semantic_only,
+    )
     if neo4j_result is not None:
         return JSONResponse(neo4j_result)
     relations = agent.memory.list_graph_relations(tenant_id, knowledge_base_id, status, limit=5000)
     if document_id:
         relations = [r for r in relations if str(r.get("source_document_id") or "") == document_id]
+    if semantic_only:
+        relations = [r for r in relations if is_semantic_graph_relation(r)]
     relations = relations[:max(1, min(int(limit), 500))]
     entity_ids = {str(r["subject_id"]) for r in relations} | {str(r["object_id"]) for r in relations}
     entities = [e for e in agent.memory.list_graph_entities(tenant_id, knowledge_base_id, "", limit=2000) if e["id"] in entity_ids]
@@ -2980,16 +3040,25 @@ def rename_conversation(conv_id: str, request: Request, data: dict = Body(...)):
 
 
 @router.put("/api/conversations/{conv_id}/jailbreak-status")
-def set_jailbreak_status(conv_id: str, data: dict = Body(...)):
+def set_jailbreak_status(conv_id: str, request: Request, data: dict = Body(...)):
+    principal, tenant_id = _admin_conversation_scope(request, conv_id)
     status = data.get("status", "").strip()
     if status not in ("false_alarm", "handled"):
         raise HTTPException(status_code=400, detail="无效状态，仅支持 false_alarm 或 handled")
     agent.memory.update_jailbreak_status(conv_id, status)
+    agent.memory.log_audit(
+        tenant_id, principal.user_id, principal.agent_id,
+        "conversation.jailbreak_status.update", "conversation", conv_id,
+        {"status": status},
+    )
     return JSONResponse({"ok": True, "status": status})
 
 
 @router.get("/api/conversations/{conv_id}/jailbreak-report")
-def jailbreak_report(conv_id: str):
+def jailbreak_report(conv_id: str, request: Request, reason: str = ""):
+    principal, _ = _admin_conversation_scope(request, conv_id)
+    _audit_sensitive_access(principal, "conversation", conv_id, reason,
+                            {"access": "jailbreak_report"})
     data = agent.memory.get_jailbreak_report_data(conv_id)
     if not data:
         raise HTTPException(status_code=404, detail="对话不存在")
@@ -3098,7 +3167,7 @@ def jailbreak_report(conv_id: str):
     {f'<details style="margin-top:4px"><summary style="font-size:12px;cursor:pointer;color:#666">Trace 步骤详情</summary><ul style="font-size:11px;color:#555">{trace_steps_html}</ul></details>' if trace_steps_html else ''}
 </div>"""
 
-    html = f"""<html>
+    report_html = f"""<html>
 <head><meta charset="utf-8"><title>越狱检测报告</title></head>
 <body style="font-family:sans-serif;padding:20px;max-width:800px">
 <h1 style="color:#ff3b30">🔴 越狱检测报告</h1>
@@ -3125,6 +3194,7 @@ def jailbreak_report(conv_id: str):
 
 <h2>🧠 全链路过程（按轮次）</h2>
     <p style="font-size:12px;color:#666;margin-bottom:12px">每轮展示 Query 改写 → 检索 → LLM 生成 → 后处理 的真实耗时和数据</p>
+    {trace_html}
     {rounds_html}
 
 <p style="color:#999;font-size:11px;margin-top:20px">生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
@@ -3137,7 +3207,7 @@ def jailbreak_report(conv_id: str):
         disp = f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded_name}'
     else:
         disp = f'attachment; filename="{filename}"'
-    return HTMLResponse(content=html, headers={"Content-Disposition": disp})
+    return HTMLResponse(content=report_html, headers={"Content-Disposition": disp})
 
 
 @router.delete("/api/conversations/{conv_id}")
@@ -3201,8 +3271,8 @@ def get_conversation_stats(conv_id: str, request: Request, reason: str = ""):
         if fn not in file_stats:
             file_stats[fn] = {"count": 0, "confidences": [], "category": s.get("category", "")}
         file_stats[fn]["count"] += 1
-    if s.get("confidence") is not None:
-         file_stats[fn]["confidences"].append(s["confidence"])
+        if s.get("confidence") is not None:
+            file_stats[fn]["confidences"].append(s["confidence"])
 
     from collections import Counter
     conf_labels = Counter(s.get("label", "未知") for s in all_sources)
@@ -3539,7 +3609,8 @@ def documents_profile_registry(request: Request):
 
 
 @router.post("/api/documents/profile-extensions/propose")
-def documents_profile_extension_propose(data: dict = Body(...)):
+def documents_profile_extension_propose(request: Request, data: dict = Body(...)):
+    require_permission(request, agent.memory, "tenant.manage", str(data.get("tenant_id") or ""))
     try:
         proposal = propose_profile_extension(
             industry=data.get("industry", ""), label=data.get("label", ""),
@@ -3554,7 +3625,8 @@ def documents_profile_extension_propose(data: dict = Body(...)):
 
 
 @router.post("/api/documents/profile-extensions/confirm")
-def documents_profile_extension_confirm(data: dict = Body(...)):
+def documents_profile_extension_confirm(request: Request, data: dict = Body(...)):
+    require_permission(request, agent.memory, "tenant.manage", str(data.get("tenant_id") or ""))
     try:
         stored = confirm_profile_extension(data.get("proposal") or {})
         from profile_classifier import load_profile_registry
@@ -3565,13 +3637,15 @@ def documents_profile_extension_confirm(data: dict = Body(...)):
 
 
 @router.get("/api/documents/profile-migration/summary")
-def documents_profile_migration_summary(limit: int = 500):
+def documents_profile_migration_summary(request: Request, limit: int = 500):
+    require_permission(request, agent.memory, "tenant.manage", "")
     limit_val = max(1, min(int(limit or 500), 5000))
     return JSONResponse({"status": "ok", **scan_profile_migration(limit=limit_val)})
 
 
 @router.post("/api/documents/profile-migration/apply")
-def documents_profile_migration_apply(data: dict = Body(default={})):
+def documents_profile_migration_apply(request: Request, data: dict = Body(default={})):
+    require_permission(request, agent.memory, "tenant.manage", str(data.get("tenant_id") or ""))
     limit = data.get("limit")
     limit_val = None
     if limit:
@@ -3586,7 +3660,8 @@ def documents_profile_migration_apply(data: dict = Body(default={})):
 
 
 @router.post("/api/documents/profile-migration/confirm")
-def documents_profile_migration_confirm(data: dict = Body(...)):
+def documents_profile_migration_confirm(request: Request, data: dict = Body(...)):
+    require_permission(request, agent.memory, "tenant.manage", str(data.get("tenant_id") or ""))
     paths = data.get("paths") or []
     profile = str(data.get("profile") or "").strip()
     category = data.get("category")
@@ -3616,7 +3691,8 @@ def documents_profile_migration_confirm(data: dict = Body(...)):
 
 
 @router.get("/api/documents/profile-migration/history")
-def documents_profile_migration_history(path: str, limit: int = 50):
+def documents_profile_migration_history(request: Request, path: str, limit: int = 50):
+    require_permission(request, agent.memory, "tenant.manage", "")
     try:
         return JSONResponse({
             "status": "ok",
@@ -3628,13 +3704,15 @@ def documents_profile_migration_history(path: str, limit: int = 50):
 
 
 @router.get("/api/documents/access-migration/summary")
-def documents_access_migration_summary(limit: int = 500):
+def documents_access_migration_summary(request: Request, limit: int = 500):
+    _require_access_migration_permission(request)
     limit_val = max(1, min(int(limit or 500), 5000))
     return JSONResponse({"status": "ok", **scan_access_migration(limit=limit_val)})
 
 
 @router.post("/api/documents/access-migration/confirm")
-def documents_access_migration_confirm(data: dict = Body(...)):
+def documents_access_migration_confirm(request: Request, data: dict = Body(...)):
+    principal = _require_access_migration_permission(request)
     paths = [str(path) for path in (data.get("paths") or [])]
     if not paths:
         return JSONResponse({"status": "error", "message": "没有选择待迁移文档"}, status_code=400)
@@ -3644,7 +3722,7 @@ def documents_access_migration_confirm(data: dict = Body(...)):
             paths=paths,
             access=access,
             db_path=agent.memory._db_path,
-            changed_by=str(data.get("changed_by") or "admin"),
+            changed_by=principal.user_id,
             change_reason=str(data.get("change_reason") or ""),
         )
         agent.refresh_retriever()
@@ -3655,7 +3733,8 @@ def documents_access_migration_confirm(data: dict = Body(...)):
 
 
 @router.get("/api/documents/access-migration/history")
-def documents_access_migration_history(path: str, limit: int = 50):
+def documents_access_migration_history(request: Request, path: str, limit: int = 50):
+    _require_access_migration_permission(request)
     try:
         return JSONResponse({
             "status": "ok", "path": path,
@@ -3666,11 +3745,12 @@ def documents_access_migration_history(path: str, limit: int = 50):
 
 
 @router.post("/api/documents/access-migration/rollback")
-def documents_access_migration_rollback(data: dict = Body(...)):
+def documents_access_migration_rollback(request: Request, data: dict = Body(...)):
+    principal = _require_access_migration_permission(request)
     try:
         result = rollback_access_migration(
             path=str(data.get("path") or ""), changed_at=str(data.get("changed_at") or ""),
-            db_path=agent.memory._db_path, changed_by=str(data.get("changed_by") or "admin"),
+            db_path=agent.memory._db_path, changed_by=principal.user_id,
             change_reason=str(data.get("change_reason") or ""),
         )
         agent.refresh_retriever()
@@ -3691,22 +3771,27 @@ def documents_start(request: Request, data: dict = Body(...)):
 
     task_id = uuid.uuid4().hex[:12]
     staging_files = []
+    batch_size = 0
     profiles_by_id = {p["profile"]: p for p in profile_options()}
     allowed_profiles = set(profiles_by_id)
     tenant_enabled_profiles = _governance_store_for_current_memory().enabled_profiles(principal.tenant_id)
 
     for f in files:
-        name = f.get("name", "")
+        name = _safe_upload_filename(f.get("name", ""))
         action = conflict_actions.get(name, "overwrite")
         if action == "skip":
             continue
         content_b64 = f.get("content", "")
         if not content_b64:
             continue
-        file_bytes = base64.b64decode(content_b64)
+        try:
+            file_bytes = base64.b64decode(content_b64, validate=True)
+        except (ValueError, TypeError):
+            return JSONResponse({"status": "error", "message": f"文件内容编码无效: {name}"}, status_code=400)
         if len(file_bytes) > _MAX_FILE_SIZE:
             logger.warning(f"  ⏭️ 跳过超大文件: {name} ({len(file_bytes)/1024/1024:.1f}MB)")
             continue
+        batch_size = _validate_upload_batch_size(batch_size, len(file_bytes))
         profile_suggestion = f.get("profile_suggestion") or suggest_document_profile(
             filename=name,
             category_hint=f.get("category", category),
@@ -3806,6 +3891,7 @@ def documents_start(request: Request, data: dict = Body(...)):
             "current_file": "",
             "summary": None,
             "error": None,
+            "tenant_id": principal.tenant_id,
             "document_ids": [item.get("document_id") for item in staging_files],
             "document_map": {item.get("name"): item.get("document_id") for item in staging_files},
         }
@@ -3821,10 +3907,13 @@ def documents_start(request: Request, data: dict = Body(...)):
 
 
 @router.get("/api/documents/status/{task_id}")
-def documents_status(task_id: str):
+def documents_status(task_id: str, request: Request):
     persistent = agent.memory.get_ingestion_job(task_id)
     with _doc_tasks_lock:
         task = _doc_tasks.get(task_id)
+    scope_record = persistent or task
+    if scope_record:
+        _require_ingestion_job_scope(request, scope_record)
     if not task:
         if persistent:
             return JSONResponse({"status": persistent["status"], "progress": 100 if persistent["status"] in {"completed", "error"} else 0,
@@ -3840,9 +3929,7 @@ def documents_ingestion_detail(task_id: str, request: Request):
     job = agent.memory.get_ingestion_job(task_id)
     if not job:
         raise HTTPException(status_code=404, detail="入库任务不存在")
-    principal = principal_from_request(request, agent.memory)
-    if principal.role != "platform_admin" and principal.tenant_id != job.get("tenant_id"):
-        raise HTTPException(status_code=403, detail="无权访问其他工作区的入库 Trace")
+    _require_ingestion_job_scope(request, job)
     return JSONResponse(job)
 
 
@@ -3891,7 +3978,8 @@ def admin_retry_document_ingestion(document_id: str, request: Request, data: dic
 
 
 @router.get("/api/documents/debug-dedup")
-def debug_dedup():
+def debug_dedup(request: Request):
+    _require_access_migration_permission(request)
     import traceback
     info = {}
     try:
@@ -4163,8 +4251,6 @@ def render_generation_request(request_id: str, request: Request):
         return JSONResponse({"ok": True, "generation": completed})
     except HTTPException:
         raise
-    except HTTPException:
-        raise
     except Exception as exc:
         logger.exception("P5 生成物渲染失败")
         raise HTTPException(status_code=500, detail=f"生成失败：{str(exc)[:120]}") from exc
@@ -4217,6 +4303,7 @@ def delete_generation_request(request_id: str, request: Request):
 
 @router.post("/api/chat")
 def chat(request: Request, data: dict = Body(...)):
+    endpoint_started = time.perf_counter()
     principal = principal_from_request(request, agent.memory)
     query = data.get("query", "").strip()
     conv_id = data.get("conversation_id")
@@ -4240,6 +4327,9 @@ def chat(request: Request, data: dict = Body(...)):
         "conv_id": conv_id or result.get("conversation_id", ""),
         "action": "chat",
     })
+    if isinstance(result.get("stats"), dict):
+        result["stats"]["endpoint_time"] = round(time.perf_counter() - endpoint_started, 3)
+        result["stats"]["total_time"] = result["stats"]["endpoint_time"]
     return JSONResponse(result)
 
 
@@ -4260,6 +4350,7 @@ def chat_stream(request: Request, data: dict = Body(...)):
         raise HTTPException(status_code=404, detail="对话不存在")
 
     conv_info = _ACTIVE_CONVERSATIONS.get(conv_id)
+    title = query[:40]
     if conv_info is None and conv_id:
         convs = agent.memory.get_conversations(
             tenant_id=principal.tenant_id, user_id=principal.user_id, agent_id=principal.agent_id,
@@ -4494,6 +4585,22 @@ def admin_export_knowledge_gaps(request: Request, status: str = "all", profile: 
 def admin_list_feedback_items(request: Request, limit: int = 50):
     require_platform_permission(request, agent.memory)
     return JSONResponse({"items": agent.memory.list_feedback_items(limit)})
+
+
+@router.post("/api/admin/knowledge-gaps/feedback/{feedback_id}/retrieval-eval")
+def admin_promote_feedback_to_retrieval_eval(feedback_id: int, request: Request,
+                                               data: dict = Body(default={} )):
+    """Put a feedback sample into Retrieval Eval as a pending human-label case."""
+    principal = require_platform_permission(request, agent.memory)
+    result = agent.memory.promote_feedback_to_retrieval_eval(
+        feedback_id,
+        created_by=principal.user_id,
+        expected=data.get("expected") if isinstance(data, dict) else None,
+        category=str((data or {}).get("category") or "feedback"),
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="反馈记录不存在")
+    return JSONResponse({"ok": True, **result})
 
 
 @router.post("/api/admin/knowledge-gaps/{gap_id}/supply-task")
@@ -4859,6 +4966,51 @@ def prompt_test_history(limit: int = 20):
         return {"history": rows or []}
     except Exception:
         return {"history": []}
+
+
+@router.get("/api/prompt/test/export")
+def prompt_test_export():
+    """Export the latest legacy Prompt Test result as a Word report."""
+    from prompt_tester import get_latest_full_result
+
+    result = get_latest_full_result(agent.memory._db_path)
+    if not result:
+        return JSONResponse({"error": "暂无 Prompt Test 结果，请先运行测试"}, status_code=404)
+
+    dimension_scores = result.get("dimension_scores") or {}
+    summary_cards = [
+        (result.get("total", 0), "测试总数"),
+        (result.get("passed", 0), "通过"),
+        (result.get("failed", 0), "失败"),
+        (f"{float(result.get('pass_rate') or 0) * 100:.1f}%", "通过率"),
+        (f"{float(result.get('overall_score') or 0):.3f}", "综合得分"),
+    ]
+    rows = []
+    for item in (result.get("results") or [])[:200]:
+        scores = item.get("scores") or {}
+        rows.append([
+            item.get("id", ""), item.get("query", ""),
+            "通过" if item.get("passed") else "失败",
+            f"{float(item.get('total_score') or item.get('score') or 0):.3f}",
+            "; ".join(f"{key}: {value}" for key, value in scores.items()),
+        ])
+    if not rows:
+        rows = [["-", "暂无明细", "-", "-", ""]]
+    date_line = (
+        f"测试时间：{result.get('timestamp', '')} | "
+        f"Prompt 版本：{result.get('version', '')} | "
+        f"维度：{json.dumps(dimension_scores, ensure_ascii=False)}"
+    )
+    buf = _build_report_doc(
+        "Prompt Test 评测报告", date_line, summary_cards,
+        ["用例", "查询", "结果", "得分", "维度明细"], rows,
+    )
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename=prompt_test_report_{ts}.docx"},
+    )
 
 
 @router.get("/api/prompt/ab/runs")
@@ -5297,9 +5449,76 @@ def retrieval_eval(limit: int = 100):
     try:
         data = agent.memory.get_retrieval_eval(limit=limit)
         data["eval_summary"] = _load_eval_summary("retrieval_quality")
+        data["retrieval_degradation"] = _retrieval_degradation_summary()
         return JSONResponse(data)
     except Exception as e:
         logger.error(f"retrieval_eval 查询失败: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+def _retrieval_degradation_summary() -> dict:
+    """Summarize recent retrieval degradation and pending-profile exclusions."""
+    with sqlite3.connect(agent.memory._db_path) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        rows = conn.execute(
+            """SELECT trace_data FROM usage_logs
+               WHERE json_extract(trace_data, '$.retrieval') IS NOT NULL
+               ORDER BY id DESC LIMIT 500"""
+        ).fetchall()
+    summary = {
+        "sampled": 0, "degraded": 0, "pending_profile_excluded": 0,
+        "degraded_stages": {}, "pending_ratio": 0.0, "degraded_ratio": 0.0,
+    }
+    for (trace_json,) in rows:
+        try:
+            trace = json.loads(trace_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        retrieval = trace.get("retrieval") or {}
+        if not isinstance(retrieval, dict) or not retrieval:
+            continue
+        summary["sampled"] += 1
+        if retrieval.get("retrieval_degraded"):
+            summary["degraded"] += 1
+        for stage in (retrieval.get("degraded_stages") or []):
+            summary["degraded_stages"][str(stage)] = summary["degraded_stages"].get(str(stage), 0) + 1
+        summary["pending_profile_excluded"] += int(retrieval.get("pending_profile_excluded") or 0)
+    if summary["sampled"]:
+        summary["pending_ratio"] = round(summary["pending_profile_excluded"] / summary["sampled"], 4)
+        summary["degraded_ratio"] = round(summary["degraded"] / summary["sampled"], 4)
+    return summary
+
+
+# ==================== Misclassification Feedback Loop ====================
+@router.get("/api/admin/misclassification-candidates")
+def get_misclassification_candidates(request: Request, include_resolved: bool = False):
+    """Return suspected misclassified documents for admin review."""
+    try:
+        require_permission(request, agent.memory, "tenant.manage", "")
+        items = agent.memory.get_misclassification_candidates(include_resolved=include_resolved)
+        return JSONResponse({"items": items, "total": len(items)})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"get_misclassification_candidates 失败: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/api/admin/misclassification-candidates/{candidate_id}/resolve")
+def resolve_misclassification_candidate(candidate_id: int, request: Request, data: dict):
+    """Mark a misclassification candidate as reviewed with the corrected profile."""
+    try:
+        require_permission(request, agent.memory, "tenant.manage", "")
+        resolved_profile = str(data.get("resolved_profile") or "").strip()
+        if not resolved_profile:
+            return JSONResponse({"error": "resolved_profile is required"}, status_code=400)
+        ok = agent.memory.resolve_misclassification(candidate_id, resolved_profile)
+        return JSONResponse({"status": "ok" if ok else "not_found", "resolved": ok})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"resolve_misclassification_candidate 失败: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

@@ -5,10 +5,6 @@
 
 运行结果存入 retrieval_eval 表，通过 GET /api/stats/retrieval-eval 查询。
 """
-from memory import ConversationMemory
-from retriever import CyberRetriever
-from trace_observability import build_runtime_context
-from retrieval_eval_contract import is_negative_expectation, match_retrieval_expectation
 import sys
 import os
 import json
@@ -18,6 +14,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "preprocessor" / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from memory import ConversationMemory
+from retriever import CyberRetriever
+from trace_observability import build_runtime_context
+from retrieval_eval_contract import is_negative_expectation, match_retrieval_expectation
 
 from profile_classifier import profile_version_snapshot
 
@@ -82,6 +83,36 @@ def get_test_set(profile: str = "general") -> list[dict]:
     return list(GENERAL_TEST_SET)
 
 
+def classify_retrieval_result(docs: list[dict], expected, recall_5: int,
+                              recall_10: int, first_rank: int | None) -> dict:
+    """Explain a retrieval score so failures can be routed to the right fix."""
+    top10 = docs[:10]
+    matches = [d for d in top10 if match_retrieval_expectation(d, expected)]
+    if is_negative_expectation(expected):
+        return {
+            "failure_class": "negative_match" if matches else "pass",
+            "matched_count": len(matches), "retrieved_count": len(top10),
+            "precision_5": 0.0,
+        }
+    if not top10:
+        failure = "no_retrieval_result"
+    elif not matches:
+        failure = "retrieval_miss"
+    elif not recall_5 and recall_10:
+        failure = "relevant_but_low_rank"
+    elif len(matches) == 1 and len(top10) >= 5:
+        failure = "retrieval_noise" if first_rank and first_rank > 1 else "pass"
+    else:
+        failure = "pass"
+    top5_matches = sum(1 for d in docs[:5] if match_retrieval_expectation(d, expected))
+    return {
+        "failure_class": failure,
+        "matched_count": len(matches),
+        "retrieved_count": len(top10),
+        "precision_5": round(top5_matches / max(1, min(5, len(docs))), 3),
+    }
+
+
 def evaluate(profile: str = "general"):
     memory = ConversationMemory()
     runtime_context = build_runtime_context(getattr(memory, "_db_path", None))
@@ -104,6 +135,7 @@ def evaluate(profile: str = "general"):
         expected = item["expected"]
 
         docs = retriever.search(query, top_k=10, use_rerank=True, profiles={evaluation_profile})
+        retrieval_trace = dict(getattr(retriever, "last_trace", {}) or {})
 
         recall_5, recall_10 = 0, 0
         mrr = 0.0
@@ -159,12 +191,33 @@ def evaluate(profile: str = "general"):
             "recall_10": recall_10,
             "mrr": round(mrr, 3),
             "top5_files": [d.get("file_name", "") for d in docs[:5]],
+            "failure_class": classify_retrieval_result(docs, expected, recall_5, recall_10, first_rank)["failure_class"],
+            "pending_profile_excluded": retrieval_trace.get("pending_profile_excluded", 0),
+            "retrieval_degraded": bool(retrieval_trace.get("retrieval_degraded")),
+            "degraded_stages": list(retrieval_trace.get("degraded_stages") or []),
         })
         status = "PASS" if recall_5 == 1 else "FAIL"
         if status == "PASS":
             results_summary["pass"] += 1
         else:
             results_summary["fail"] += 1
+            # H1: eval feedback loop — flag excluded docs as suspected misclassifications
+            excluded_docs = retrieval_trace.get("profile_filter_excluded_docs") or []
+            if excluded_docs:
+                candidates = []
+                for fn in excluded_docs:
+                    candidates.append({
+                        "file_name": fn,
+                        "current_profile": "unknown",
+                        "suggested_profile": evaluation_profile,
+                        "reason": f"查询[{query[:40]}]期望命中但该文档被 profile filter 排除",
+                    })
+                try:
+                    saved = memory.save_misclassification_candidates(query, candidates)
+                    if saved:
+                        logger.info(f"    → 已标记 {saved} 篇文档为疑似分类错误")
+                except Exception as _e:
+                    logger.warning(f"    → 保存 misclassification candidates 失败: {_e}")
 
         logger.info(f"  [{status}] {query[:40]:40s} R@5={recall_5} R@10={recall_10} MRR={mrr:.3f}")
 
@@ -241,6 +294,8 @@ def evaluate_with_items(items: list, memory) -> dict:
         "profile_versions": {profile: snapshot["profile_version"] for profile, snapshot in profile_snapshots.items()},
         "profile_snapshots": profile_snapshots,
         "context": runtime_context,
+        "failure_counts": {},
+        "category_counts": {},
         "total": len(items), "pass": 0, "fail": 0, "items": []
     }
     all_recall_5, all_recall_10, all_mrr = [], [], []
@@ -258,7 +313,6 @@ def evaluate_with_items(items: list, memory) -> dict:
         first_rank = None
 
         for rank, d in enumerate(docs[:10], 1):
-            content = (d.get("file_name", "") + " " + d.get("content", "")).lower()
             matched = match_retrieval_expectation(d, expected)
             if matched:
                 if rank <= 5:
@@ -276,6 +330,17 @@ def evaluate_with_items(items: list, memory) -> dict:
             recall_5 = recall_10 = 0 if has_forbidden_match else 1
             mrr = 0.0
 
+        diagnosis = classify_retrieval_result(docs, expected, recall_5, recall_10, first_rank)
+        failure_class = diagnosis["failure_class"]
+        results_summary["failure_counts"][failure_class] = (
+            results_summary["failure_counts"].get(failure_class, 0) + 1
+        )
+        category = str(item.get("category") or "uncategorized")
+        results_summary["category_counts"].setdefault(category, {"total": 0, "pass": 0})
+        results_summary["category_counts"][category]["total"] += 1
+        if recall_5:
+            results_summary["category_counts"][category]["pass"] += 1
+
         all_recall_5.append(recall_5)
         all_recall_10.append(recall_10)
         all_mrr.append(mrr)
@@ -288,7 +353,8 @@ def evaluate_with_items(items: list, memory) -> dict:
                              "ids"]) if retriever._chroma_collection else 0,
             rerank_top1_match=top1_match,
             profile=item_profile,
-            context={**runtime_context, "profile_snapshot": profile_snapshot},
+            context={**runtime_context, "profile_snapshot": profile_snapshot,
+                     "failure_class": failure_class, **diagnosis},
         )
 
         status = "PASS" if recall_5 == 1 else "FAIL"
@@ -306,6 +372,8 @@ def evaluate_with_items(items: list, memory) -> dict:
             "recall_5": recall_5,
             "recall_10": recall_10,
             "mrr": round(mrr, 4),
+            **diagnosis,
+            "category": category,
         })
 
     avg_recall_5 = sum(all_recall_5) / len(all_recall_5) * 100
@@ -362,9 +430,11 @@ def evaluate_single_query(agent, query: str, expected: str, profile: str = "gene
         faiss_count=faiss_count, chroma_count=chroma_count,
         rerank_top1_match=top1_match,
         profile=item_profile,
-        context={**runtime_context, "profile_snapshot": profile_snapshot},
+        context={**runtime_context, "profile_snapshot": profile_snapshot,
+                 **classify_retrieval_result(docs, expected, recall_5, recall_10, first_rank)},
     )
 
+    diagnosis = classify_retrieval_result(docs, expected, recall_5, recall_10, first_rank)
     return {
         "query": query,
         "expected": expected,
@@ -376,6 +446,7 @@ def evaluate_single_query(agent, query: str, expected: str, profile: str = "gene
         "recall_10": recall_10,
         "mrr": mrr,
         "top1_match": top1_match,
+        **diagnosis,
     }
 
 
@@ -426,7 +497,6 @@ def _eval_mode_bm25_only(items: list, retriever, top_k=10) -> dict:
         recall_5, mrr = 0, 0.0
         first_rank = None
         for rank, d in enumerate(docs[:10], 1):
-            content = (d.get("file_name", "") + " " + d.get("content", "")).lower()
             if match_retrieval_expectation(d, expected):
                 if rank <= 5:
                     recall_5 = 1

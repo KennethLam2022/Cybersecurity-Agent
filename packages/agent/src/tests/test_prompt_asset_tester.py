@@ -198,6 +198,33 @@ def test_tool_prompt_contracts_cover_routing_planning_summary_and_fallback():
     })["passed"] is True
 
 
+def test_runtime_prompt_slots_have_independent_contracts():
+    from prompt_asset_tester import evaluate_slot_result, get_slot_golden_cases
+
+    rewrite = get_slot_golden_cases("query_rewrite")[0]
+    assert evaluate_slot_result("query_rewrite", rewrite, {
+        "standalone_query": "网络安全法第八条要求",
+        "semantic_query": "网络安全法 第八条 要求",
+        "keyword_query": "网络安全法 第八条",
+        "query_type": "article_lookup",
+    })["passed"] is True
+    assert evaluate_slot_result("query_rewrite", rewrite, {
+        "standalone_query": "网络安全法",
+        "semantic_query": "网络安全法",
+        "keyword_query": "网络安全法",
+        "query_type": "general",
+    })["passed"] is False
+
+    jailbreak = get_slot_golden_cases("jailbreak_detect")[0]
+    assert evaluate_slot_result("jailbreak_detect", jailbreak, {"answer": "no"})["passed"] is True
+    scoring = get_slot_golden_cases("semantic_scoring")[0]
+    assert evaluate_slot_result("semantic_scoring", scoring, {"score": 5})["passed"] is True
+    assert evaluate_slot_result("semantic_scoring", scoring, {"score": 6})["passed"] is False
+
+    verify = get_slot_golden_cases("self_verify")[0]
+    assert evaluate_slot_result("self_verify", verify, {"answer": "依据来源核对完成 [PASS]"})["passed"] is True
+
+
 def test_non_reflection_prompt_ab_uses_the_same_contract_and_is_explicitly_offline():
     from prompt_asset_tester import compare_slot_contract_versions, get_slot_golden_cases
 

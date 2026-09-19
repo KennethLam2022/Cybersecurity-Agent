@@ -2,6 +2,8 @@ import json
 import time
 import logging
 import subprocess
+import re
+import multiprocessing
 from pathlib import Path
 from typing import Optional
 
@@ -57,6 +59,16 @@ def _convert_doc_to_docx(path: Path) -> Path:
         pythoncom.CoUninitialize()
 
 
+def _odl_worker(input_path: str, temp_dir: str, result_path: str) -> None:
+    import opendataloader_pdf
+    opendataloader_pdf.convert(
+        input_path=[input_path], output_dir=temp_dir,
+        format="markdown,json", quiet=True, markdown_with_html=True,
+    )
+    md_path = Path(temp_dir) / f"{Path(input_path).stem}.md"
+    Path(result_path).write_text(md_path.read_text(encoding="utf-8") if md_path.exists() else "", encoding="utf-8")
+
+
 def _parse_pdf_odl(path: Path) -> str:
     """用 OpenDataLoader PDF 解析 PDF，输出 Markdown。失败/超时时回退到 pypdf"""
     import opendataloader_pdf
@@ -65,46 +77,62 @@ def _parse_pdf_odl(path: Path) -> str:
     temp_dir = path.parent / ".odl_temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    def _run_odl():
-        opendataloader_pdf.convert(
-            input_path=[str(path.absolute())],
-            output_dir=str(temp_dir.absolute()),
-            format="markdown,json",
-            quiet=True,
-            markdown_with_html=True,
-        )
-        stem = path.stem
-        md_path = temp_dir / f"{stem}.md"
-        if md_path.exists():
-            return md_path.read_text(encoding="utf-8")
-        return ""
-
+    result_path = temp_dir / "result.md"
+    process = multiprocessing.Process(target=_odl_worker, args=(str(path.absolute()), str(temp_dir.absolute()), str(result_path)))
+    process.start()
     try:
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            fut = pool.submit(_run_odl)
-            try:
-                result = fut.result(timeout=300)
-                return result
-            except FutureTimeout:
-                logger.warning(f"  ⏰ OpenDataLoader 超时(300s)，回退到 pypdf")
-                return ""
+        process.join(timeout=300)
+        if process.is_alive():
+            logger.warning(f"  ⏰ OpenDataLoader 超时(300s)，回退到 pypdf")
+            process.terminate()
+            process.join(timeout=5)
+            return _parse_pdf_pypdf(path)
+        if process.exitcode == 0 and result_path.exists():
+            return result_path.read_text(encoding="utf-8")
+        raise RuntimeError(f"OpenDataLoader worker exit={process.exitcode}")
     except Exception as e:
         logger.warning(f"  OpenDataLoader 解析失败，回退到 pypdf: {e}")
-        import pypdf
-        try:
-            with path.open("rb") as f:
-                reader = pypdf.PdfReader(f)
-                pages = []
-                for i, page in enumerate(reader.pages):
-                    text = page.extract_text() or ""
-                    pages.append(text)
-                return "\n\n---\n\n".join(pages)
-        except Exception as e2:
-            logger.error(f"  pypdf 回退也失败: {e2}")
-            return ""
+        return _parse_pdf_pypdf(path)
     finally:
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _parse_pdf_pypdf(path: Path) -> str:
+    import pypdf
+    try:
+        with path.open("rb") as f:
+            reader = pypdf.PdfReader(f)
+            return "\n\n---\n\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception as exc:
+        logger.error(f"  pypdf 回退也失败: {exc}")
+        return ""
+
+
+def assess_text_quality(text: str, total_pages: int = 0) -> dict:
+    value = str(text or "").strip()
+    chars = len(value)
+    replacement_count = value.count("\ufffd")
+    headings = len(re.findall(r"(?m)^#{1,6}\s+\S+", value))
+    page_markers = value.count("---")
+    score = 1.0
+    reasons = []
+    if not value:
+        score = 0.0
+        reasons.append("empty_text")
+    if replacement_count:
+        score -= min(0.5, replacement_count / max(chars, 1))
+        reasons.append("replacement_characters")
+    if chars < max(80, int(total_pages or 1) * 20):
+        score -= 0.35
+        reasons.append("too_short")
+    if _is_garbled(value[:2000]):
+        score -= 0.5
+        reasons.append("garbled_text")
+    return {"score": round(max(0.0, score), 3), "characters": chars,
+            "headings": headings, "page_markers": page_markers,
+            "valid": bool(value) and score >= 0.35,
+            "reasons": reasons}
 
 
 def _is_garbled(text: str) -> bool:
@@ -363,6 +391,9 @@ class OdlParser:
             full_markdown = _parse_docx(path)
 
         elapsed = time.time() - start
+        quality = assess_text_quality(full_markdown, _count_pages(path))
+        if not quality["valid"]:
+            raise ValueError(f"解析文本质量不合格: {quality['reasons']}")
         logger.info(f"解析完成: {path.name} ({elapsed:.1f}s, {len(full_markdown)} 字符)")
 
         parts = path.parts
@@ -377,6 +408,7 @@ class OdlParser:
             "full_markdown": full_markdown,
             "parse_time_seconds": round(elapsed, 2),
             "engine": engine,
+            "quality": quality,
         }
 
     def parse_and_save(self, file_path: str, output_dir: str):

@@ -29,7 +29,7 @@ def validate_llm_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname
-        if not hostname:
+        if parsed.scheme.lower() != "https" or not hostname:
             return False
         if hostname in _ALLOWED_LLM_DOMAINS:
             return True
@@ -50,6 +50,8 @@ _ADMIN_PREFIXES = {
     "/api/llm/configs/",
     "/api/agent-eval/",
     "/api/prompt/ab/",
+    "/api/stats/",
+    "/api/prompt/",
 }
 
 _ADMIN_ROUTES = [
@@ -59,9 +61,12 @@ _ADMIN_ROUTES = [
     "/api/conversations/{conv_id}/jailbreak-status",
     "/api/conversations/{conv_id}/jailbreak-report",
     "/api/llm/config",
+    "/api/llm/config/current",
+    "/api/llm/configs",
     "/api/llm/presets",
     "/api/llm/test",
     "/api/llm/refresh-models",
+    "/api/stats",
 ]
 
 PUBLIC_ROUTES = {
@@ -70,7 +75,6 @@ PUBLIC_ROUTES = {
     # Profile registry only exposes taxonomy metadata; document content and
     # all write/migration endpoints remain protected by /api/documents/.
     "/api/documents/profile-registry",
-    "/api/llm/config/current",
     "/api/auth/sso/providers",
 }
 
@@ -81,6 +85,8 @@ PUBLIC_PREFIXES = {"/static/", "/api/auth/", "/api/shared/", "/shared/"}
 # tenant checks; this is a fail-closed bridge, not a substitute for the final
 # per-resource authorization work.
 _PLATFORM_ONLY_ADMIN_PREFIXES = (
+    "/api/stats",
+    "/api/prompt/",
     "/admin/model-config",
     "/admin/langfuse-config",
     "/admin/sso-config",

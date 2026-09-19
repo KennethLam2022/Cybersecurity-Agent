@@ -7,6 +7,7 @@
 """
 import json
 import logging
+import json
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -77,6 +78,13 @@ def build_index():
     parent_index = {}
     for fp, cat, stem in files:
         sections = extract_sections(fp)
+        sidecar = Path(fp).with_suffix(".meta.json")
+        metadata = {}
+        if sidecar.exists():
+            try:
+                metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                logger.warning("父索引元数据读取失败: %s", sidecar)
         for idx, sec in enumerate(sections):
             parent_id = f"{stem}__s{idx}"
             parent_index[parent_id] = {
@@ -84,6 +92,15 @@ def build_index():
                 "file_name": stem,
                 "category": cat,
                 "section": sec["section"],
+                "profile": metadata.get("profile", "general"),
+                "scope": metadata.get("scope", "general"),
+                "industry": metadata.get("industry", ""),
+                "visibility": metadata.get("visibility", "public"),
+                "tenant_id": metadata.get("tenant_id", ""),
+                "owner_user_id": metadata.get("owner_user_id", ""),
+                "agent_id": metadata.get("agent_id", ""),
+                "document_id": metadata.get("document_id", ""),
+                "knowledge_base_id": metadata.get("knowledge_base_id", ""),
             }
 
     OUTPUT.write_text(

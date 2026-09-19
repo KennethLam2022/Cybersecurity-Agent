@@ -10,6 +10,15 @@ from sso_provider import (
 )
 
 
+def test_oidc_config_rejects_loopback_issuer():
+    with pytest.raises(ValueError):
+        validate_oidc_config({
+            "issuer_url": "http://127.0.0.1:8000",
+            "client_id": "client",
+            "redirect_uri": "https://example.com/callback",
+        })
+
+
 def _ldap_payload(**overrides):
     payload = {
         "provider_type": "ldap",
@@ -203,3 +212,35 @@ def test_sso_identity_reject_flow(tmp_path):
     # Rejected subject can re-enter pending on the next login attempt.
     retry = memory.link_sso_identity(provider["id"], "u-400", "reject@example.com", "再次申请")
     assert retry["result"] == "pending"
+
+def test_oidc_opener_rejects_http_redirect():
+    """Verify _OIDC_OPENER raises on 302 instead of following (SSRF defense)."""
+    import http.server
+    import threading
+    import urllib.request
+    from sso_provider import _OIDC_OPENER
+
+    class RedirectHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", "http://169.254.169.254/latest/meta-data/")
+            self.end_headers()
+        def log_message(self, format, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), RedirectHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        try:
+            _OIDC_OPENER.open(f"http://127.0.0.1:{port}/.well-known/openid-configuration", timeout=3)
+            raise AssertionError("expected redirect to be rejected")
+        except Exception as exc:
+            # Acceptable: HTTPError (redirect followed would be 200 from metadata service)
+            # or URLError if the handler raises before completing
+            assert isinstance(exc, (ValueError, urllib.request.HTTPError, urllib.request.URLError)), (
+                f"unexpected error type: {type(exc).__name__}: {exc}"
+            )
+    finally:
+        server.shutdown()

@@ -21,13 +21,24 @@ def _owned_run(run_id: str, tenant_id: str):
                  if item.get("run_id") == run_id), None)
 
 
-def _record_agent_eval_usage(response: dict | None, model: str = "") -> None:
+def _record_agent_eval_usage(response: dict | None, model: str = "", *,
+                             tenant_id: str = "local-default", user_id: str = "",
+                             agent_id: str = "") -> None:
     usage = (response or {}).get("usage") or {}
     agent.memory.record_llm_usage_event(
-        tenant_id="local-default", module="agent_eval_judge",
+        tenant_id=tenant_id, user_id=user_id, agent_id=agent_id,
+        module="agent_eval_judge",
         model=(response or {}).get("model") or model,
         prompt_tokens=usage.get("prompt_tokens", 0),
         completion_tokens=usage.get("completion_tokens", 0),
+    )
+
+
+def _agent_eval_usage_sink(principal):
+    """Bind evaluation usage to the authenticated workspace and actor."""
+    return lambda response, model: _record_agent_eval_usage(
+        response, model, tenant_id=principal.tenant_id,
+        user_id=principal.user_id, agent_id=principal.agent_id,
     )
 
 
@@ -176,7 +187,42 @@ def agent_eval_release_readiness(request: Request):
 
     require_platform_permission(request, agent.memory)
     agent.memory.ensure_prompt_assets(PROMPT_ASSET_DEFAULTS)
-    return {"ok": True, "readiness": build_release_readiness(agent.memory, _get_llm_config_card)}
+    import os
+    require_mcp = os.environ.get("SECURENEXUS_REQUIRE_MCP_RELEASE_APPROVAL", "0").lower() in {
+        "1", "true", "yes", "on",
+    }
+    return {"ok": True, "readiness": build_release_readiness(
+        agent.memory, _get_llm_config_card,
+        require_mcp_execution=require_mcp,
+    ), "evidence": agent.memory.get_release_gate_evidence(),
+            "mcp_execution_required": require_mcp}
+
+
+@router.get("/api/agent-eval/release-readiness/evidence")
+def get_release_gate_evidence(request: Request):
+    require_platform_permission(request, agent.memory)
+    return {"items": agent.memory.get_release_gate_evidence()}
+
+
+@router.post("/api/agent-eval/release-readiness/evidence")
+def save_release_gate_evidence(request: Request, data: dict | None = None):
+    from release_readiness import validate_release_gate_evidence
+
+    principal = require_platform_permission(request, agent.memory)
+    payload = data or {}
+    try:
+        key = str(payload.get("key") or "").strip()
+        evidence = validate_release_gate_evidence(key, payload, agent.memory)
+        agent.memory.save_release_gate_evidence(key, evidence, principal.user_id)
+        agent.memory.log_audit(
+            principal.tenant_id, principal.user_id, principal.agent_id,
+            "release_gate.evidence.record", "release_gate", key,
+            {"passed": True, "evidence_key": key},
+        )
+        return {"ok": True, "key": key,
+                "evidence": agent.memory.get_release_gate_evidence(key)}
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
 
 
 @router.post("/api/agent-eval/run")
@@ -211,7 +257,7 @@ def run_agent_eval(request: Request, data: dict | None = None):
         exporter = build_langfuse_exporter(agent.memory.get_langfuse_config(include_secrets=True))
         result = run_agent_evaluation(
             agent, cases, profile=profile, judge=judge, exporter=exporter,
-            repetitions=repetitions, usage_sink=_record_agent_eval_usage,
+            repetitions=repetitions, usage_sink=_agent_eval_usage_sink(principal),
             tenant_id=principal.tenant_id, agent_id=principal.agent_id, requested_by=principal.user_id,
         )
         summary = result.get("summary") or {}
@@ -246,7 +292,7 @@ def rerun_agent_eval_judge(run_id: str, request: Request, data: dict | None = No
         # The browser sends a bounded replay count; keeping the limit optional
         # preserves compatibility with external clients that replay all cases.
         return {"ok": True, **rerun_judge_for_results(
-            agent, run_id, judge, usage_sink=_record_agent_eval_usage,
+            agent, run_id, judge, usage_sink=_agent_eval_usage_sink(principal),
             limit=payload.get("limit"), tenant_id=principal.tenant_id,
         )}
     except ValueError as exc:

@@ -63,6 +63,12 @@ def test_agent_eval_admin_exposes_judge_replay_and_calibration_controls():
         "function checkReleaseReadiness()",
         "/api/agent-eval/release-readiness",
         "发布就绪检查",
+        "function recordReleaseEvidence()",
+        "function renderReleaseReadiness(readiness)",
+        'id="releaseReadinessPanel"',
+        'id="releaseReadinessTable"',
+        "/api/agent-eval/release-readiness/evidence",
+        "录入人工发布证据",
     )
     for fragment in required_fragments:
         assert fragment in html, fragment
@@ -229,6 +235,18 @@ def test_graph_relation_prompt_is_operable_from_prompt_governance_page():
         "runPromptAssetGoldenTest('${escHtml(item.slot)}')",
         "slot !== 'reflection'",
         "该测试只校验输出契约",
+    ):
+        assert fragment in html, fragment
+
+
+def test_runtime_prompt_slots_are_exposed_to_prompt_governance():
+    html = ADMIN_HTML.read_text(encoding="utf-8")
+    for fragment in (
+        "'query_rewrite'",
+        "'jailbreak_detect'",
+        "'semantic_scoring'",
+        "'generation_evidence_search'",
+        "query_rewrite: {standalone_query",
     ):
         assert fragment in html, fragment
 

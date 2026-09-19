@@ -2,18 +2,29 @@
 
 使用示例：
     from deduplicator import Deduplicator
-    from retriever import Retriever
+    from retriever import CyberRetriever
     from odl_parser import OdlParser
 """
 
-from deduplicator import Deduplicator
-from retriever import Retriever
-from odl_parser import OdlParser
-from llm_cleaner import LlmCleaner
-
 __all__ = [
     "Deduplicator",
-    "Retriever",
+    "CyberRetriever",
     "OdlParser",
     "LlmCleaner",
 ]
+
+
+def __getattr__(name):
+    if name == "Deduplicator":
+        from .deduplicator import Deduplicator
+        return Deduplicator
+    if name == "CyberRetriever":
+        from .retriever import CyberRetriever
+        return CyberRetriever
+    if name == "OdlParser":
+        from .odl_parser import OdlParser
+        return OdlParser
+    if name == "LlmCleaner":
+        from .llm_cleaner import LlmCleaner
+        return LlmCleaner
+    raise AttributeError(name)

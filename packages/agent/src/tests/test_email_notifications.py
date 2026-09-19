@@ -46,16 +46,17 @@ def test_notification_email_delivery_is_audited_when_sender_fails(tmp_path, monk
 
 
 def test_notification_policy_controls_real_event_fanout(tmp_path):
-    from memory import ConversationMemory
     memory = ConversationMemory(str(tmp_path / "policy-events.db"))
+    owner = memory.register_user("policy-owner@example.com", "Correct-Horse-30", "Policy Workspace")
+    reviewer = memory.create_workspace_user(owner["tenant_id"], "policy-reviewer@example.com", "Correct-Horse-31", "Reviewer")["id"]
     GovernanceStore(str(memory._db_path)).upsert_notification_policy(
-        "tenant-a", "admin-a", {"name": "eval-only", "event_types": ["eval.completed"],
-                                  "channels": ["in_app"], "recipient_user_ids": ["reviewer-a"],
+        owner["tenant_id"], owner["id"], {"name": "eval-only", "event_types": ["eval.completed"],
+                                  "channels": ["in_app"], "recipient_user_ids": [reviewer],
                                   "cooldown_minutes": 60},
     )
-    publish_system_event(memory, None, "eval.completed", {"tenant_id": "tenant-a"})
-    publish_system_event(memory, None, "eval.completed", {"tenant_id": "tenant-a"})
-    items = memory.list_notifications("tenant-a", "reviewer-a")
+    publish_system_event(memory, None, "eval.completed", {"tenant_id": owner["tenant_id"]})
+    publish_system_event(memory, None, "eval.completed", {"tenant_id": owner["tenant_id"]})
+    items = memory.list_notifications(owner["tenant_id"], reviewer)
     assert len(items) == 1
     assert items[0]["event_type"] == "eval.completed"
 

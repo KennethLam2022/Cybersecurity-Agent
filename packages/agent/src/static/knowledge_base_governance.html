@@ -61,7 +61,7 @@
 </main>
 <script>
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const headers = () => { const csrf = (document.cookie.match(/(?:^|; )securenexus_csrf=([^;]+)/) || [])[1]; return csrf ? {'X-CSRF-Token': decodeURIComponent(csrf)} : {}; };
+  const headers = () => { const csrf = (document.cookie.match(/(?:^|; )securenexus_admin_csrf=([^;]+)/) || [])[1]; return csrf ? {'X-CSRF-Token': decodeURIComponent(csrf)} : {}; };
   let selected = null;
   async function api(url, options={}) {
     options.headers = {...headers(), ...(options.headers || {})};

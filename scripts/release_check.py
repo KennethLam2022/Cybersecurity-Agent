@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 
@@ -20,13 +21,16 @@ EXTERNAL_CONFIRMATIONS = (
     "Real-model baseline has been approved by an administrator.",
     "Human review sample is sufficient for Judge calibration.",
     "Langfuse data-transfer scope is approved when Langfuse is enabled.",
+    "MCP production execution rehearsal has been approved when MCP execution is enabled.",
 )
 
 
 def main() -> int:
+    env = os.environ.copy()
+    env["CI"] = "true"
     for name, command in LOCAL_CHECKS:
         print(f"\n==> {name}", flush=True)
-        completed = subprocess.run(command, cwd=ROOT, check=False)
+        completed = subprocess.run(command, cwd=ROOT, env=env, check=False)
         if completed.returncode:
             print(f"Release check failed: {name}", file=sys.stderr)
             return completed.returncode

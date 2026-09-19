@@ -138,7 +138,7 @@
   </div>
 
   <div class="intro-banner">
-    <div class="title">🔧 8 个独立后端模型</div>
+    <div class="title">🔧 9 个独立后端模型</div>
     <div class="desc">
       每个后端模块可独立选择不同平台提供商。选中「已保存方案」自动填充，也可手动修改后单独保存。
       API Key 加密存储，支持逐个测试连接。
@@ -153,7 +153,7 @@
     <button class="btn success" onclick="toast('正在测试全部连接…')">🔗 全部测试连接</button>
     <button class="btn outline" onclick="resetAll()">↩ 恢复默认</button>
     <div class="sep"></div>
-    <button class="btn restart" onclick="restartServer()">🔄 重启服务</button>
+    <button class="btn restart" onclick="restartServer()">↻ 重新加载配置</button>
     <div class="sep"></div>
     <span class="hint">API Key 将加密存储，不会明文展示</span>
   </div>
@@ -181,6 +181,11 @@
         <div class="step-num blue">④</div>
         <div class="step-name">熔断兜底 LLM</div>
         <div class="step-desc">主 LLM 连续失败<br>自动切换保障服务</div>
+      </div>
+      <div class="flow-step">
+        <div class="step-num blue">⑤</div>
+        <div class="step-name">反思复核 LLM</div>
+        <div class="step-desc">回答生成后<br>复核依据与安全边界</div>
       </div>
       <div class="flow-step">
         <div class="step-num blue">⑤</div>
@@ -213,7 +218,7 @@
 (function() {
   'use strict';
 
-  // ─── 8个卡片定义（启动时从 API 加载已保存配置）────────────────
+  // ─── 9个卡片定义（启动时从 API 加载已保存配置）────────────────
   const PROVIDER_MODELS = {
     'DeepSeek': ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'],
     '硅基流动 (SiliconFlow)': ['Qwen/Qwen3-8B', 'deepseek-v4-flash', 'deepseek-chat'],
@@ -248,11 +253,12 @@
     { id: 'jailbreak', num: '②', icon: '🛡️', color: '#ff3b30', bg: '#ff3b3012', name: '越狱检测 LLM', desc: '检测模型回答是否违规 — 回答生成后独立校验', hint: '推荐: openai/gpt-oss-120b:free（OpenRouter，成本极低）' },
     { id: 'scoring', num: '③', icon: '⭐', color: '#ff6b35', bg: '#ff6b3512', name: '语义评分 LLM', desc: 'Agent 回复后评分 — 分析用户态度，评估回答质量（1-5分）', hint: '推荐: openai/gpt-oss-120b:free（OpenRouter）' },
     { id: 'fallback', num: '④', icon: '🔋', color: '#34c759', bg: '#34c75912', name: '熔断兜底 LLM', desc: '主 LLM 连续失败时自动切换 — 保障服务不中断', hint: '推荐: qwen2.5:7b（Ollama 本地，稳定可靠）' },
-    { id: 'chunk', num: '⑤', icon: '✂️', color: '#5856d6', bg: '#5856d612', name: '文档清洗/切片 LLM', desc: '文档入库时 LLM 清洗（切片为规则切割无需 LLM）', hint: '推荐: Pro/MiniMaxAI/MiniMax-M2.5（硅基流动，清洗效果好）' },
-    { id: 'promptEval', num: '⑥', icon: '🧪', color: '#af52de', bg: '#af52de12', name: '后端评测 LLM', desc: 'Prompt 测试 + 综合质量评测时调用 — 生成测试回复并执行评估', hint: '推荐: deepseek-chat（评测场景需要较高推理能力）' },
+    { id: 'reflection', num: '⑤', icon: '🧭', color: '#00a1d6', bg: '#00a1d612', name: '反思复核 LLM', desc: '最终回答前复核事实依据、完整度和安全边界', hint: '未配置时自动回退生成对话模型' },
+    { id: 'chunk', num: '⑥', icon: '✂️', color: '#5856d6', bg: '#5856d612', name: '文档清洗/切片 LLM', desc: '文档入库时 LLM 清洗（切片为规则切割无需 LLM）', hint: '推荐: Pro/MiniMaxAI/MiniMax-M2.5（硅基流动，清洗效果好）' },
+    { id: 'promptEval', num: '⑦', icon: '🧪', color: '#af52de', bg: '#af52de12', name: '后端评测 LLM', desc: 'Prompt 测试 + 综合质量评测时调用 — 生成测试回复并执行评估', hint: '推荐: deepseek-chat（评测场景需要较高推理能力）' },
     // ── 非 chat 类型（专用 API）──
-    { id: 'embedding', num: '⑦', icon: '📐', color: '#5e5ce6', bg: '#5e5ce612', name: 'Embedding 模型', desc: '检索第一步 — 将查询和文档向量化，支持 OpenAI 兼容 Embedding API', hint: '推荐: quentinz/bge-small-zh-v1.5（Ollama 本地部署）' },
-    { id: 'reranker', num: '⑧', icon: '🔍', color: '#ff9500', bg: '#ff950012', name: 'Reranker', desc: '检索后重排序 — 使用专用 rerank API 对候选结果精排', hint: '推荐: BAAI/bge-reranker-v2-m3（硅基流动）' },
+    { id: 'embedding', num: '⑧', icon: '📐', color: '#5e5ce6', bg: '#5e5ce612', name: 'Embedding 模型', desc: '检索第一步 — 将查询和文档向量化，支持 OpenAI 兼容 Embedding API', hint: '推荐: quentinz/bge-small-zh-v1.5（Ollama 本地部署）' },
+    { id: 'reranker', num: '⑨', icon: '🔍', color: '#ff9500', bg: '#ff950012', name: 'Reranker', desc: '检索后重排序 — 使用专用 rerank API 对候选结果精排', hint: '推荐: BAAI/bge-reranker-v2-m3（硅基流动）' },
   ];
 
   // 运行时状态：从 API 加载的已保存配置
@@ -265,6 +271,7 @@
     jailbreak: { provider: 'OpenRouter',             model: 'openai/gpt-oss-120b:free',                      baseUrl: 'https://openrouter.ai/api/v1' },
     scoring:   { provider: 'OpenRouter',             model: 'openai/gpt-oss-120b:free',                      baseUrl: 'https://openrouter.ai/api/v1' },
     fallback:  { provider: '本地 Ollama',             model: 'qwen2.5:7b',                                   baseUrl: 'http://localhost:11434/v1' },
+    reflection:{ provider: 'DeepSeek',               model: 'deepseek-v4-flash',                             baseUrl: 'https://api.deepseek.com' },
     chunk:     { provider: '硅基流动 (SiliconFlow)',  model: 'Pro/MiniMaxAI/MiniMax-M2.5',                    baseUrl: 'https://api.siliconflow.cn/v1' },
     promptEval:{ provider: 'DeepSeek',               model: 'deepseek-chat',                                baseUrl: 'https://api.deepseek.com' },
     embedding: { provider: '本地 Ollama',             model: 'quentinz/bge-small-zh-v1.5',                   baseUrl: 'http://localhost:11434' },
@@ -643,20 +650,16 @@
   };
 
   window.restartServer = async function() {
-    if (!confirm('确定重启服务？重启后配置即时生效，当前所有在线对话将中断。')) return;
     const btn = document.querySelector('.global-actions .btn.restart');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ 重启中…'; }
-    toast('⏳ 正在重启服务…');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 验证中…'; }
+    toast('⏳ 正在重新加载并验证配置…');
     try {
-      await fetch('/api/llm/configs/restart', { method: 'POST' });
-      setInterval(() => {
-        fetch('/admin/model-config', { method: 'HEAD' })
-          .then(() => { toast('✅ 服务已重启完成'); if (btn) { btn.disabled = false; btn.textContent = '🔄 重启服务'; } })
-          .catch(() => { /* 还没起来，继续等 */ });
-      }, 2000);
+      await loadConfigs();
+      toast('✅ 配置已热更新，无需重启服务');
     } catch (e) {
-      toast('❌ 重启请求失败: ' + (e.message || '未知错误'));
-      if (btn) { btn.disabled = false; btn.textContent = '🔄 重启服务'; }
+      toast('❌ 配置验证失败: ' + (e.message || '未知错误'));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '↻ 重新加载配置'; }
     }
   };
 
@@ -726,7 +729,7 @@
   const _origFetch = window.fetch;
   window.fetch = function(input, init) {
     init = init || {};
-    const csrf = (document.cookie.match(/(?:^|; )securenexus_csrf=([^;]+)/) || [])[1];
+    const csrf = (document.cookie.match(/(?:^|; )securenexus_admin_csrf=([^;]+)/) || [])[1];
     if (csrf) { init.headers = init.headers || {}; if (init.headers instanceof Headers) init.headers.set('X-CSRF-Token', decodeURIComponent(csrf)); else init.headers['X-CSRF-Token'] = decodeURIComponent(csrf); }
     init.credentials = 'same-origin';
     return _origFetch(input, init).then(function(resp) {

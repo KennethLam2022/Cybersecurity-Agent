@@ -2,6 +2,7 @@ import os
 import json
 import time
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 from openai import OpenAI
@@ -10,6 +11,24 @@ from memory import get_llm_config_card
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def validate_cleaned_text(raw_text: str, cleaned_text: str) -> dict:
+    """Detect loss or mutation of identifiers that must survive cleaning."""
+    raw = str(raw_text or "")
+    cleaned = str(cleaned_text or "")
+    identifiers = sorted(set(re.findall(
+        r"(?:GB(?:/T|_T)?|YD(?:/T|_T)?|JR(?:/T|_T)?|GM(?:/T|_T)?)\s*[A-Z]?\s*\d+(?:[.-]\d+)*(?:[-_]\d{4})?|第[一二三四五六七八九十百千万零〇两\d]+条|\b(?:19|20)\d{2}年\d{1,2}月\d{1,2}日",
+        raw,
+        flags=re.I,
+    )))
+    missing = [item for item in identifiers if item not in cleaned]
+    raw_headings = len(re.findall(r"(?m)^#{1,6}\s+\S+", raw))
+    clean_headings = len(re.findall(r"(?m)^#{1,6}\s+\S+", cleaned))
+    valid = bool(cleaned.strip()) and not missing and clean_headings >= min(raw_headings, 1)
+    return {"valid": valid, "identifiers": identifiers, "missing_identifiers": missing,
+            "raw_headings": raw_headings, "cleaned_headings": clean_headings,
+            "raw_characters": len(raw), "cleaned_characters": len(cleaned)}
 
 
 class LlmCleaner:
@@ -92,7 +111,6 @@ class LlmCleaner:
         start = time.time()
 
         max_retries = 5
-        last_error = None
         for attempt in range(max_retries):
             try:
                 response = self.client.chat.completions.create(
@@ -106,10 +124,8 @@ class LlmCleaner:
                     timeout=300,
                     stream=False,
                 )
-                last_error = None
                 break
             except Exception as e:
-                last_error = e
                 status = getattr(e, 'status_code', 0) or (
                     e.http_status if hasattr(e, 'http_status') else 0)
                 if status in (429, 500, 503) and attempt < max_retries - 1:
@@ -122,6 +138,10 @@ class LlmCleaner:
 
         cleaned_text = response.choices[0].message.content
         elapsed = time.time() - start
+        validation = validate_cleaned_text(raw_text, cleaned_text)
+        if not validation["valid"]:
+            logger.error("LLM 清洗保真校验失败: %s", validation)
+            raise ValueError("清洗结果未通过原文关键字段保真校验")
 
         logger.info(f"LLM 清洗完成: {file_id} ({elapsed:.1f}s, {len(cleaned_text)} 字符)")
         logger.info(
@@ -135,6 +155,7 @@ class LlmCleaner:
                 "completion": response.usage.completion_tokens,
             },
             "clean_time_seconds": round(elapsed, 2),
+            "validation": validation,
         }
 
     def clean_and_save(self, raw_text: str, file_id: str, output_dir: str):

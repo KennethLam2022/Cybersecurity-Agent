@@ -25,10 +25,11 @@ from routes_api_governance import router as api_p8_router
 from routes_admin_pages import router as admin_pages_router
 from auth import is_admin_route, is_platform_only_admin_route
 from app_state import agent
-from identity import principal_from_request, has_permission
+from identity import (ADMIN_CSRF_COOKIE, ADMIN_SESSION_COOKIE, FRONT_SESSION_COOKIE,
+                      has_permission, principal_from_request, uses_admin_session)
 import logging
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -45,8 +46,8 @@ def _validate_security_configuration() -> None:
         raise RuntimeError("生产环境不得启用 ALLOW_LEGACY_LOCAL_WORKSPACE")
 
 
-def _csrf_is_valid(request: Request) -> bool:
-    expected = request.cookies.get("securenexus_csrf", "")
+def _csrf_is_valid(request: Request, admin_context: bool = False) -> bool:
+    expected = request.cookies.get(ADMIN_CSRF_COOKIE if admin_context else "securenexus_csrf", "")
     supplied = request.headers.get("X-CSRF-Token", "")
     return bool(expected and supplied and secrets.compare_digest(expected, supplied))
 
@@ -59,6 +60,30 @@ def _wants_html(request: Request) -> bool:
 def _login_redirect(path: str) -> RedirectResponse:
     login_path = "/admin/login" if path.startswith("/admin") else "/login"
     return RedirectResponse(url=login_path + "?next=" + urllib.parse.quote(path, safe="/?=&"), status_code=303)
+
+
+# These pages load inside admin tabs. Redirecting them to chat makes the frame look
+# like an unrelated conversation, so return an explicit embedded permission notice.
+_EMBEDDED_PLATFORM_ADMIN_PAGES = {
+    "/admin/model-config",
+    "/admin/langfuse-config",
+    "/admin/sso-config",
+    "/admin/email-notifications",
+}
+
+
+def _embedded_admin_forbidden(path: str) -> HTMLResponse | None:
+    if path not in _EMBEDDED_PLATFORM_ADMIN_PAGES:
+        return None
+    return HTMLResponse(
+        '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
+        '<title>权限不足</title>'
+        '<style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:70vh;color:#42526b}'
+        'div{max-width:32rem;text-align:center}h1{font-size:1.1rem;margin:0 0 .5rem}'
+        'p{font-size:.875rem;line-height:1.6;margin:0}</style>'
+        '<div><h1>权限不足</h1><p>该配置仅限平台管理员访问。请使用平台管理员账号登录。</p></div></html>',
+        status_code=403,
+    )
 
 _BASE = Path(__file__).parent
 _STATIC = _BASE / "static"
@@ -79,9 +104,10 @@ app.include_router(api_agent_eval_router)
 async def auth_middleware(request: Request, call_next):
     """Authenticate administration through individual user sessions and RBAC."""
     unsafe = request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
-    cookie_session = bool(request.cookies.get("securenexus_session"))
+    admin_context = uses_admin_session(request)
+    cookie_session = bool(request.cookies.get(ADMIN_SESSION_COOKIE if admin_context else FRONT_SESSION_COOKIE))
     csrf_exempt = request.url.path.startswith(("/api/auth/", "/api/shared/", "/shared/"))
-    if unsafe and cookie_session and not csrf_exempt and not _csrf_is_valid(request):
+    if unsafe and cookie_session and not csrf_exempt and not _csrf_is_valid(request, admin_context):
         return JSONResponse(status_code=403, content={"detail": "CSRF 校验失败"})
     if is_admin_route(request.url.path):
         try:
@@ -101,6 +127,9 @@ async def auth_middleware(request: Request, call_next):
                     raise PermissionError("platform administrator required")
             except Exception:
                 if _wants_html(request):
+                    embedded_forbidden = _embedded_admin_forbidden(request.url.path)
+                    if embedded_forbidden is not None:
+                        return embedded_forbidden
                     return RedirectResponse(url="/chat?forbidden=admin", status_code=303)
                 return JSONResponse(
                     status_code=403,

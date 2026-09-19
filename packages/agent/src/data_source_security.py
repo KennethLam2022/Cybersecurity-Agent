@@ -18,7 +18,8 @@ _WRITE_SQL = re.compile(
 _ALLOWED_TYPES = {"local_upload", "url", "web_directory", "database_readonly", "excel_csv"}
 
 
-def _validate_remote_url(value: str) -> str:
+def validate_remote_url(value: str) -> str:
+    """Return a user-facing validation error, or an empty string when allowed."""
     parsed = urlparse(str(value or "").strip())
     if parsed.scheme not in {"https", "http"}:
         return "远程数据源只允许 HTTP/HTTPS"
@@ -44,6 +45,10 @@ def _validate_remote_url(value: str) -> str:
             # Unresolved public hosts are left for the worker to report clearly.
             pass
     return ""
+
+
+# Backward-compatible name used by existing callers and tests.
+_validate_remote_url = validate_remote_url
 
 
 def validate_data_source_config(source_type: str, endpoint: str = "",

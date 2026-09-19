@@ -5,9 +5,11 @@ import json
 import logging
 import time
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import urljoin
 
 import requests
+
+from data_source_security import validate_remote_url
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +25,27 @@ def _signature(secret: str, event_id: str, body: bytes) -> str:
     return "sha256=" + hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
-def _safe_url(url: str) -> bool:
-    parsed = urlparse(url)
-    return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+def _post_webhook(url: str, body: bytes, secret: str, event_id: str, timeout: float):
+    """POST once without automatic redirects; validate every explicit hop."""
+    current_url = url
+    for _hop in range(6):
+        error = validate_remote_url(current_url)
+        if error:
+            raise ValueError(error)
+        response = requests.post(
+            current_url, data=body, timeout=timeout, allow_redirects=False,
+            headers={"Content-Type": "application/json", "User-Agent": "SecureNexus-Webhook",
+                     "X-SecureNexus-Event-ID": event_id,
+                     "X-SecureNexus-Signature": _signature(secret, event_id, body)},
+        )
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("Location", "")
+            if response.status_code not in {307, 308} or not location:
+                raise ValueError(f"Webhook 不允许 HTTP {response.status_code} 重定向")
+            current_url = urljoin(current_url, location)
+            continue
+        return response
+    raise ValueError("Webhook 重定向次数过多")
 
 
 def dispatch_webhook_event(memory, event_type: str, data: dict, tenant_id: str = "",
@@ -38,7 +58,12 @@ def dispatch_webhook_event(memory, event_type: str, data: dict, tenant_id: str =
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     results = []
     for sub in memory.list_webhook_subscriptions(tenant_id or None, event_type):
-        if not sub.get("enabled") or not _safe_url(sub["url"]):
+        url_error = validate_remote_url(sub["url"])
+        if not sub.get("enabled") or url_error:
+            if url_error:
+                memory.record_webhook_delivery(
+                    sub["id"], event_id, event_type, payload, 1, None, url_error, False,
+                )
             continue
         secret = memory.get_webhook_secret(sub["id"])
         if not secret:
@@ -50,10 +75,9 @@ def dispatch_webhook_event(memory, event_type: str, data: dict, tenant_id: str =
         status_code = None
         for attempt in range(1, max_attempts + 1):
             try:
-                response = requests.post(
-                    sub["url"], data=body, timeout=float(sub.get("timeout_seconds") or 10),
-                    headers={"Content-Type": "application/json", "User-Agent": "SecureNexus-Webhook",
-                             "X-SecureNexus-Event-ID": event_id, "X-SecureNexus-Signature": _signature(secret, event_id, body)},
+                response = _post_webhook(
+                    sub["url"], body, secret, event_id,
+                    float(sub.get("timeout_seconds") or 10),
                 )
                 status_code = response.status_code
                 delivered = 200 <= response.status_code < 300

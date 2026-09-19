@@ -5,7 +5,7 @@ from typing import Any
 
 
 REQUIRED_METRICS = ("context_precision", "context_recall", "faithfulness", "relevancy", "hallucination")
-DEFAULT_THRESHOLDS = {"faithfulness_min": 0.5, "hallucination_max": 0.5}
+DEFAULT_THRESHOLDS = {"faithfulness_min": 0.5, "no_hallucination_min": 0.5}
 
 
 def normalize_metric_result(value: Any, evaluator: str) -> dict[str, Any]:
@@ -48,9 +48,9 @@ def evaluate_e2e_gates(result: dict[str, Any], thresholds: dict[str, float] | No
         "all_required_metrics_present": all(_score(scores, name) is not None for name in REQUIRED_METRICS),
     }
     faithfulness = _score(scores, "faithfulness")
-    hallucination = _score(scores, "hallucination")
+    no_hallucination = _score(scores, "hallucination")
     checks["faithfulness_above_minimum"] = faithfulness is not None and faithfulness >= limits["faithfulness_min"]
-    checks["hallucination_below_maximum"] = hallucination is not None and hallucination <= limits["hallucination_max"]
+    checks["no_hallucination_above_minimum"] = no_hallucination is not None and no_hallucination >= limits["no_hallucination_min"]
     failed = [name for name, passed in checks.items() if not passed]
     return {"passed": not failed, "checks": checks, "failed_checks": failed, "thresholds": limits}
 

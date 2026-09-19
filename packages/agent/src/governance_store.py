@@ -97,6 +97,21 @@ class GovernanceStore:
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
+    @staticmethod
+    def _validate_active_tenant_users(conn, tenant_id: str, user_ids):
+        """Reject assignments and notification targets outside the organization."""
+        normalized = {str(user_id or "").strip() for user_id in (user_ids or []) if str(user_id or "").strip()}
+        if not normalized:
+            return
+        placeholders = ",".join("?" for _ in normalized)
+        rows = conn.execute(
+            f"SELECT user_id FROM organization_memberships WHERE tenant_id=? AND status='active' AND user_id IN ({placeholders})",
+            [tenant_id, *sorted(normalized)],
+        ).fetchall()
+        valid = {str(row[0]) for row in rows}
+        if normalized - valid:
+            raise ValueError("指定的用户不存在、已停用或不属于当前工作区")
+
     def _init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript("""
@@ -464,6 +479,9 @@ class GovernanceStore:
             raise ValueError("SLA 时长必须在 1-8760 小时之间")
         task_id, now = _new_id("task"), _utc_now()
         with self._connect() as conn:
+            self._validate_active_tenant_users(
+                conn, tenant_id, [assignee_user_id, *(collaborator_user_ids or [])],
+            )
             conn.execute("INSERT INTO operations_tasks (id, tenant_id, source_type, source_id, title, description, priority, assignee_user_id, collaborator_user_ids, department, due_at, sla_hours, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                          (task_id, tenant_id, str(source_type)[:80], str(source_id)[:160], str(title)[:200], str(description)[:2000], priority, str(assignee_user_id)[:120], json.dumps(collaborator_user_ids or []), str(department)[:120], due_at, sla_hours, created_by, now, now))
             self._write_audit(conn, tenant_id, created_by, "admin", "task.create", "operations_task", task_id, {"source_type": source_type, "priority": priority})
@@ -535,6 +553,10 @@ class GovernanceStore:
         if updates.get("status") in {"done", "cancelled"}: fields.append("closed_at=?"); params.append(_utc_now())
         fields.append("updated_at=?"); params.append(_utc_now()); params.extend([task_id, tenant_id])
         with self._connect() as conn:
+            self._validate_active_tenant_users(
+                conn, tenant_id,
+                [updates.get("assignee_user_id", ""), *(changes.get("collaborator_user_ids") or [])],
+            )
             cur = conn.execute(f"UPDATE operations_tasks SET {', '.join(fields)} WHERE id=? AND tenant_id=?", params)
             if not cur.rowcount: return None
             self._write_audit(conn, tenant_id, actor_user_id, "admin", "task.update", "operations_task", task_id, {"fields": sorted(updates)})
@@ -587,6 +609,7 @@ class GovernanceStore:
         cooldown = max(0, min(int(data.get("cooldown_minutes", 30)), 10080))
         now = _utc_now()
         with self._connect() as conn:
+            self._validate_active_tenant_users(conn, tenant_id, data.get("recipient_user_ids") or [])
             conn.execute("INSERT INTO notification_policies (id, tenant_id, name, event_types, channels, recipient_user_ids, min_severity, quiet_start_hour, quiet_end_hour, cooldown_minutes, enabled, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, name) DO UPDATE SET event_types=excluded.event_types, channels=excluded.channels, recipient_user_ids=excluded.recipient_user_ids, min_severity=excluded.min_severity, quiet_start_hour=excluded.quiet_start_hour, quiet_end_hour=excluded.quiet_end_hour, cooldown_minutes=excluded.cooldown_minutes, enabled=excluded.enabled, updated_at=excluded.updated_at",
                          (_new_id("npol"), tenant_id, name, json.dumps(events), json.dumps(channels), json.dumps(data.get("recipient_user_ids") or []), str(data.get("min_severity") or "info"), quiet_start, quiet_end, cooldown, int(bool(data.get("enabled", True))), actor_user_id, now, now))
             row = conn.execute("SELECT * FROM notification_policies WHERE tenant_id=? AND name=?", (tenant_id, name)).fetchone()
@@ -802,8 +825,11 @@ class GovernanceStore:
         with self._connect() as conn:
             self._secret_row(conn, tenant_id, secret_id)
             rows = conn.execute(
-                "SELECT id, secret_id, version, value_hash, created_by, created_at, reason, revoked_at FROM p8_secret_versions WHERE secret_id=? ORDER BY version DESC",
-                (secret_id,),
+                "SELECT v.id, v.secret_id, v.version, v.value_hash, v.created_by, v.created_at, v.reason, v.revoked_at "
+                "FROM p8_secret_versions v "
+                "JOIN p8_secret_refs s ON s.id = v.secret_id "
+                "WHERE v.secret_id=? AND s.tenant_id=? ORDER BY v.version DESC",
+                (secret_id, tenant_id),
             ).fetchall()
             return [dict(row) for row in rows]
 
@@ -913,7 +939,11 @@ class GovernanceStore:
         with self._connect() as conn:
             server = conn.execute("SELECT status FROM p8_mcp_servers WHERE id=? AND tenant_id=?", (server_id, tenant_id)).fetchone()
             policy = conn.execute("SELECT * FROM p8_mcp_tool_policies WHERE server_id=? AND tenant_id=? AND tool_name=?", (server_id, tenant_id, tool_name)).fetchone()
-            allowed = bool(server and server["status"] == "enabled" and policy and policy["enabled"])
+            agent = conn.execute(
+                "SELECT 1 FROM agents WHERE id=? AND tenant_id=? AND status='active'",
+                (str(agent_id or ""), tenant_id),
+            ).fetchone()
+            allowed = bool(agent and server and server["status"] == "enabled" and policy and policy["enabled"])
             deny = set(json.loads(policy["param_denylist"] or "[]")) if policy else set()
             allow = set(json.loads(policy["param_allowlist"] or "[]")) if policy else set()
             roles = set(json.loads(policy["allowed_roles"] or "[]")) if policy else set()

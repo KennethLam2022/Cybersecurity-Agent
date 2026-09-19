@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from security_taxonomy import category_aliases, known_categories, normalize_category
+from retrieval_text import extract_retrieval_identifiers
 
 
 @dataclass
@@ -109,6 +110,10 @@ def merge_filter_specs(*specs: MetadataFilterSpec | dict | None) -> MetadataFilt
 def infer_metadata_filter_from_query(query: str) -> MetadataFilterSpec:
     q = query or ""
     spec = MetadataFilterSpec()
+    identifiers = extract_retrieval_identifiers(q)
+    for standard in identifiers.get("standards", []):
+        spec.doc_ids.append(standard)
+        spec.file_name_contains.append(standard)
 
     doc_matches = re.findall(
         r"\b(GB/T|GB|YD/T|YD|JR/T|JR|GM/T|GM)\s*[- ]?\s*(\d{3,6})(?:[-—–](\d{4}))?",
@@ -162,7 +167,11 @@ def infer_metadata_filter_from_query(query: str) -> MetadataFilterSpec:
 
 def _matches_any_contains(value: str, needles: list[str]) -> bool:
     low = str(value or "").lower()
-    return any(str(n).lower() in low for n in needles)
+    compact_value = _compact(value)
+    return any(
+        str(n).lower() in low or _compact(n) in compact_value
+        for n in needles
+    )
 
 
 def apply_metadata_filter(docs: list[dict[str, Any]], spec: MetadataFilterSpec | dict | None) -> list[dict[str, Any]]:

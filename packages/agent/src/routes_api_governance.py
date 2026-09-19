@@ -20,7 +20,7 @@ router = APIRouter()
 
 @router.get("/api/admin/roles/permissions")
 def admin_role_permission_catalog(request: Request):
-    principal = _principal(request, "tenant.manage")
+    _principal(request, "tenant.manage")
     return JSONResponse({"items": agent.memory.list_permission_catalog()})
 
 

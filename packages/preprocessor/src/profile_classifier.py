@@ -116,7 +116,36 @@ def _normalize_text(*parts: str) -> str:
     return " ".join(p for p in (str(x or "").strip() for x in parts) if p).lower()
 
 
-def _score_profile(text: str, profile: dict[str, Any]) -> tuple[int, list[str]]:
+# Industry-specific standard prefixes (e.g. YD/T for telecom, JR/T for finance).
+_INDUSTRY_STANDARD_PREFIXES: dict[str, str] = {
+    "yd": "industry/telecom",
+    "jr": "industry/finance",
+    "ga": "industry/government",
+    "ws": "industry/healthcare",
+    "dl": "industry/energy",
+}
+# National / international general standards default to the general profile
+# regardless of body-content keyword matches.
+_GENERAL_STANDARD_PATTERN = re.compile(
+    r"(?:GB[\s_/]*[TZ]?|ISO[\s_/]*(?:IEC)?|IEC|TC260)[\s_/]*\d{3,6}",
+    re.IGNORECASE,
+)
+_INDUSTRY_STANDARD_PATTERN = re.compile(
+    r"(?:YD|JR|GA|WS|DL)(?:\s*/\s*T)?[\s_/]*\d{3,6}",
+    re.IGNORECASE,
+)
+
+
+def _detect_standard_profile(filename: str) -> str | None:
+    """Return an industry profile if the filename carries an industry standard prefix."""
+    normalized = filename.strip().lower()
+    for prefix, profile_id in _INDUSTRY_STANDARD_PREFIXES.items():
+        if normalized.startswith(prefix) or ("/" + prefix + "/") in normalized:
+            return profile_id
+    return None
+
+
+def _score_profile(text: str, profile: dict[str, Any], *, weight: int = 2) -> tuple[int, list[str]]:
     score = 0
     hits: list[str] = []
     for kw in profile.get("keywords", []):
@@ -124,15 +153,14 @@ def _score_profile(text: str, profile: dict[str, Any]) -> tuple[int, list[str]]:
         if not keyword:
             continue
         if keyword.lower() in text:
-            score += 2
+            score += weight
             hits.append(keyword)
-    # 行业特征补充词也由 profile 注册表维护，避免新增行业时修改主流程。
     for alias in profile.get("classifier_aliases", []):
         alias = str(alias or "").strip().lower()
         if not alias:
             continue
         if alias in text:
-            score += 1
+            score += max(1, weight // 2)
             hits.append(alias)
     return score, hits
 
@@ -144,22 +172,69 @@ def suggest_document_profile(
     text_preview: str = "",
 ) -> dict[str, Any]:
     """Return a suggested profile for manual confirmation."""
-    text = _normalize_text(filename, category_hint, text_preview)
+    # 1. Industry standard prefix (YD/T, JR/T etc.) is the strongest signal.
+    industry_from_prefix = _detect_standard_profile(filename)
+    if industry_from_prefix:
+        for profile in available_profiles():
+            if profile.get("profile") == industry_from_prefix:
+                return {
+                    "profile": industry_from_prefix,
+                    "scope": profile.get("scope", "industry"),
+                    "industry": profile.get("industry", ""),
+                    "category": profile.get("category", "通用"),
+                    "label": profile.get("label", industry_from_prefix),
+                    "confidence": 0.95,
+                    "reason": f"行业标准前缀命中: {filename[:20]}",
+                    "review_required": False,
+                    "registry_version": load_profile_registry().get("version", ""),
+                }
+
+    # 2. General national/international standard numbers default to general;
+    #    body-content keywords in universal standards are coincidental, not
+    #    evidence of industry specificity.
+    if _GENERAL_STANDARD_PATTERN.search(filename):
+        general = next((p for p in available_profiles() if p.get("profile") == "general"), {})
+        fallback_category = str(category_hint or general.get("category") or "通用")
+        return {
+            "profile": "general",
+            "scope": "general",
+            "industry": "",
+            "category": fallback_category,
+            "label": general.get("label", "网络安全通用主干"),
+            "confidence": 0.92,
+            "reason": "GB/T / ISO / TC260 国标或国际标准，默认归通用主干",
+            "review_required": False,
+            "registry_version": load_profile_registry().get("version", ""),
+        }
+
+    # 3. For non-standard documents, score filename and content separately.
+    #    A keyword in the filename is a strong signal; the same keyword in a
+    #    6000-char preview is weak (universal standards discuss every domain).
+    filename_text = _normalize_text(filename, category_hint)
+    content_text = _normalize_text(text_preview)
     best: dict[str, Any] | None = None
     best_score = 0
+    best_fn_score = 0
     best_hits: list[str] = []
 
     for profile in available_profiles():
         if profile.get("profile") == "general":
             continue
-        score, hits = _score_profile(text, profile)
-        if score > best_score:
+        fn_score, fn_hits = _score_profile(filename_text, profile, weight=3)
+        ct_score, ct_hits = _score_profile(content_text, profile, weight=1)
+        total = fn_score + ct_score
+        if total > best_score:
             best = profile
-            best_score = score
-            best_hits = hits
+            best_score = total
+            best_fn_score = fn_score
+            best_hits = fn_hits[:3] + ct_hits[:2]
 
-    if best and best_score > 0:
-        confidence = min(0.55 + best_score * 0.12, 0.98)
+    # Require at least one filename-level hit OR three content-level hits
+    # before classifying as an industry-specific document.
+    if best and best_score >= 3:
+        # Filename hits indicate the document identity; content hits alone
+        # are weak evidence.  Weight them separately for confidence.
+        confidence = min(0.55 + best_fn_score * 0.15 + (best_score - best_fn_score) * 0.05, 0.95)
         return {
             "profile": best.get("profile", "general"),
             "scope": best.get("scope", "industry"),

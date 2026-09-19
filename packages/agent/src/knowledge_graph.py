@@ -14,6 +14,32 @@ _CLAUSE_CONFLICT_MARKERS = {
     "require": re.compile(r"(?:应当|必须|应|需要|可以)"),
 }
 _SEMANTIC_PREDICATES = {"references", "requires", "prohibits", "applies_to", "implements", "governs"}
+_STRUCTURAL_PREDICATES = {
+    "contains_clause",
+    "has_clause",
+}
+
+
+def is_semantic_graph_relation(relation: dict) -> bool:
+    """Return whether a relation belongs in the business knowledge network.
+
+    Clause containment and same-document co-occurrence remain useful for
+    review and evidence tracing, but they are document structure rather than
+    knowledge.  Keep this rule centralized so SQLite and Neo4j expose the
+    same network semantics.
+    """
+    predicate = str(relation.get("predicate") or "").strip().lower()
+    properties = relation.get("properties") or {}
+    extraction = str(properties.get("extraction") or "").strip().lower()
+    if predicate in _STRUCTURAL_PREDICATES:
+        return False
+    if extraction == "same_document_cooccurrence":
+        return False
+    return predicate in _SEMANTIC_PREDICATES or predicate in {
+        "mentions",
+        "mentions_penalty",
+        "references_standard",
+    }
 
 
 def _read_document_text(document: dict) -> str:
@@ -340,7 +366,6 @@ def collect_graph_evidence(memory, tenant_id: str, knowledge_base_id: str,
     if not authorized_ids or not knowledge_base_id:
         return empty
 
-    query_tokens = _graph_query_tokens(query)
     entities = memory.list_graph_entities(tenant_id, knowledge_base_id, "approved", limit=500)
     matched = [entity for entity in entities
                if _graph_names_match(query, entity.get("name", ""))]

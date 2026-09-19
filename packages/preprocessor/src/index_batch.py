@@ -15,9 +15,10 @@ import shutil
 from pathlib import Path
 import chromadb
 from chromadb.config import Settings as ChromaSettings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings
+from legal_chunking import chunk_markdown_document
+from index_contract import normalize_metadata, write_manifest, index_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -59,67 +60,33 @@ def save_progress(p):
 
 def chunk_document(file_path, cat, stem):
     text = Path(file_path).read_text(encoding="utf-8")
-    # 检测版本警告（如果有，每段chunk都要带）
-    version_warning = ""
-    for line in text.split("\n")[:5]:
-        if "⚠️" in line:
-            version_warning = line.strip()
-            break
-
-    lines = text.split("\n")
-    current_section = "前言"
-    current_texts = []
-    sections = []
-
-    for line in lines:
-        if line.startswith("## "):
-            if current_texts:
-                sections.append((current_section, "\n".join(current_texts)))
-            current_section = line.lstrip("# ").strip()
-            current_texts = [line]
-        elif line.startswith("### ") or line.startswith("# "):
-            if current_texts:
-                sections.append((current_section, "\n".join(current_texts)))
-            current_section = line.lstrip("# ").strip()
-            current_texts = [line]
-        else:
-            current_texts.append(line)
-    if current_texts:
-        sections.append((current_section, "\n".join(current_texts)))
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=300, chunk_overlap=50,
-        separators=["\n\n", "\n", "。", "，", " ", ""]
-    )
-
+    sidecar = Path(file_path).with_suffix(".meta.json")
+    file_metadata = {}
+    if sidecar.exists():
+        try:
+            file_metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("读取文档元数据失败: %s", sidecar)
+    version_warning = next((line.strip() for line in text.splitlines()[:5] if "⚠️" in line), "")
+    source_chunks = chunk_markdown_document(text, stem, chunk_size=800)
     chunks = []
-    for idx, (sec_title, sec_text) in enumerate(sections):
-        if len(sec_text) > 256:
-            sub_chunks = splitter.split_text(sec_text)
-            for i, sub in enumerate(sub_chunks):
-                content = sub
-                if version_warning:
-                    content = f"{version_warning}\n\n{sub}"
-                chunks.append({
-                    "content": content,
-                    "file_name": stem,
-                    "category": cat,
-                    "section": sec_title,
-                    "chunk_id": f"{stem}__s{idx}__{i}",
-                    "parent_id": f"{stem}__s{idx}",
-                })
-        else:
-            content = sec_text
-            if version_warning:
-                content = f"{version_warning}\n\n{sec_text}"
-            chunks.append({
-                "content": content,
-                "file_name": stem,
-                "category": cat,
-                "section": sec_title,
-                "chunk_id": f"{stem}__s{idx}",
-                "parent_id": f"{stem}__s{idx}",
-            })
+    for index, source in enumerate(source_chunks):
+        content = source["content"]
+        if version_warning:
+            content = f"{version_warning}\n\n{content}"
+        parent_id = f"{stem}__s{source['section_index']}"
+        clause_suffix = source.get("clause") or f"p{source.get('piece_index', index)}"
+        chunks.append({
+            "content": content,
+            "file_name": stem,
+            "category": cat,
+            "section": source["section"],
+            "clause": source.get("clause", ""),
+            "chunk_type": source["chunk_type"],
+            "chunk_id": f"{stem}__s{source['section_index']}__{clause_suffix}",
+            "parent_id": parent_id,
+            **file_metadata,
+        })
     return chunks, len(text)
 
 # --- 为指定文件列表批量切片 ---
@@ -158,10 +125,8 @@ def run_batch(batch_num):
         f"批次 {batch_num}/{total_batches + len(progress['batches_done'])} : {len(batch_files)} 份")
 
     # Embedding 模型
-    embeddings = OllamaEmbeddings(
-        model="quentinz/bge-small-zh-v1.5",
-        base_url="http://localhost:11434",
-    )
+    config = index_config()
+    embeddings = OllamaEmbeddings(model=config["embedding_model"], base_url=config["embedding_base_url"])
 
     # ----- Chroma：全量重建（避免 HNSW compaction bug）-----
     # 收集所有已有 + 新增文件，一起切片 + embed + 写入新集合
@@ -176,13 +141,7 @@ def run_batch(batch_num):
     chroma_chunks, _ = chunk_files(all_for_chroma)
     if chroma_chunks:
         chroma_texts = [c["content"] for c in chroma_chunks]
-        chroma_metadatas = [{
-            "file_name": c["file_name"],
-            "category": c["category"],
-            "section": c["section"],
-            "chunk_id": c["chunk_id"],
-            "parent_id": c["parent_id"],
-        } for c in chroma_chunks]
+        chroma_metadatas = [normalize_metadata(c) for c in chroma_chunks]
         chroma_ids = [c["chunk_id"] for c in chroma_chunks]
 
         # 预计算 embeddings
@@ -200,8 +159,10 @@ def run_batch(batch_num):
         collection = chroma_client.create_collection(
             name="cyber_security",
             metadata={
-                "hnsw:space": "cosine",
+                "hnsw:space": config["chroma_space"],
                 "hnsw:sync_threshold": 100000,
+                "index_contract_version": config["contract_version"],
+                "embedding_model": config["embedding_model"],
             },
         )
         # 批量添加（每次 500 chunks，避免单次提交过大）
@@ -218,13 +179,7 @@ def run_batch(batch_num):
     # 新增文件的 chunks（用于 FAISS 增量更新 + 进度统计）
     new_chunks, total_chars = chunk_files(batch_files)
     new_texts = [c["content"] for c in new_chunks]
-    new_metadatas = [{
-        "file_name": c["file_name"],
-        "category": c["category"],
-        "section": c["section"],
-        "chunk_id": c["chunk_id"],
-        "parent_id": c["parent_id"],
-    } for c in new_chunks]
+    new_metadatas = [normalize_metadata(c) for c in new_chunks]
     new_ids = [c["chunk_id"] for c in new_chunks]
 
     for fp, cat, stem in batch_files:
@@ -248,6 +203,8 @@ def run_batch(batch_num):
         )
     os.makedirs(_FAISS_DIR, exist_ok=True)
     faiss_db.save_local(_FAISS_DIR)
+    write_manifest(STORE_DIR / "index_manifest.json", chroma_chunks or new_chunks,
+                   len(chroma_embedded[0]) if chroma_chunks and chroma_embedded else 0)
     logger.info(f"  FAISS: +{len(new_chunks)} chunks")
 
     # 更新进度

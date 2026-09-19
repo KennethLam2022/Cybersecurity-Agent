@@ -218,7 +218,7 @@ def _delete_llm_key(provider: str):
 
 # ---- LLM 配置卡片持久化（8 种模块类型）----
 _CONFIG_CARD_MODULES = [
-    "chat", "jailbreak", "scoring", "fallback", "chunk", "promptEval",
+    "chat", "jailbreak", "scoring", "fallback", "reflection", "chunk", "promptEval",
     "embedding", "reranker",
 ]
 

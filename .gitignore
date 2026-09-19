@@ -64,9 +64,16 @@ docs/
 安全报告/
 *.code-workspace
 sandbox_test.txt
+admin_token.txt
 packages/preprocessor/src/source_map.json
 packages/agent/src/templates/沟通.md
 scripts/gen_req_doc.py
 scripts/gen_docs.py
 scripts/gen_prd.py
 packages/preprocessor/src/test_full_pipeline.py
+
+.pytest-tmp-*
+qa_data_source_ids.txt
+qa_rag_nonstream.json
+qa_rag_stream_error.txt
+qa_rag_stream_verify.jsonl

@@ -25,6 +25,7 @@ from e2e_eval_contract import evaluate_e2e_gates, normalize_metric_result, summa
 import os
 import sys
 import json
+import sqlite3
 import time
 import webbrowser
 import logging
@@ -332,6 +333,7 @@ def run_evaluation(
             kept_sum = sum(r["truncation"]["kept_count"] for r in trunc_records)
             avg_trunc_rate = (orig_sum - kept_sum) / orig_sum * 100 if orig_sum else 0
             logger.info(f"    C5 截断影响率:   {c5_rate:.0f}% 的题目被截断")
+            logger.info(f"    平均截断比例:     {avg_trunc_rate:.1f}%")
             logger.info(
                 f"    平均截断量: 原{orig_sum//len(trunc_records)}条 → 保留{kept_sum//len(trunc_records)}条")
         else:
@@ -759,9 +761,6 @@ def load_questions_from_db(db_path: Optional[str] = None) -> list[dict]:
     if not db_path or not os.path.exists(db_path):
         logger.info("  [WARN] DB 不存在，回退硬编码测试集")
         return QUESTIONS
-    import sqlite3
-
-
 def _db(db_path: str):
     c = sqlite3.connect(db_path)
     c.execute("PRAGMA journal_mode=WAL")

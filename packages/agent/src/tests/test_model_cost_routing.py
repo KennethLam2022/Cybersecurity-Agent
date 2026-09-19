@@ -3,6 +3,7 @@ from memory import ConversationMemory
 
 def test_model_pricing_cost_aggregation_and_route_recommendation(tmp_path):
     memory = ConversationMemory(str(tmp_path / "cost.db"))
+    memory.update_model_pricing_status("price-default-deepseek-v4-flash", False)
     user = memory.register_user("cost-owner@example.com", "Correct-Horse-30", "Cost Owner")
     memory.upsert_model_pricing({
         "provider": "test", "model": "cheap", "input_price_per_million": 1,

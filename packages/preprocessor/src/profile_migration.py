@@ -146,22 +146,31 @@ def _infer_profile(md_path: Path) -> ProfileMigrationRecord:
     file_name = md_path.stem
 
     if sidecar.get("profile"):
-        return ProfileMigrationRecord(
-            path=str(md_path),
-            file_name=file_name,
-            category=category,
-            profile=str(sidecar.get("profile", "general")),
-            scope=str(sidecar.get("scope", "general")),
-            industry=str(sidecar.get("industry", "")),
-            confidence=float(sidecar.get("profile_confidence", sidecar.get("confidence", 1.0)) or 0.0),
-            reason=str(sidecar.get("profile_reason", "existing sidecar metadata")),
-            confirmed=bool(sidecar.get("profile_confirmed", False)),
-            source=str(sidecar.get("profile_source", "existing")),
-            needs_review=not bool(sidecar.get("profile_confirmed", False)),
-            changed_at=str(sidecar.get("profile_updated_at", "")),
-            changed_by=str(sidecar.get("profile_updated_by", "")),
-            change_reason=str(sidecar.get("profile_change_reason", "")),
-        )
+        sidecar_profile = str(sidecar.get("profile", "general"))
+        sidecar_confirmed = bool(sidecar.get("profile_confirmed", False))
+        # When the sidecar marks profile as pending and not confirmed, fall
+        # through to content-based suggestion so high-confidence inferences
+        # can be surfaced for batch confirmation.  Confirmed sidecars are
+        # still authoritative and returned as-is.
+        if sidecar_profile == "pending" and not sidecar_confirmed:
+            pass  # fall through to content preview below
+        else:
+            return ProfileMigrationRecord(
+                path=str(md_path),
+                file_name=file_name,
+                category=category,
+                profile=sidecar_profile,
+                scope=str(sidecar.get("scope", "general")),
+                industry=str(sidecar.get("industry", "")),
+                confidence=float(sidecar.get("profile_confidence", sidecar.get("confidence", 1.0)) or 0.0),
+                reason=str(sidecar.get("profile_reason", "existing sidecar metadata")),
+                confirmed=sidecar_confirmed,
+                source=str(sidecar.get("profile_source", "existing")),
+                needs_review=not sidecar_confirmed,
+                changed_at=str(sidecar.get("profile_updated_at", "")),
+                changed_by=str(sidecar.get("profile_updated_by", "")),
+                change_reason=str(sidecar.get("profile_change_reason", "")),
+            )
 
     if _known_general_dir(category):
         return ProfileMigrationRecord(
@@ -194,6 +203,35 @@ def _infer_profile(md_path: Path) -> ProfileMigrationRecord:
         )
 
     if _known_unknown_dir(category):
+        # Use a bounded content preview to produce an auditable suggestion for
+        # uploaded material. Suggestions remain unconfirmed and therefore do
+        # not enter default retrieval until an administrator approves them.
+        try:
+            text_preview = md_path.read_text(encoding="utf-8", errors="ignore")[:6000]
+        except OSError:
+            text_preview = ""
+        suggestion = suggest_document_profile(
+            filename=file_name,
+            category_hint=category,
+            text_preview=text_preview,
+        )
+        suggested_profile = str(suggestion.get("profile") or "general")
+        if suggested_profile != "general":
+            return ProfileMigrationRecord(
+                path=str(md_path),
+                file_name=file_name,
+                category=str(suggestion.get("category") or category),
+                profile=suggested_profile,
+                scope=str(suggestion.get("scope") or "industry"),
+                industry=str(suggestion.get("industry") or ""),
+                confidence=float(suggestion.get("confidence") or 0.0),
+                reason=str(suggestion.get("reason") or "基于文件名和正文摘要的候选归类"),
+                confirmed=False,
+                source="migration_content_suggested",
+                needs_review=True,
+            )
+        suggested_reason = str(suggestion.get("reason") or "目录需要人工确认")
+        suggested_confidence = float(suggestion.get("confidence") or 0.4)
         return ProfileMigrationRecord(
             path=str(md_path),
             file_name=file_name,
@@ -201,10 +239,10 @@ def _infer_profile(md_path: Path) -> ProfileMigrationRecord:
             profile="pending",
             scope="unknown",
             industry="",
-            confidence=0.4,
-            reason=f"目录需要人工确认: {category}",
+            confidence=suggested_confidence,
+            reason=f"{suggested_reason}；目录仍需人工确认: {category}",
             confirmed=False,
-            source="migration_pending",
+            source="migration_content_suggested",
             needs_review=True,
         )
 
@@ -281,8 +319,10 @@ def apply_profile_migration(limit: int | None = None, update_vector_stores: bool
     parent_updated = 0
     faiss_updated = 0
     chroma_updated = 0
+    faiss_error = ""
+    chroma_error = ""
     if update_vector_stores and records:
-        parent_updated, faiss_updated, chroma_updated = _update_vector_store_metadata(records)
+        parent_updated, faiss_updated, chroma_updated, faiss_error, chroma_error = _update_vector_store_metadata(records)
 
     return {
         "total": len(records),
@@ -290,6 +330,8 @@ def apply_profile_migration(limit: int | None = None, update_vector_stores: bool
         "parent_updated": parent_updated,
         "faiss_updated": faiss_updated,
         "chroma_updated": chroma_updated,
+        "faiss_error": faiss_error,
+        "chroma_error": chroma_error,
         "pending": sum(1 for rec in records if rec.needs_review),
     }
 
@@ -373,8 +415,9 @@ def confirm_profile_migration(
         written += 1
 
     parent_updated = faiss_updated = chroma_updated = 0
+    faiss_error = chroma_error = ""
     if update_vector_stores and records:
-        parent_updated, faiss_updated, chroma_updated = _update_vector_store_metadata(records)
+        parent_updated, faiss_updated, chroma_updated, faiss_error, chroma_error = _update_vector_store_metadata(records)
 
     return {
         "total": len(records),
@@ -382,15 +425,19 @@ def confirm_profile_migration(
         "parent_updated": parent_updated,
         "faiss_updated": faiss_updated,
         "chroma_updated": chroma_updated,
+        "faiss_error": faiss_error,
+        "chroma_error": chroma_error,
         "reclassified": reclassified,
     }
 
 
-def _update_vector_store_metadata(records: list[ProfileMigrationRecord]) -> tuple[int, int, int]:
+def _update_vector_store_metadata(records: list[ProfileMigrationRecord]) -> tuple[int, int, int, str, str]:
     profile_by_stem = {Path(rec.path).stem: rec for rec in records}
     parent_updated = 0
     faiss_updated = 0
     chroma_updated = 0
+    faiss_error = ""
+    chroma_error = ""
 
     if _PARENT_FILE.exists():
         try:
@@ -414,38 +461,55 @@ def _update_vector_store_metadata(records: list[ProfileMigrationRecord]) -> tupl
             logger.warning(f"更新 parent_texts 失败: {e}")
 
     try:
-        from langchain_community.vectorstores import FAISS
-        from langchain_ollama import OllamaEmbeddings
+        import faiss
+        import pickle as _pickle
+        import numpy as _np
 
-        embeddings = OllamaEmbeddings(model="quentinz/bge-small-zh-v1.5", base_url="http://localhost:11434")
         faiss_dir = _STORE_DIR / "faiss_index"
         faiss_file = faiss_dir / "index.faiss"
-        if faiss_file.exists():
-            db = FAISS.load_local(str(faiss_dir), embeddings, allow_dangerous_deserialization=True)
-            changed = False
-            for doc_id, key in db.index_to_docstore_id.items():
-                doc = db.docstore.search(key)
-                if not doc:
-                    continue
-                rec = profile_by_stem.get(str(doc.metadata.get("file_name", "")))
-                if not rec:
-                    continue
-                doc.metadata.update({
-                    "category": rec.category,
-                    "profile": rec.profile,
-                    "scope": rec.scope,
-                    "industry": rec.industry,
-                    "profile_confidence": rec.confidence,
-                    "profile_reason": rec.reason,
-                    "profile_confirmed": rec.confirmed,
-                    "profile_source": rec.source,
-                })
-                changed = True
-                faiss_updated += 1
-            if changed:
-                db.save_local(str(faiss_dir))
+        pkl_file = faiss_dir / "index.pkl"
+        if faiss_file.exists() and pkl_file.exists():
+            # FAISS C++ on Windows cannot open paths with non-ASCII characters.
+            # Copy to an ASCII-safe temp dir, update, then copy back.
+            import shutil, tempfile
+            with tempfile.TemporaryDirectory(prefix="faiss_meta_") as tmp_dir:
+                tmp_path = Path(tmp_dir)
+                tmp_faiss = tmp_path / "index.faiss"
+                tmp_pkl = tmp_path / "index.pkl"
+                shutil.copy2(faiss_file, tmp_faiss)
+                shutil.copy2(pkl_file, tmp_pkl)
+                with open(tmp_pkl, "rb") as _f:
+                    # pkl is (docstore, index_to_docstore_id) as saved by langchain FAISS
+                    pkl_data = _pickle.load(_f)
+                docstore, index_to_docstore_id = pkl_data
+                changed = False
+                for key in index_to_docstore_id.values():
+                    doc = docstore.search(key)
+                    if not doc:
+                        continue
+                    rec = profile_by_stem.get(str(doc.metadata.get("file_name", "")))
+                    if not rec:
+                        continue
+                    doc.metadata.update({
+                        "category": rec.category,
+                        "profile": rec.profile,
+                        "scope": rec.scope,
+                        "industry": rec.industry,
+                        "profile_confidence": rec.confidence,
+                        "profile_reason": rec.reason,
+                        "profile_confirmed": rec.confirmed,
+                        "profile_source": rec.source,
+                    })
+                    changed = True
+                    faiss_updated += 1
+                if changed:
+                    with open(tmp_pkl, "wb") as _f:
+                        _pickle.dump((docstore, index_to_docstore_id), _f)
+                    shutil.copy2(tmp_pkl, pkl_file)
+                    logger.info(f"FAISS metadata 已更新 {faiss_updated} 条，写入 index.pkl")
     except Exception as e:
         logger.warning(f"更新 FAISS metadata 失败: {e}")
+        faiss_error = str(e)
 
     try:
         import chromadb
@@ -474,10 +538,15 @@ def _update_vector_store_metadata(records: list[ProfileMigrationRecord]) -> tupl
             })
             ids_to_update.append(item_id)
             metas_to_update.append(new_meta)
-        if ids_to_update:
-            collection.update(ids=ids_to_update, metadatas=metas_to_update)
-            chroma_updated = len(ids_to_update)
+        # chromadb limits update batch size; split into chunks of 1000
+        chunk_size = 1000
+        for i in range(0, len(ids_to_update), chunk_size):
+            chunk_ids = ids_to_update[i:i + chunk_size]
+            chunk_metas = metas_to_update[i:i + chunk_size]
+            collection.update(ids=chunk_ids, metadatas=chunk_metas)
+            chroma_updated += len(chunk_ids)
     except Exception as e:
         logger.warning(f"更新 Chroma metadata 失败: {e}")
+        chroma_error = str(e)
 
-    return parent_updated, faiss_updated, chroma_updated
+    return parent_updated, faiss_updated, chroma_updated, faiss_error, chroma_error

@@ -83,3 +83,21 @@ def test_retrieval_eval_result_marks_mixed_profiles(monkeypatch):
 
     assert result["evaluation_profile"] == "mixed"
     assert result["profiles"] == ["general", "industry/telecom"]
+
+
+def test_retrieval_failure_diagnosis_distinguishes_miss_and_low_rank():
+    module = _load("eval_retrieval_diagnosis", "_eval_retrieval.py")
+
+    miss = module.classify_retrieval_result(
+        [{"file_name": "other.md", "content": "无关内容"}],
+        "目标标准", 0, 0, None,
+    )
+    assert miss["failure_class"] == "retrieval_miss"
+    assert miss["matched_count"] == 0
+
+    low_rank_docs = [
+        {"file_name": "noise.md", "content": "噪声"},
+        {"file_name": "target.md", "content": "目标标准"},
+    ]
+    low_rank = module.classify_retrieval_result(low_rank_docs, "目标标准", 1, 1, 2)
+    assert low_rank["failure_class"] in {"pass", "retrieval_noise"}

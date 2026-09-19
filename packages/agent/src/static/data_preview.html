@@ -344,6 +344,18 @@
       <div class="icon blue">📊</div>
       <div class="info"><div class="num" id="chromaCount">0</div><div class="label">Chroma 向量</div></div>
     </div>
+    <div class="stat-item">
+      <div class="icon orange">🔍</div>
+      <div class="info"><div class="num" id="retrievalDegradedRate">-</div><div class="label">检索降级率</div></div>
+    </div>
+    <div class="stat-item">
+      <div class="icon green">📈</div>
+      <div class="info"><div class="num" id="retrievalEvalScore">-</div><div class="label">检索评测 Recall@10</div></div>
+    </div>
+  </div>
+  <div id="degradationStageBreakdown" style="display:none; margin:-16px 0 20px 0; padding:8px 16px; background:var(--card); border:1px solid var(--b); border-radius:8px; font-size:11px; color:var(--t2);">
+    <span style="font-weight:600; margin-right:12px;">降级分布:</span>
+    <span id="degStages"></span>
   </div>
 
   <!-- 操作栏 -->
@@ -506,7 +518,7 @@
     const originalFetch = window.fetch;
     window.fetch = function(input, init) {
       init = init || {};
-      const csrf = (document.cookie.match(/(?:^|; )securenexus_csrf=([^;]+)/) || [])[1];
+      const csrf = (document.cookie.match(/(?:^|; )securenexus_admin_csrf=([^;]+)/) || [])[1];
       if (csrf) { init.headers = init.headers || {}; if (init.headers instanceof Headers) init.headers.set('X-CSRF-Token', decodeURIComponent(csrf)); else init.headers['X-CSRF-Token'] = decodeURIComponent(csrf); }
       init.credentials = 'same-origin';
       return originalFetch(input, init).then(function(resp) {
@@ -927,7 +939,10 @@
         });
         const data = await resp.json();
         if (data.status === 'ok') {
-          statusText.textContent = `✅ 存量 profile 校准完成：${data.written_sidecars || 0} 个文件`;
+          let syncMsg = '';
+          if (data.faiss_error) syncMsg += ` ⚠️ FAISS: ${data.faiss_error.substring(0, 80)}`;
+          if (data.chroma_error) syncMsg += ` ⚠️ Chroma: ${data.chroma_error.substring(0, 80)}`;
+          statusText.textContent = `✅ 存量 profile 校准完成：${data.written_sidecars || 0} 个文件` + syncMsg;
           selectedMigrationPaths.clear();
           await loadMigrationSummary();
         } else {
@@ -1696,6 +1711,26 @@
           fetch('/api/stats'),
           fetch('/api/stats/pipeline?limit=100')
         ]);
+        // Load retrieval degradation + eval stats (non-blocking)
+        fetch('/api/stats/retrieval-eval').then(r => r.json()).then(data => {
+          const deg = data.retrieval_degradation || {};
+          document.getElementById('retrievalDegradedRate').textContent =
+            deg.degraded_ratio !== undefined ? (deg.degraded_ratio * 100).toFixed(1) + '%' : '-';
+          const es = data.summary || {};
+          document.getElementById('retrievalEvalScore').textContent =
+            es.avg_recall_10 !== undefined ? (es.avg_recall_10 * 100).toFixed(1) + '%' : '-';
+          const stages = deg.degraded_stages || {};
+          const stageKeys = Object.keys(stages);
+          const breakdown = document.getElementById('degradationStageBreakdown');
+          if (stageKeys.length) {
+            breakdown.style.display = 'block';
+            document.getElementById('degStages').innerHTML = stageKeys
+              .map(k => `<span style="margin-right:10px">${escHtml(k)}: <strong style="color:var(--r)">${stages[k]}</strong></span>`)
+              .join('');
+          } else {
+            breakdown.style.display = 'none';
+          }
+        }).catch(() => {});
         const stats = await statsRes.json();
         const pipeline = await pipelineRes.json();
         const items = pipeline.items || [];

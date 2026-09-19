@@ -1,7 +1,7 @@
 import json
 
 from knowledge_graph import (collect_graph_evidence, extract_document_graph, extract_semantic_graph_candidates,
-                             graph_impact, scan_graph_conflicts)
+                             graph_impact, is_semantic_graph_relation, scan_graph_conflicts)
 from memory import ConversationMemory
 
 
@@ -19,6 +19,29 @@ def _document(memory: ConversationMemory, tmp_path):
     memory.mark_document_indexed(document_id, str(path))
     assert memory.update_document_lifecycle(document_id, "published", user["tenant_id"])
     return user, memory.get_document(document_id, user["tenant_id"])
+
+
+def test_graph_network_classifies_clause_structure_as_evidence_only():
+    assert not is_semantic_graph_relation({
+        "predicate": "contains_clause",
+        "properties": {"extraction": "clause_identifier"},
+    })
+    assert not is_semantic_graph_relation({
+        "predicate": "has_clause",
+        "properties": {"extraction": "same_document_cooccurrence"},
+    })
+    assert not is_semantic_graph_relation({
+        "predicate": "references_standard",
+        "properties": {"extraction": "same_document_cooccurrence"},
+    })
+    assert is_semantic_graph_relation({
+        "predicate": "references",
+        "properties": {"extraction": "llm_semantic_candidate"},
+    })
+    assert is_semantic_graph_relation({
+        "predicate": "mentions",
+        "properties": {"extraction": "legal_reference"},
+    })
 
 
 def test_graph_extraction_is_review_first_and_auditable(tmp_path):

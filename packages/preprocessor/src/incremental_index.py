@@ -18,6 +18,7 @@ import json
 import time
 import logging
 import shutil
+import hashlib
 import tempfile
 from pathlib import Path
 
@@ -31,8 +32,12 @@ _PARENT_FILE = _STORE_DIR / "parent_texts.json"
 _FAISS_DIR = str(_STORE_DIR / "faiss_index")
 _CHROMA_DIR = str(_STORE_DIR / "chroma_db")
 
-EMBED_MODEL = "quentinz/bge-small-zh-v1.5"
-OLLAMA_URL = "http://localhost:11434"
+from legal_chunking import chunk_markdown_document
+from index_contract import index_config, normalize_metadata, merge_manifest, record_index_stage
+
+_INDEX_CONFIG = index_config()
+EMBED_MODEL = _INDEX_CONFIG["embedding_model"]
+OLLAMA_URL = _INDEX_CONFIG["embedding_base_url"]
 
 
 # ─── 父文档索引（增量） ───────────────────────────────
@@ -156,9 +161,7 @@ def _update_parent_index(md_paths: list[str]) -> int:
 # ─── 切片（与 add_doc_to_index.py + index_batch.py 一致） ─
 
 def _chunk_document(file_path: str, category: str, stem: str) -> list[dict]:
-    """将 .md 文件按标题切分 → 递归切片 → 返回 chunks"""
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-
+    """使用共享条款级切片器生成增量索引 chunks。"""
     text = Path(file_path).read_text(encoding="utf-8")
     file_meta = _load_sidecar_metadata(file_path)
     access_meta = _access_metadata(file_meta)
@@ -172,72 +175,28 @@ def _chunk_document(file_path: str, category: str, stem: str) -> list[dict]:
     profile_reason = str(file_meta.get("profile_reason", "")).strip()
     profile_confirmed = bool(file_meta.get("profile_confirmed", False))
     profile_source = str(file_meta.get("profile_source", "")).strip()
-    lines = text.split("\n")
-    current_section = "前言"
-    current_texts = []
-    sections = []
-
-    for line in lines:
-        if line.startswith("## "):
-            if current_texts:
-                sections.append((current_section, "\n".join(current_texts)))
-            current_section = line.lstrip("# ").strip()
-            current_texts = [line]
-        elif line.startswith("### ") or line.startswith("# "):
-            if current_texts:
-                sections.append((current_section, "\n".join(current_texts)))
-            current_section = line.lstrip("# ").strip()
-            current_texts = [line]
-        else:
-            current_texts.append(line)
-    if current_texts:
-        sections.append((current_section, "\n".join(current_texts)))
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=300, chunk_overlap=50,
-        separators=["\n\n", "\n", "。", "，", " ", ""]
-    )
-
     chunks = []
-    for idx, (sec_title, sec_text) in enumerate(sections):
-        if len(sec_text) > 256:
-            sub_chunks = splitter.split_text(sec_text)
-            for i, sub in enumerate(sub_chunks):
-                chunks.append({
-                    "content": sub,
-                    "file_name": source_name,
-                    "category": resolved_category,
-                    "section": sec_title,
-                    "chunk_id": f"{document_id}__s{idx}__{i}",
-                    "parent_id": f"{document_id}__s{idx}",
-                    "document_id": document_id,
-                    "profile": profile,
-                    "scope": scope,
-                    "industry": industry,
-                    "profile_confidence": profile_confidence,
-                    "profile_reason": profile_reason,
-                    "profile_confirmed": profile_confirmed,
-                    "profile_source": profile_source,
-                    **access_meta,
-                })
-        else:
-            chunks.append({
-                "content": sec_text,
-                "file_name": source_name,
-                "category": resolved_category,
-                "section": sec_title,
-                "chunk_id": f"{document_id}__s{idx}",
-                "parent_id": f"{document_id}__s{idx}",
-                "document_id": document_id,
-                "profile": profile,
-                "scope": scope,
-                "industry": industry,
-                "profile_confidence": profile_confidence,
-                "profile_reason": profile_reason,
-                "profile_confirmed": profile_confirmed,
-                "profile_source": profile_source,
-                **access_meta,
-            })
+    for index, source in enumerate(chunk_markdown_document(text, source_name, chunk_size=800)):
+        clause_suffix = source.get("clause") or f"p{source.get('piece_index', index)}"
+        chunks.append({
+            "content": source["content"],
+            "file_name": source_name,
+            "category": resolved_category,
+            "section": source["section"],
+            "clause": source.get("clause", ""),
+            "chunk_type": source.get("chunk_type", "section"),
+            "chunk_id": f"{document_id}__s{source['section_index']}__{clause_suffix}",
+            "parent_id": f"{document_id}__s{source['section_index']}",
+            "document_id": document_id,
+            "profile": profile,
+            "scope": scope,
+            "industry": industry,
+            "profile_confidence": profile_confidence,
+            "profile_reason": profile_reason,
+            "profile_confirmed": profile_confirmed,
+            "profile_source": profile_source,
+            **access_meta,
+        })
     return chunks
 
 
@@ -250,23 +209,7 @@ def _add_to_faiss(chunks: list[dict]):
 
     embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_URL)
     texts = [c["content"] for c in chunks]
-    metadatas = [{
-        "file_name": c["file_name"], "category": c["category"],
-        "section": c["section"], "chunk_id": c["chunk_id"],
-        "parent_id": c["parent_id"],
-        "profile": c.get("profile", ""),
-        "scope": c.get("scope", ""),
-        "industry": c.get("industry", ""),
-        "profile_confidence": c.get("profile_confidence", 0),
-        "profile_reason": c.get("profile_reason", ""),
-        "profile_confirmed": c.get("profile_confirmed", False),
-        "profile_source": c.get("profile_source", ""),
-        "visibility": c.get("visibility", "public"),
-        "tenant_id": c.get("tenant_id", ""),
-        "owner_user_id": c.get("owner_user_id", ""),
-        "agent_id": c.get("agent_id", ""),
-        "document_id": c.get("document_id", ""),
-    } for c in chunks]
+    metadatas = [normalize_metadata(c) for c in chunks]
     ids = [c["chunk_id"] for c in chunks]
 
     t0 = time.time()
@@ -332,37 +275,33 @@ def _add_to_chroma(chunks: list[dict]):
     from langchain_ollama import OllamaEmbeddings
 
     embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_URL)
+    record_index_stage(_STORE_DIR, "embedding", "started", item_count=len(chunks), model=EMBED_MODEL)
 
     t0 = time.time()
     client = chromadb.PersistentClient(
         path=_CHROMA_DIR, settings=Settings(anonymized_telemetry=False))
 
     try:
-        collection = client.get_collection("cyber_security")
+        collection = client.get_collection(_INDEX_CONFIG["chroma_collection"])
     except Exception:
-        collection = client.create_collection("cyber_security")
+        collection = client.create_collection(
+            _INDEX_CONFIG["chroma_collection"],
+            metadata={
+                "hnsw:space": _INDEX_CONFIG["chroma_space"],
+                "index_contract_version": _INDEX_CONFIG["contract_version"],
+                "embedding_model": EMBED_MODEL,
+            },
+        )
+    else:
+        metadata = collection.metadata or {}
+        if metadata.get("hnsw:space") and metadata.get("hnsw:space") != _INDEX_CONFIG["chroma_space"]:
+            raise RuntimeError(f"Chroma 距离空间不匹配: {metadata.get('hnsw:space')} != {_INDEX_CONFIG['chroma_space']}")
 
     old_count = collection.count()
 
     ids = [c["chunk_id"] for c in chunks]
     texts = [c["content"] for c in chunks]
-    metadatas = [{
-        "file_name": c["file_name"], "category": c["category"],
-        "section": c["section"], "chunk_id": c["chunk_id"],
-        "parent_id": c["parent_id"],
-        "profile": c.get("profile", ""),
-        "scope": c.get("scope", ""),
-        "industry": c.get("industry", ""),
-        "profile_confidence": c.get("profile_confidence", 0),
-        "profile_reason": c.get("profile_reason", ""),
-        "profile_confirmed": c.get("profile_confirmed", False),
-        "profile_source": c.get("profile_source", ""),
-        "visibility": c.get("visibility", "public"),
-        "tenant_id": c.get("tenant_id", ""),
-        "owner_user_id": c.get("owner_user_id", ""),
-        "agent_id": c.get("agent_id", ""),
-        "document_id": c.get("document_id", ""),
-    } for c in chunks]
+    metadatas = [normalize_metadata(c) for c in chunks]
 
     existing_ids = set(collection.get(ids=ids, include=[])["ids"]) if old_count > 0 else set()
     new_ids, new_texts, new_metadatas = [], [], []
@@ -377,6 +316,7 @@ def _add_to_chroma(chunks: list[dict]):
         emb_list = embeddings.embed_documents(new_texts)
         collection.add(ids=new_ids, documents=new_texts,
                        metadatas=new_metadatas, embeddings=emb_list)
+        record_index_stage(_STORE_DIR, "embedding", "completed", item_count=len(new_ids), vector_dimension=len(emb_list[0]) if emb_list else 0)
 
     new_count = collection.count()
     logger.info(f"Chroma: {old_count} → {new_count} (新加 {len(new_ids)}, {time.time()-t0:.2f}s)")
@@ -385,7 +325,7 @@ def _add_to_chroma(chunks: list[dict]):
 # ─── 后置校验 ──────────────────────────────────────
 
 def _validate_consistency():
-    """对比 FAISS 和 Chroma 数量，不一致时自动补全（不重新 embedding）"""
+    """Compare IDs, text, metadata and vector dimensions before repairing counts."""
     from langchain_community.vectorstores import FAISS
     from langchain_ollama import OllamaEmbeddings
     import chromadb
@@ -415,14 +355,40 @@ def _validate_consistency():
     client = chromadb.PersistentClient(
         path=_CHROMA_DIR, settings=Settings(anonymized_telemetry=False))
     try:
-        collection = client.get_collection("cyber_security")
+        collection = client.get_collection(_INDEX_CONFIG["chroma_collection"])
         chroma_count = collection.count()
     except Exception:
         chroma_count = 0
 
-    if faiss_count == chroma_count:
+    try:
+        chroma_all = collection.get(include=["documents", "metadatas", "embeddings"])
+        faiss_map = {}
+        for idx, doc_id in db.index_to_docstore_id.items():
+            doc = db.docstore.search(doc_id)
+            faiss_map[doc_id] = {
+                "text": hashlib.sha256((doc.page_content or "").encode("utf-8")).hexdigest(),
+                "metadata": json.dumps(doc.metadata or {}, ensure_ascii=False, sort_keys=True),
+                "dimension": len(db.index.reconstruct(int(idx))),
+            }
+        chroma_map = {}
+        for i, doc_id in enumerate(chroma_all.get("ids", [])):
+            emb = (chroma_all.get("embeddings") or [])[i]
+            chroma_map[doc_id] = {
+                "text": hashlib.sha256((chroma_all.get("documents", [""])[i] or "").encode("utf-8")).hexdigest(),
+                "metadata": json.dumps((chroma_all.get("metadatas") or [{}])[i] or {}, ensure_ascii=False, sort_keys=True),
+                "dimension": len(emb) if emb is not None else 0,
+            }
+        drift = [doc_id for doc_id in set(faiss_map) & set(chroma_map) if faiss_map[doc_id] != chroma_map[doc_id]]
+        missing_in_chroma = sorted(set(faiss_map) - set(chroma_map))
+        missing_in_faiss = sorted(set(chroma_map) - set(faiss_map))
+        logger.info("索引一致性: ids_only_faiss=%d ids_only_chroma=%d content_or_metadata_drift=%d", len(missing_in_chroma), len(missing_in_faiss), len(drift))
+    except Exception as exc:
+        logger.warning("索引内容一致性检查失败: %s", exc)
+        missing_in_chroma, missing_in_faiss, drift = [], [], ["consistency_check_failed"]
+
+    if faiss_count == chroma_count and not missing_in_chroma and not missing_in_faiss and not drift:
         logger.info(f"后置校验 ✅ FAISS={faiss_count} Chroma={chroma_count}")
-        return
+        return {"ok": True, "faiss": faiss_count, "chroma": chroma_count}
 
     logger.warning(f"后置校验 ⚠️ FAISS={faiss_count} ≠ Chroma={chroma_count}，正在自动补全...")
 
@@ -446,7 +412,6 @@ def _validate_consistency():
     else:
         # FAISS 缺了：从 Chroma 读向量直接补入 FAISS
         chroma_all = collection.get(include=["documents", "metadatas", "embeddings"])
-        chroma_ids_set = set(chroma_all["ids"])
         faiss_ids_set = set(db.index_to_docstore_id.values())
         missing_docs, missing_metadatas, missing_ids, missing_embs = [], [], [], []
         for i, cid in enumerate(chroma_all["ids"]):
@@ -482,6 +447,9 @@ def _validate_consistency():
         logger.info(f"  自动补全后一致 ✅ FAISS={final_faiss} Chroma={final_chroma}")
     else:
         logger.error(f"  自动补全后仍不一致 ❌ FAISS={final_faiss} Chroma={final_chroma}（需要人工介入）")
+    return {"ok": final_faiss == final_chroma and not drift, "faiss": final_faiss,
+            "chroma": final_chroma, "drift": drift,
+            "missing_in_chroma": missing_in_chroma, "missing_in_faiss": missing_in_faiss}
 
 
 # ─── 主入口 ──────────────────────────────────────────
@@ -525,6 +493,7 @@ def incremental_index(md_paths: list[str]):
 
     # 4. FAISS 后写
     _add_to_faiss(all_chunks)
+    merge_manifest(_STORE_DIR / "index_manifest.json", all_chunks)
 
     # 5. 后置校验：对比 FAISS 和 Chroma 数量，不一致自动补全
     _validate_consistency()
@@ -541,7 +510,7 @@ def _remove_from_chroma(stems: list[str]):
     client = chromadb.PersistentClient(
         path=_CHROMA_DIR, settings=Settings(anonymized_telemetry=False))
     try:
-        collection = client.get_collection("cyber_security")
+        collection = client.get_collection(_INDEX_CONFIG["chroma_collection"])
     except Exception:
         logger.warning("Chroma collection 不存在，跳过删除")
         return
@@ -558,7 +527,7 @@ def _remove_document_ids_from_chroma(document_ids: list[str]):
     client = chromadb.PersistentClient(
         path=_CHROMA_DIR, settings=Settings(anonymized_telemetry=False))
     try:
-        collection = client.get_collection("cyber_security")
+        collection = client.get_collection(_INDEX_CONFIG["chroma_collection"])
     except Exception:
         return
     for document_id in document_ids:
@@ -588,21 +557,17 @@ def _rebuild_faiss_from_parents():
     } for k, v in parent_data.items()]
     ids = list(parent_data.keys())
 
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-    splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50, separators=[
-                                              "\n\n", "\n", "。", "，", " ", ""])
     all_texts, all_metadatas, all_ids = [], [], []
     for i, t in enumerate(texts):
-        if len(t) > 256:
-            sub = splitter.split_text(t)
-            for j, s in enumerate(sub):
-                all_texts.append(s)
-                all_metadatas.append(metadatas[i])
-                all_ids.append(f"{ids[i]}__{j}")
-        else:
-            all_texts.append(t)
-            all_metadatas.append(metadatas[i])
-            all_ids.append(ids[i])
+        parent = parent_data[ids[i]]
+        structured = f"# {parent.get('file_name', '')}\n\n## {parent.get('section', '前言')}\n\n{t}"
+        rebuilt = chunk_markdown_document(structured, parent.get("file_name", ""), chunk_size=800)
+        for j, item in enumerate(rebuilt):
+            all_texts.append(item["content"])
+            metadata = dict(metadatas[i])
+            metadata.update({"section": item["section"], "clause": item.get("clause", ""), "chunk_type": item.get("chunk_type", "section")})
+            all_metadatas.append(metadata)
+            all_ids.append(f"{ids[i]}__{j}")
 
     t0 = time.time()
     embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_URL)

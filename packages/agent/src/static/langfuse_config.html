@@ -43,7 +43,7 @@
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const headers = () => { const csrf = (document.cookie.match(/(?:^|; )securenexus_csrf=([^;]+)/) || [])[1]; return {'Content-Type':'application/json', ...(csrf ? {'X-CSRF-Token': decodeURIComponent(csrf)} : {})}; };
+  const headers = () => { const csrf = (document.cookie.match(/(?:^|; )securenexus_admin_csrf=([^;]+)/) || [])[1]; return {'Content-Type':'application/json', ...(csrf ? {'X-CSRF-Token': decodeURIComponent(csrf)} : {})}; };
   const setStatus = (el, text, kind='') => { el.textContent=text; el.className='status ' + kind; };
   let datasetEdited = false;
   let profileOptions = [];

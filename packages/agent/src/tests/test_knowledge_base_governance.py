@@ -401,6 +401,32 @@ def test_feedback_marks_trace_and_promotes_gap_to_prompt_test(tmp_path):
     assert duplicate["created"] is False
 
 
+def test_feedback_classification_and_retrieval_eval_queue(tmp_path):
+    memory = ConversationMemory(str(tmp_path / "feedback-retrieval-eval.db"))
+    user = memory.register_user("feedback-eval@example.com", "Correct-Horse-36", "Feedback Eval")
+    conv = memory.create_conversation(
+        tenant_id=user["tenant_id"], user_id=user["id"], agent_id=user["agent_id"],
+    )
+    msg_id = memory.add_message(conv["id"], "user", "网络安全法什么时候施行？")
+    memory.log_usage(
+        conv["id"], msg_id, "网络安全法什么时候施行？", returned_count=1,
+        trace_data={"retrieval": {"returned_count": 1}},
+    )
+    feedback_id = memory.record_feedback(
+        msg_id, "refresh", "引用不足，回答没有依据", user_id=user["id"],
+    )
+    item = memory.list_feedback_items()[0]
+    assert item["failure_class"] == "insufficient_evidence"
+    promoted = memory.promote_feedback_to_retrieval_eval(feedback_id, created_by="admin")
+    assert promoted["created"] is True
+    queued = memory.get_retrieval_eval_items()[0]
+    assert queued["source_feedback_id"] == feedback_id
+    assert queued["label_status"] == "pending"
+    assert queued["failure_class"] == "insufficient_evidence"
+    assert queued["category"].startswith("feedback:")
+    assert memory.promote_feedback_to_retrieval_eval(feedback_id)["created"] is False
+
+
 def test_external_retrieval_config_requires_explicit_approval(tmp_path):
     memory = ConversationMemory(str(tmp_path / "external-config.db"))
     config = memory.get_external_retrieval_config()

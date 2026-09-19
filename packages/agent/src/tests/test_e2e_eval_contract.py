@@ -5,7 +5,7 @@ def _result(**overrides):
     result = {"auto_status": "有来源(2条)", "sources": [{"file_name": "policy.pdf"}],
               "scores": {name: {"score": 0.8} for name in (
                   "context_precision", "context_recall", "faithfulness", "relevancy")}}
-    result["scores"]["hallucination"] = {"score": 0.2}
+    result["scores"]["hallucination"] = {"score": 0.8}
     result.update(overrides)
     return result
 
@@ -16,13 +16,13 @@ def test_e2e_gate_blocks_missing_sources_and_runtime_errors():
     assert "has_retrieved_sources" in gate["failed_checks"]
 
 
-def test_e2e_gate_blocks_low_faithfulness_or_high_hallucination():
+def test_e2e_gate_blocks_low_faithfulness_or_low_no_hallucination():
     gate = evaluate_e2e_gates(_result(scores={
         "context_precision": {"score": 0.9}, "context_recall": {"score": 0.9},
-        "faithfulness": {"score": 0.4}, "relevancy": {"score": 0.9}, "hallucination": {"score": 0.6},
+        "faithfulness": {"score": 0.4}, "relevancy": {"score": 0.9}, "hallucination": {"score": 0.4},
     }))
     assert "faithfulness_above_minimum" in gate["failed_checks"]
-    assert "hallucination_below_maximum" in gate["failed_checks"]
+    assert "no_hallucination_above_minimum" in gate["failed_checks"]
 
 
 def test_e2e_gate_summary_requires_every_case_to_pass():

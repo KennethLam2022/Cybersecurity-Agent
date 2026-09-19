@@ -31,7 +31,7 @@ def test_webhook_retries_signs_and_records_each_attempt(tmp_path, monkeypatch):
     )
     calls = []
 
-    def fake_post(url, data, timeout, headers):
+    def fake_post(url, data, timeout, headers, allow_redirects):
         calls.append((url, data, headers))
         return _Response(500 if len(calls) == 1 else 204)
 

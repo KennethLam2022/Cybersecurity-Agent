@@ -101,7 +101,8 @@ class Neo4jGraphStore:
         result = self._write_rows(entity_rows, relation_rows)
         return {"ok": True, "status": status or "all", **result}
 
-    def network(self, tenant_id: str, knowledge_base_id: str, status: str = "approved", limit: int = 120) -> dict[str, Any] | None:
+    def network(self, tenant_id: str, knowledge_base_id: str, status: str = "approved",
+                limit: int = 120, document_id: str = "", semantic_only: bool = True) -> dict[str, Any] | None:
         if not self.configured:
             return None
         driver = self._get_driver()
@@ -111,12 +112,21 @@ class Neo4jGraphStore:
                     MATCH (s:SecureNexusEntity)-[r:SECURENEXUS_RELATION]->(o:SecureNexusEntity)
                     WHERE r.tenant_id=$tenant_id AND r.knowledge_base_id=$knowledge_base_id
                       AND ($status='' OR r.status=$status)
+                      AND ($document_id='' OR r.source_document_id=$document_id)
+                      AND ($semantic_only=false OR (
+                        NOT r.predicate IN ['contains_clause', 'has_clause']
+                        AND coalesce(r.extraction, '') <> 'same_document_cooccurrence'
+                        AND r.predicate IN ['references', 'requires', 'prohibits',
+                                             'applies_to', 'implements', 'governs',
+                                             'mentions', 'mentions_penalty',
+                                             'references_standard']))
                     RETURN s.entity_id AS source, s.name AS source_label, s.entity_type AS source_type,
                            o.entity_id AS target, o.name AS target_label, o.entity_type AS target_type,
                            r.relation_id AS id, r.predicate AS label, r.confidence AS confidence,
                            r.status AS status ORDER BY r.confidence DESC LIMIT $limit
                 """, tenant_id=tenant_id, knowledge_base_id=knowledge_base_id,
-                    status=status, limit=max(1, min(int(limit), 500))).data()
+                    status=status, document_id=document_id, semantic_only=semantic_only,
+                    limit=max(1, min(int(limit), 500))).data()
             ids = {r["source"] for r in rows} | {r["target"] for r in rows}
             nodes = {}
             for row in rows:

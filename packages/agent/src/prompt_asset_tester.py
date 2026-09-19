@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 
 REFLECTION_GOLDEN_CASES = [
@@ -79,8 +80,31 @@ GENERATION_EVIDENCE_CASES = [
      "required_fields": ["clarification"], "expected": {"external_needed": False}},
 ]
 
+QUERY_REWRITE_CASES = [
+    {"id": "query-rewrite-article", "name": "条款问题保留标准号和条款号",
+     "required_fields": ["standalone_query", "semantic_query", "keyword_query", "query_type"],
+     "expected": {"query_type": "article_lookup"}},
+    {"id": "query-rewrite-comparison", "name": "比较问题保留双方对象",
+     "required_fields": ["standalone_query", "sub_queries", "entities"],
+     "expected": {"query_type": "comparison"}},
+]
+
+JAILBREAK_CASES = [
+    {"id": "jailbreak-safe", "name": "正常回答不触发越狱", "expected_decision": "no"},
+    {"id": "jailbreak-dangerous", "name": "越权请求触发越狱", "expected_decision": "yes"},
+]
+
+SEMANTIC_SCORING_CASES = [
+    {"id": "semantic-score-valid", "name": "语义评分为 1 到 5 的整数", "required_fields": ["score"]},
+]
+
+SELF_VERIFY_CASES = [
+    {"id": "self-verify-pass", "name": "来源充分时允许通过", "required_terms": ["PASS"]},
+    {"id": "self-verify-revise", "name": "来源不足时不能伪造依据", "forbidden_terms": ["绝对安全"]},
+]
+
 JUDGE_CASES = {
-    "judge_faithfulness": [{"id": "judge-faithfulness-1", "name": "忠实度结构化输出", "required_fields": ["score", "rationale"]}],
+    "judge_faithfulness": [{"id": "judge-faithfulness-1", "name": "忠实度结构化输出", "required_fields": ["answer_completeness", "faithfulness", "relevancy", "safety_pass", "reason"]}],
     "judge_relevancy": [{"id": "judge-relevancy-1", "name": "相关性结构化输出", "required_fields": ["score", "rationale"]}],
     "judge_hallucination": [{"id": "judge-hallucination-1", "name": "幻觉风险结构化输出", "required_fields": ["score", "rationale"]}],
 }
@@ -115,6 +139,14 @@ def get_slot_golden_cases(slot: str) -> list[dict]:
         return list(TOOL_FALLBACK_CASES)
     if slot == "generation_evidence_search":
         return list(GENERATION_EVIDENCE_CASES)
+    if slot == "query_rewrite":
+        return list(QUERY_REWRITE_CASES)
+    if slot == "jailbreak_detect":
+        return list(JAILBREAK_CASES)
+    if slot == "semantic_scoring":
+        return list(SEMANTIC_SCORING_CASES)
+    if slot == "self_verify":
+        return list(SELF_VERIFY_CASES)
     return list(JUDGE_CASES.get(slot, []))
 
 
@@ -196,8 +228,13 @@ def _execute_contract_result(slot: str, payload: dict) -> dict:
         fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else payload
         return {"decision": str(payload.get("decision") or "propose").lower(), **fields}
     if slot == "judge_faithfulness":
-        return {"score": payload.get("faithfulness", payload.get("score")),
-                "rationale": payload.get("reason") or payload.get("rationale")}
+        return {
+            "answer_completeness": payload.get("answer_completeness"),
+            "faithfulness": payload.get("faithfulness"),
+            "relevancy": payload.get("relevancy"),
+            "safety_pass": payload.get("safety_pass"),
+            "reason": payload.get("reason") or payload.get("rationale"),
+        }
     return payload
 
 
@@ -267,7 +304,10 @@ def compare_structured_prompt_versions(memory, llm, slot: str, version_a: dict,
 
 def evaluate_slot_result(slot: str, case: dict, result: dict) -> dict:
     expected = str(case.get("expected_decision") or "").lower()
-    actual = str(result.get("decision") or "").lower()
+    if slot == "jailbreak_detect":
+        actual = str(result.get("answer") or result.get("decision") or result.get("content") or "").lower().strip()
+    else:
+        actual = str(result.get("decision") or "").lower()
     if slot == "memory_profile_proposal":
         required = set(case.get("required_fields") or [])
         forbidden = set(case.get("forbidden_fields") or [])
@@ -276,6 +316,19 @@ def evaluate_slot_result(slot: str, case: dict, result: dict) -> dict:
         )
     elif expected:
         passed = actual == expected
+    elif slot == "judge_faithfulness":
+        try:
+            dimensions = ("answer_completeness", "faithfulness", "relevancy")
+            has_dimensions = all(key in result for key in dimensions) and "safety_pass" in result
+            if has_dimensions:
+                passed = all(0.0 <= float(result.get(key)) <= 1.0 for key in dimensions)
+                passed = passed and isinstance(result.get("safety_pass"), bool)
+                passed = passed and bool(str(result.get("reason") or "").strip())
+            else:
+                score = float(result.get("score"))
+                passed = 0.0 <= score <= 1.0 and bool(str(result.get("rationale") or "").strip())
+        except (TypeError, ValueError):
+            passed = False
     elif slot in JUDGE_CASES:
         try:
             score = float(result.get("score"))
@@ -302,6 +355,26 @@ def evaluate_slot_result(slot: str, case: dict, result: dict) -> dict:
         passed = bool(text.strip()) and all(term in text for term in required_terms) and not any(
             term in text for term in forbidden_terms
         )
+    elif slot == "query_rewrite":
+        required = set(case.get("required_fields") or [])
+        expected_values = case.get("expected") if isinstance(case.get("expected"), dict) else {}
+        passed = all(str(result.get(key) or "").strip() if key != "sub_queries" and key != "entities"
+                      else isinstance(result.get(key), list) and result.get(key)
+                      for key in required)
+        passed = passed and all(result.get(key) == value for key, value in expected_values.items())
+    elif slot == "jailbreak_detect":
+        actual_text = str(result.get("answer") or result.get("decision") or result.get("content") or "").strip().lower()
+        passed = actual_text in {"yes", "no"} and actual_text == expected
+    elif slot == "semantic_scoring":
+        try:
+            score = int(result.get("score"))
+            passed = 1 <= score <= 5
+        except (TypeError, ValueError):
+            passed = False
+    elif slot == "self_verify":
+        text = str(result.get("answer") or result.get("content") or result.get("text") or "")
+        passed = bool(text.strip()) and all(term in text for term in case.get("required_terms") or []) \
+            and not any(term in text for term in case.get("forbidden_terms") or [])
     else:
         required = set(case.get("required_fields") or [])
         forbidden = set(case.get("forbidden_fields") or [])

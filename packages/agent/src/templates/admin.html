@@ -900,7 +900,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <button class="extension-btn primary" onclick="syncNeo4jGraph()">同步到 Neo4j</button>
     </div>
     <div class="stats-row" id="graphSummary"></div>
-    <div class="chart-card" style="margin-bottom:12px"><div class="chart-title">关系网</div><div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;padding:8px 0"><label style="font-size:11px;color:var(--t2)">显示状态<select id="graphNetworkStatus" class="workflow-run-input" onchange="loadGraphNetwork()"><option value="pending_review" selected>待审核候选</option><option value="approved">已批准图谱</option></select></label><label style="font-size:11px;color:var(--t2)">最多关系<input id="graphNetworkLimit" class="workflow-run-input" type="number" min="10" max="500" value="120" style="width:90px"></label><button class="extension-btn" onclick="loadGraphNetwork()">刷新关系网</button></div><div id="graphNetwork" style="height:520px;overflow:hidden;border:1px solid var(--b2);border-radius:6px;background:#fbfcfe" aria-label="知识图谱关系网">请选择关系网状态后加载。</div></div>
+    <div class="chart-card" style="margin-bottom:12px"><div class="chart-title">关系网</div><div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;padding:8px 0"><label style="font-size:11px;color:var(--t2)">显示状态<select id="graphNetworkStatus" class="workflow-run-input" onchange="loadGraphNetwork()"><option value="pending_review" selected>待审核候选</option><option value="approved">已批准图谱</option></select></label><label style="font-size:11px;color:var(--t2)">最多关系<input id="graphNetworkLimit" class="workflow-run-input" type="number" min="10" max="500" value="120" style="width:90px"></label><label style="font-size:11px;color:var(--t2);display:flex;gap:4px;align-items:center"><input id="graphNetworkShowStructure" type="checkbox" onchange="loadGraphNetwork()">显示条款结构证据</label><button class="extension-btn" onclick="loadGraphNetwork()">刷新关系网</button></div><div id="graphNetwork" style="height:520px;overflow:hidden;border:1px solid var(--b2);border-radius:6px;background:#fbfcfe" aria-label="知识图谱关系网">请选择关系网状态后加载。</div></div>
     <div class="chart-card" style="margin-bottom:12px"><div class="chart-title">审核助手</div><div id="graphReviewAssistant" style="padding:8px;color:var(--t2);font-size:12px">加载中...</div></div>
     <div class="chart-card" style="margin-bottom:12px"><div class="chart-title">已有 RAG 文档同步</div><div id="ragSyncSummary" style="padding:8px;color:var(--t2);font-size:12px">未执行。该操作只登记现有清洗文档，不会重新解析、切分或向量化。</div></div>
     <div class="chart-card" style="margin-bottom:12px"><div class="chart-title">已审核图谱冲突候选</div><div id="graphConflictTable" style="overflow-x:auto;color:var(--t2);font-size:12px;padding:8px">点击“扫描冲突”后显示；结果仅供人工复核。</div></div>
@@ -1182,6 +1182,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
         <button onclick="preflightAgentEval()" style="padding:6px 14px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">✓ 检查运行条件</button>
         <button onclick="checkAgentEvalGate()" style="padding:6px 14px;background:var(--b2);color:var(--t1);border:none;border-radius:6px;cursor:pointer;font-size:12px">⚑ 检查发布门禁</button>
         <button onclick="checkReleaseReadiness()" style="padding:6px 14px;background:#eef7ff;color:var(--a);border:1px solid #9bc7f5;border-radius:6px;cursor:pointer;font-size:12px">发布就绪检查</button>
+        <button onclick="recordReleaseEvidence()" style="padding:6px 14px;background:#fff7e6;color:#9a6700;border:1px solid #f0c36d;border-radius:6px;cursor:pointer;font-size:12px">录入人工发布证据</button>
         <button id="btnRunAgentEval" onclick="runAgentEval()" style="padding:7px 16px;background:var(--a);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px">▶ 运行 Agent 评测</button>
         <input id="agentEvalJudgeLimit" type="number" min="1" max="30" value="10" title="重新 Judge 的用例数量" style="width:62px;padding:6px 7px;border:1px solid var(--b2);border-radius:6px;font-size:12px;background:var(--bg1);color:var(--t1)">
         <button id="btnRerunAgentJudge" onclick="rerunAgentJudge()" style="padding:6px 14px;background:#fff7e6;color:#9a6700;border:1px solid #f0c36d;border-radius:6px;cursor:pointer;font-size:12px">🧭 重新运行 Judge</button>
@@ -1264,7 +1265,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // ---- 覆盖 fetch：自动注入当前用户会话 ----
 const _origFetch = window.fetch;
-function adminCsrfToken() { const match = document.cookie.match(/(?:^|; )securenexus_csrf=([^;]+)/); return match ? decodeURIComponent(match[1]) : ''; }
+function adminCsrfToken() { const match = document.cookie.match(/(?:^|; )securenexus_admin_csrf=([^;]+)/); return match ? decodeURIComponent(match[1]) : ''; }
 window.fetch = function(input, init) {
   init = init || {};
   const csrf = adminCsrfToken();
@@ -1273,17 +1274,20 @@ window.fetch = function(input, init) {
     if (init.headers instanceof Headers) init.headers.set('X-CSRF-Token', csrf);
     else { init.headers = init.headers || {}; init.headers['X-CSRF-Token'] = csrf; }
   }
+  if (init.headers instanceof Headers) init.headers.set('X-Admin-Context', '1');
+  else { init.headers = init.headers || {}; init.headers['X-Admin-Context'] = '1'; }
   init.credentials = 'same-origin';
   return _origFetch(input, init).then(function(resp) {
     if (resp.status === 401 && !window.location.pathname.startsWith('/shared/')) {
-      window.location.href = '/';
+      window.location.href = '/admin/login?next=' + encodeURIComponent(window.location.pathname);
     }
     return resp;
   });
 };
 
 let conversations = [];
-let adminPrincipal = { role: 'platform_admin' };
+// Start least-privileged so role-gated tabs never render before /api/auth/me resolves.
+let adminPrincipal = { role: 'user' };
 
 async function logoutAdmin(button) {
   if (button) button.disabled = true;
@@ -1737,6 +1741,11 @@ async function selectConversation(convId) {
       <div class="meta"><span>ID: ${detail.id}</span><span>${dt}</span><span>${detail.stats.rounds} 轮对话</span><span>${stats.total_sources} 条来源引用</span>
         ${isDeleted ? `<span style="color:var(--r);cursor:pointer;text-decoration:underline" onclick="if(confirm('确认物理删除？将不可恢复！')){fetch('/api/conversations/${detail.id}/hard',{method:'DELETE'}).then(()=>{showToast('已物理删除');fetchConversations();document.getElementById('mainPanel').classList.add('empty');document.getElementById('mainPanel').innerHTML='<div class=\\'empty-state\\'><div class=\\'hint\\'><span class=\\'icon\\'>&#x1F4AC;</span>选择一个对话查看详情</div></div>';})}">物理删除</span>` : ''}
       </div>
+      <div id="releaseReadinessPanel" class="chart-card" style="margin-top:12px;display:none">
+        <div class="chart-title">发布门禁清单</div>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:8px">自动检查只判断系统证据是否齐全；真实模型、人审校准、Langfuse 和 MCP 仍需管理员确认。</div>
+        <div id="releaseReadinessTable" style="overflow-x:auto"></div>
+      </div>
     </div>
     <div class="stats-row">
       <div class="stat-card"><span class="num blue">${detail.stats.rounds}</span><span class="label">问答轮次</span></div>
@@ -1899,6 +1908,10 @@ function switchPrimaryGroup(group) {
 }
 
 function switchTab(name) {
+  if (adminPrincipal.authenticated && adminPrincipal.role !== 'platform_admin' && platformOnlyTabs.has(name)) {
+    showToast('该配置仅限平台管理员访问', 'error');
+    return;
+  }
   syncPrimaryGroup(groupForTab(name));
   document.querySelectorAll('.tab-item').forEach(t => {
     const active = t.dataset.tab === name;
@@ -3412,7 +3425,7 @@ const TARGET_THRESHOLDS = {
   context_recall: 0.70,
   faithfulness: 0.85,
   relevancy: 0.80,
-  hallucination: 0.10,  // 越低越好，反向告警
+  hallucination: 0.90,  // 无幻觉率，越高越好
 };
 const METRIC_LABELS = {
   context_precision: 'CP',
@@ -3445,21 +3458,15 @@ async function checkDegradation() {
     for (const [key, threshold] of Object.entries(TARGET_THRESHOLDS)) {
       const val = scores[key];
       if (val === undefined) continue;
-      if (key === 'hallucination') {
-        if (val > threshold) {
-          alerts.push({ type: 'threshold', key, val, threshold, msg: `${METRIC_LABELS[key]} ${(val*100).toFixed(1)}% > ${(threshold*100).toFixed(0)}%（超过容忍上限）` });
-        }
-      } else {
-        if (val < threshold) {
-          alerts.push({ type: 'threshold', key, val, threshold, msg: `${METRIC_LABELS[key]} ${(val*100).toFixed(1)}% < ${(threshold*100).toFixed(0)}%（低于目标值）` });
-        }
+      if (val < threshold) {
+        alerts.push({ type: 'threshold', key, val, threshold, msg: `${METRIC_LABELS[key]} ${(val*100).toFixed(1)}% < ${(threshold*100).toFixed(0)}%（低于目标值）` });
       }
     }
 
     // ── ② 趋势预警（连续2次下降） ──
     if (n >= 2) {
       for (const key of Object.keys(METRIC_LABELS)) {
-        if (key === 'hallucination') continue; // 幻觉越低越好，不做趋势预警
+
         const curr = versions[n-1].avg_scores?.[key];
         const prev = versions[n-2].avg_scores?.[key];
         if (curr === undefined || prev === undefined) continue;
@@ -5289,7 +5296,7 @@ async function loadPromptAssets() {
     if (!response.ok) throw new Error(data.detail || 'Prompt 资产加载失败');
     const summaryBox = document.getElementById('promptGovernanceSummary');
     if (summaryBox) summaryBox.innerHTML = `<div class="stat-card"><span class="num">${summary.total || 0}</span><span class="lbl">槽位总数</span></div><div class="stat-card"><span class="num">${summary.migrated || 0}</span><span class="lbl">已迁移</span></div><div class="stat-card"><span class="num">${summary.deterministic || 0}</span><span class="lbl">确定性模块</span></div><div class="stat-card"><span class="num" style="color:${summary.ready_for_prompt_governance ? 'var(--g)' : 'var(--r)'}">${summary.ready_for_prompt_governance ? '就绪' : '缺口'}</span><span class="lbl">治理状态</span></div>`;
-    const rows = (data.items || []).map(item => { const governed = ['reflection', 'graph_relation_extraction'].includes(item.slot) || ['memory_profile_proposal', 'memory_conflict', 'judge_faithfulness', 'judge_relevancy', 'judge_hallucination'].includes(item.slot); return `<tr><td>${escHtml(item.slot)}</td><td>${escHtml(item.name)}</td><td>${escHtml(item.model_role || '-')}</td><td>${escHtml(item.description || '')}</td><td>v${escHtml(String(item.active_version || 0))}</td><td>${escHtml(item.status)}</td><td><button class="extension-btn" onclick="editPromptAsset('${escHtml(item.slot)}')">编辑草稿</button> <button class="extension-btn" onclick="rollbackPromptAsset('${escHtml(item.slot)}')">版本</button>${governed ? ` <button class="extension-btn primary" onclick="runPromptAssetGoldenTest('${escHtml(item.slot)}')">测试</button> <button class="extension-btn" onclick="publishPromptAsset('${escHtml(item.slot)}')">发布</button> <button class="extension-btn" onclick="runPromptAssetAb('${escHtml(item.slot)}')">A/B</button>` : ''}</td></tr>`; }).join('');
+    const rows = (data.items || []).map(item => { const legacyGraphPrompt = ['reflection', 'graph_relation_extraction'].includes(item.slot); const governed = legacyGraphPrompt || ['query_rewrite', 'jailbreak_detect', 'semantic_scoring', 'generation_evidence_search', 'tool_router', 'skill_call_planner', 'mcp_call_planner', 'tool_result_summarizer', 'tool_failure_fallback', 'memory_profile_proposal', 'memory_conflict', 'judge_faithfulness', 'judge_relevancy', 'judge_hallucination'].includes(item.slot); return `<tr><td>${escHtml(item.slot)}</td><td>${escHtml(item.name)}</td><td>${escHtml(item.model_role || '-')}</td><td>${escHtml(item.description || '')}</td><td>v${escHtml(String(item.active_version || 0))}</td><td>${escHtml(item.status)}</td><td><button class="extension-btn" onclick="editPromptAsset('${escHtml(item.slot)}')">编辑草稿</button> <button class="extension-btn" onclick="rollbackPromptAsset('${escHtml(item.slot)}')">版本</button>${governed ? ` <button class="extension-btn primary" onclick="runPromptAssetGoldenTest('${escHtml(item.slot)}')">测试</button> <button class="extension-btn" onclick="publishPromptAsset('${escHtml(item.slot)}')">发布</button> <button class="extension-btn" onclick="runPromptAssetAb('${escHtml(item.slot)}')">A/B</button>` : ''}</td></tr>`; }).join('');
     box.innerHTML = rows ? `<table class="data-table" style="width:100%;font-size:12px"><thead><tr><th>槽位</th><th>名称</th><th>模型角色</th><th>用途</th><th>发布版本</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="extension-empty">暂无 Prompt 资产</div>';
   } catch (error) { box.textContent = error.message || '加载失败'; }
 }
@@ -5300,7 +5307,13 @@ async function runPromptAssetGoldenTest(slot) {
     const cases = await casesResponse.json(); if (!casesResponse.ok) throw new Error(cases.detail || '黄金用例加载失败');
     let body = {execute:true, created_by:currentAdminActor()};
     if (slot !== 'reflection') {
-      const example = Object.fromEntries((cases.items || []).map(item => [item.id, {subject_id:'entity-a', predicate:'references', object_id:'entity-b', evidence:'可在原文核验的证据片段'}]));
+      const examples = {
+        query_rewrite: {standalone_query:'网络安全法第八条要求', semantic_query:'网络安全法 第八条 要求', keyword_query:'网络安全法 第八条', query_type:'article_lookup', sub_queries:[], entities:[]},
+        jailbreak_detect: {answer:'no'},
+        semantic_scoring: {score:5},
+        generation_evidence_search: {rag_sufficient:true, external_needed:false, missing_evidence:[], urls:[], clarification:''},
+      };
+      const example = Object.fromEntries((cases.items || []).map(item => [item.id, examples[slot] || {subject_id:'entity-a', predicate:'references', object_id:'entity-b', evidence:'可在原文核验的证据片段'}]));
       const raw = window.prompt('请粘贴本版本在专属黄金用例上的结构化输出 JSON。该测试只校验输出契约，不会切换线上版本。', JSON.stringify(example, null, 2));
       if (raw === null) return;
       try { body = {execute:false, results:JSON.parse(raw), created_by:currentAdminActor()}; }
@@ -5435,7 +5448,9 @@ async function loadGraphNetwork() {
   const scope = graphScope(); const status = document.getElementById('graphNetworkStatus')?.value || 'pending_review';
   const limit = Math.max(10, Math.min(Number(document.getElementById('graphNetworkLimit')?.value || 120), 500));
   box.textContent = '加载关系网...';
-  try { const response = await fetch(`/api/admin/knowledge-graph/network?tenant_id=${encodeURIComponent(scope.tenant_id)}&knowledge_base_id=${encodeURIComponent(scope.knowledge_base_id)}&status=${encodeURIComponent(status)}&limit=${limit}`); const data = await response.json();
+  const documentId = document.getElementById('graphDocument')?.value || '';
+  const semanticOnly = !document.getElementById('graphNetworkShowStructure')?.checked;
+  try { const response = await fetch(`/api/admin/knowledge-graph/network?tenant_id=${encodeURIComponent(scope.tenant_id)}&knowledge_base_id=${encodeURIComponent(scope.knowledge_base_id)}&status=${encodeURIComponent(status)}&document_id=${encodeURIComponent(documentId)}&semantic_only=${semanticOnly}&limit=${limit}`); const data = await response.json();
     if (!response.ok) throw new Error(data.detail || '关系网加载失败'); renderGraphNetwork(data.nodes || [], data.edges || [], box);
   } catch (error) { box.textContent = error.message || '关系网加载失败'; }
 }
@@ -6087,6 +6102,18 @@ async function loadRetrievalEval() {
       <div class="stat-card" title="第一个相关文档排位的倒数均值，越接近1越好"><span class="num blue">${summary.avg_mrr.toFixed(3)}</span><span class="label">平均 MRR</span></div>
       <div class="stat-card" title="FAISS 向量数据库中的向量总数" style="border-left:2px solid #8b5cf6"><span class="num" style="color:#8b5cf6">${faissCount}</span><span class="label">FAISS 向量</span></div>
       <div class="stat-card" title="Chroma 向量数据库中的向量总数" style="border-left:2px solid #f59e0b"><span class="num" style="color:#f59e0b">${chromaCount}</span><span class="label">Chroma 向量</span></div>
+      ${(() => {
+        const d = data.retrieval_degradation || {};
+        const sampled = d.sampled || 0;
+        const degraded = d.degraded || 0;
+        const pendingExcluded = d.pending_profile_excluded || 0;
+        const degradedPct = sampled ? (degraded / sampled * 100).toFixed(1) : '0.0';
+        const pendingPct = sampled ? (pendingExcluded / sampled * 100).toFixed(1) : '0.0';
+        const stages = Object.keys(d.degraded_stages || {}).length;
+        return `
+      <div class="stat-card" title="最近 ${sampled} 次检索中发生 FAISS/Chroma/BM25/Reranker 降级的比例" style="border-left:2px solid ${degraded ? '#ff9500' : 'var(--g)'}"><span class="num" style="color:${degraded ? '#ff9500' : 'var(--g)'}">${degradedPct}%</span><span class="label">检索降级率</span></div>
+      <div class="stat-card" title="最近检索中因资料处于 pending 未审核而被过滤的累计次数" style="border-left:2px solid ${pendingExcluded ? '#8b5cf6' : 'var(--g)'}"><span class="num" style="color:${pendingExcluded ? '#8b5cf6' : 'var(--g)'}">${pendingExcluded}</span><span class="label">待审核过滤</span></div>`;
+      })()}
       <button onclick="window.open('/api/stats/retrieval-eval/report')" style="padding:4px 14px;background:var(--g);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">📄 导出报告</button>`;
 
     const passCount = items.filter(i => i.recall_5 === 1).length;
@@ -6380,7 +6407,7 @@ function renderE2eResults(results) {
   const scorable = results.filter(r => r.scores && Object.keys(r.scores).length > 0);
   const keys = ['context_precision','context_recall','faithfulness','relevancy','hallucination'];
   const labels = {context_precision:'CP',context_recall:'CR',faithfulness:'FT',relevancy:'RL',hallucination:'HC'};
-  const names = {context_precision:'Context Precision',context_recall:'Context Recall',faithfulness:'Faithfulness',relevancy:'Relevancy',hallucination:'Hallucination'};
+  const names = {context_precision:'Context Precision',context_recall:'Context Recall',faithfulness:'Faithfulness',relevancy:'Relevancy',hallucination:'No-Hallucination Rate'};
 
   const avgScores = {};
   keys.forEach(k => {
@@ -6840,8 +6867,60 @@ async function checkReleaseReadiness() {
     const response = await fetch('/api/agent-eval/release-readiness');
     const data = await response.json(); if (!response.ok) throw new Error(data.detail || '发布就绪检查失败');
     const readiness = data.readiness || {}; const failed = (readiness.checks || []).filter(item => !item.passed);
+    renderReleaseReadiness(readiness);
     status.textContent = readiness.ready ? '发布就绪：模型、测试、校准和最近评测证据均齐全。' : `发布未就绪：${failed.map(item => item.label).join('；') || '请检查证据'}`;
   } catch (error) { status.textContent = '发布就绪检查失败：' + error.message; }
+}
+
+function renderReleaseReadiness(readiness) {
+  const panel = document.getElementById('releaseReadinessPanel');
+  const table = document.getElementById('releaseReadinessTable');
+  if (!panel || !table) return;
+  panel.style.display = 'block';
+  const evidenceKeys = new Set(['baseline.production', 'langfuse.scope', 'mcp.production']);
+  const rows = (readiness.checks || []).map(item => {
+    const status = item.passed ? '<span style="color:var(--g)">通过</span>' : '<span style="color:var(--r)">阻塞</span>';
+    const action = !item.passed && evidenceKeys.has(item.id)
+      ? `<button onclick="recordReleaseEvidence('${escHtml(item.id)}')" style="padding:4px 9px;border:1px solid var(--b2);background:var(--bg1);color:var(--t1);border-radius:4px;cursor:pointer;font-size:11px">录入证据</button>`
+      : '';
+    return `<tr><td>${escHtml(item.label || item.id)}</td><td>${status}</td><td>${escHtml(item.detail || '')}</td><td>${action}</td></tr>`;
+  }).join('');
+  table.innerHTML = `<table class="data-table" style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr><th>检查项</th><th>状态</th><th>说明</th><th>操作</th></tr></thead><tbody>${rows || '<tr><td colspan="4">暂无门禁数据</td></tr>'}</tbody></table>`;
+}
+
+async function recordReleaseEvidence() {
+  const selectedKey = arguments[0] || '';
+  const key = selectedKey || window.prompt('证据类型：baseline.production / langfuse.scope / mcp.production', 'baseline.production');
+  if (!key) return;
+  const payload = {key, passed:true};
+  if (key === 'baseline.production') {
+    const runsResponse = await fetch('/api/agent-eval/runs?limit=1');
+    const runsData = await runsResponse.json();
+    const latest = (runsData.items || [])[0];
+    if (!latest) { showToast('❌ 没有可绑定的评测运行'); return; }
+    payload.run_id = latest.run_id;
+    payload.model = window.prompt('生产基线模型名称（可选）', '') || '';
+  } else if (key === 'langfuse.scope') {
+    const configResponse = await fetch('/api/agent-eval/langfuse/config');
+    const configData = await configResponse.json();
+    payload.mode = configData.config?.enabled ? 'enabled' : 'disabled';
+    payload.scope_note = window.prompt('数据范围确认说明', payload.mode === 'disabled' ? '已确认禁用外发' : '') || '';
+  } else if (key === 'mcp.production') {
+    if (!window.confirm('请确认已完成工具白名单、凭证、网络出口和人工审批演练。')) return;
+    payload.whitelist = true; payload.credentials = true;
+    payload.network_egress = true; payload.human_approval = true;
+  } else {
+    showToast('❌ 不支持的证据类型'); return;
+  }
+  try {
+    const response = await fetch('/api/agent-eval/release-readiness/evidence', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || data.detail || '保存失败');
+    showToast('✅ 人工发布证据已登记');
+    checkReleaseReadiness();
+  } catch (error) { showToast('❌ ' + error.message); }
 }
 
 async function runAgentEval() {

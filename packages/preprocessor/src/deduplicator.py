@@ -332,12 +332,25 @@ def _get_embedder():
                 base_url="http://localhost:11434",
             )
         except ImportError:
-            # fallback: 不用 langchain
+            # 本地 SentenceTransformer 是可选回退，默认不加载，避免
+            # Transformers 的 TensorFlow/Keras 兼容问题影响主流程。
+            if os.environ.get(
+                "SECURENEXUS_ENABLE_LOCAL_SENTENCE_TRANSFORMER", "0"
+            ) != "1":
+                raise RuntimeError(
+                    "Layer 3 需要 langchain-ollama；如需启用本地 "
+                    "SentenceTransformer，请设置 "
+                    "SECURENEXUS_ENABLE_LOCAL_SENTENCE_TRANSFORMER=1，"
+                    "并安装可选依赖 local-embedding"
+                )
             try:
                 from sentence_transformers import SentenceTransformer
                 _EMBED_MODEL = SentenceTransformer("BAAI/bge-small-zh-v1.5")
-            except ImportError:
-                raise RuntimeError("Layer 3 需要 langchain-ollama 或 sentence-transformers")
+            except Exception as exc:
+                raise RuntimeError(
+                    "本地 SentenceTransformer 不可用，请安装可选依赖 "
+                    f"local-embedding；原始错误: {exc}"
+                ) from exc
     return _EMBED_MODEL
 
 
@@ -504,9 +517,6 @@ class Deduplicator:
         self._existing_cache = existing
         return existing
 
-    def invalidate_cache(self):
-        self._existing_cache = None
-
     # ── Layer 1 ──────────────────────────────────────────
 
     def check_file(self, filepath: str, filename: str | None = None) -> DedupResult:
@@ -656,6 +666,19 @@ class Deduplicator:
                     return result
 
         return result
+
+    def existing_simhash_fingerprints(self) -> list[int]:
+        """Build a bounded fingerprint set from already cleaned documents."""
+        fingerprints = []
+        for category_dir in sorted(self.cleaned_dir.iterdir()) if self.cleaned_dir.exists() else []:
+            if not category_dir.is_dir() or category_dir.name.startswith("_"):
+                continue
+            for path in category_dir.glob("*.md"):
+                try:
+                    fingerprints.append(SimHash(path.read_text(encoding="utf-8")[:10000]).fingerprint)
+                except (OSError, UnicodeError):
+                    continue
+        return fingerprints
 
     # ── Layer 3 ──────────────────────────────────────────
 

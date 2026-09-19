@@ -3,12 +3,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+from auth import is_admin_route
 from fastapi import HTTPException, Request
 
 
 DEFAULT_TENANT_ID = "local-default"
 DEFAULT_USER_ID = "local-owner"
 DEFAULT_AGENT_ID = "default-agent"
+FRONT_SESSION_COOKIE = "securenexus_session"
+ADMIN_SESSION_COOKIE = "securenexus_admin_session"
+ADMIN_CSRF_COOKIE = "securenexus_admin_csrf"
+ADMIN_CONTEXT_HEADER = "X-Admin-Context"
 
 
 # Monitoring is intentionally review-first: only the platform administrator can
@@ -43,12 +48,29 @@ def default_principal() -> Principal:
     return Principal(DEFAULT_TENANT_ID, DEFAULT_USER_ID, DEFAULT_AGENT_ID, "platform_admin", False)
 
 
-def principal_from_request(request: Request, memory) -> Principal:
+def uses_admin_session(request: Request) -> bool:
+    """Whether this request belongs to the admin console session context."""
+    if request.headers.get(ADMIN_CONTEXT_HEADER, "").lower() in {"1", "true", "admin"}:
+        return True
+    # /api/auth/me is shared by both UIs, so the admin UI explicitly marks it.
+    request_url = getattr(request, "url", None)
+    return is_admin_route(getattr(request_url, "path", ""))
+
+
+def session_token_from_request(request: Request) -> str:
+    """Resolve a browser cookie after honoring an explicit bearer token."""
     authorization = request.headers.get("Authorization", "").strip()
-    token_from_cookie = False
-    if not authorization:
-        authorization = str(getattr(request, "cookies", {}).get("securenexus_session", "") or "").strip()
-        token_from_cookie = bool(authorization)
+    if authorization:
+        return authorization
+    cookies = getattr(request, "cookies", {})
+    if uses_admin_session(request):
+        return str(cookies.get(ADMIN_SESSION_COOKIE, "") or "")
+    return str(cookies.get(FRONT_SESSION_COOKIE, "") or "")
+
+
+def principal_from_request(request: Request, memory) -> Principal:
+    authorization = session_token_from_request(request)
+    token_from_cookie = bool(authorization and not authorization.lower().startswith("bearer "))
     if not authorization:
         allow_legacy = os.environ.get("ALLOW_LEGACY_LOCAL_WORKSPACE", "0").strip().lower()
         if allow_legacy not in {"1", "true", "yes", "on"}:

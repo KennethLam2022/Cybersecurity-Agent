@@ -237,8 +237,6 @@ def _generate_eval_summary(eval_llm, tab_type: str, result: dict, items: list, u
 
         result_items = result.get("items", [])
         fail_items = [it for it in result_items if it.get("recall_5") == 0]
-        double_fail = [it for it in result_items if it.get(
-            "recall_5") == 0 and it.get("recall_10") == 0]
         low_mrr = [it for it in result_items if 0 < it.get("mrr", 1) < 0.5]
 
         fail_detail = ""
@@ -342,7 +340,7 @@ def _generate_eval_summary(eval_llm, tab_type: str, result: dict, items: list, u
             "context_recall": "Context Recall（上下文召回）",
             "faithfulness": "Faithfulness（忠实度）",
             "relevancy": "Relevancy（相关性）",
-            "hallucination": "Hallucination（幻觉检测）",
+            "hallucination": "No-Hallucination Rate（无幻觉率）",
         }
 
         low_items_by_key = {}
@@ -389,7 +387,7 @@ def _generate_eval_summary(eval_llm, tab_type: str, result: dict, items: list, u
 - 平均 Context Recall：{avg_scores.get('context_recall', 0)*100:.0f}%
 - 平均 Faithfulness：{avg_scores.get('faithfulness', 0)*100:.0f}%
 - 平均 Relevancy：{avg_scores.get('relevancy', 0)*100:.0f}%
-- 平均 Hallucination：{avg_scores.get('hallucination', 0)*100:.0f}%
+- 平均无幻觉率：{avg_scores.get('hallucination', 0)*100:.0f}%
 
 ## 各域表现{domain_detail}
 {low_detail}
@@ -556,11 +554,31 @@ def _clean_staging_task_dir(task_id: str):
         logger.info(f"🧹 已清理 staging 任务目录: {task_id}")
 
 
+def _resolve_source_dir(directory: str) -> str:
+    """Resolve source-map placeholders against the active project root."""
+    path = str(directory or "").strip()
+    if not path:
+        return ""
+    path = path.replace(
+        "<knowledge-base>",
+        str(_PROJECT_ROOT / "RAG_DATA" / "03_cleaned"),
+    )
+    return os.path.normpath(os.path.expandvars(path))
+
+
 def _load_source_map() -> dict:
-    sm_path = Path(__file__).resolve().parent.parent.parent.parent / \
-        "packages" / "preprocessor" / "src" / "source_map.json"
-    if sm_path.exists():
-        return json.loads(sm_path.read_text(encoding="utf-8"))
+    source_dir = _PROJECT_ROOT / "packages" / "preprocessor" / "src"
+    candidates = (source_dir / "source_map.json", source_dir / "source_profiles.example.json")
+    for sm_path in candidates:
+        if not sm_path.exists():
+            continue
+        try:
+            data = json.loads(sm_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+            logger.warning("资料源配置不是 JSON 对象: %s", sm_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("读取资料源配置失败 %s: %s", sm_path, exc)
     return {}
 
 
@@ -588,8 +606,9 @@ def _get_source_dirs() -> list[str]:
             logger.info(f"跳过未启用资料源 profile: {cat_name} ({cat_config.get('profile') or cat_config.get('scope')})")
             continue
         for d in cat_config.get("source_dirs", []):
-            if d and os.path.isdir(d):
-                dirs.append(d)
+            resolved = _resolve_source_dir(d)
+            if resolved and os.path.isdir(resolved):
+                dirs.append(resolved)
     return dirs
 
 
@@ -647,7 +666,10 @@ def _parse_single_file(file_path: str, task_id: str, skip_layer2: bool = False) 
 
         if not skip_layer2:
             dedup = _get_dedup()
-            dedup2 = dedup.check_text(raw_text, file_path_obj.name)
+            dedup2 = dedup.check_text(
+                raw_text, file_path_obj.name,
+                existing_fingerprints=dedup.existing_simhash_fingerprints(),
+            )
             if dedup2.is_duplicate:
                 logger.warning(f"  ⚠️ Layer 2 检测到文本重复: {file_path_obj.name} ({dedup2.reason})")
                 return None
@@ -1207,7 +1229,7 @@ def _render_trace_report(trace: dict) -> str:
             steps_html += f"""<h3>#{step_num} LLM 生成</h3>
 <p>模型: {model}</p>
 <p>生成耗时: {t}s | 总耗时: {total}s</p>
-<p>回答长度: {rsp_len} 字符 | 思考过程: {rsn_len} 字符</p>
+<p>回答长度: {rsp_len} 字符 | 依据摘要: {rsn_len} 字符</p>
 <p>Prompt 预览（末2轮）:</p><pre style="background:#fff;padding:8px;border-radius:4px;font-size:12px">{preview}</pre>"""
         elif step_name == "post_processing":
             corrected = s.get("source_check_corrected", False)
@@ -1382,7 +1404,7 @@ def _init_on_startup():
                     (active_v,)
                 ).fetchone()
             if rows and rows[1]:
-                SystemPromptLoader._path.write_text(rows[1], encoding="utf-8")
+                SystemPromptLoader.write(rows[1])
                 SystemPromptLoader._cache = None
                 SystemPromptLoader._mtime = 0
                 logger.info(f"  ✅ 启动同步: active_prompt.txt ← DB 版本 {rows[0]} ({active_v})")

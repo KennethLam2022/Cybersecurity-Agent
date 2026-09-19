@@ -16,18 +16,22 @@ from pathlib import Path
 import chromadb
 from chromadb.config import Settings
 import ollama
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings
+from legal_chunking import chunk_markdown_document
+from index_contract import normalize_metadata, write_manifest, index_config, record_index_stage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+BATCH_SIZE = 16
+
 BASE = Path(__file__).resolve().parent.parent.parent.parent / "RAG_DATA" / "03_cleaned"
 STORE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "RAG_DATA" / "04_vector_store"
 _FAISS_DIR = str(STORE_DIR / "faiss_index")
-EMBED_MODEL = "quentinz/bge-small-zh-v1.5"
-OLLAMA_URL = "http://localhost:11434"
+_INDEX_CONFIG = index_config()
+EMBED_MODEL = _INDEX_CONFIG["embedding_model"]
+OLLAMA_URL = _INDEX_CONFIG["embedding_base_url"]
 
 # LangChain 包装器（FAISS 需要 embedding 对象做查询）
 lc_embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_URL)
@@ -47,56 +51,26 @@ logger.info(f"共 {len(files)} 份文档")
 
 def chunk_document(file_path, cat, stem):
     text = Path(file_path).read_text(encoding="utf-8")
-    version_warning = ""
-    for line in text.split("\n")[:5]:
-        if "⚠️" in line:
-            version_warning = line.strip()
-            break
-
-    lines = text.split("\n")
-    current_section = "前言"
-    current_texts = []
-    sections = []
-    for line in lines:
-        if line.startswith("## "):
-            if current_texts:
-                sections.append((current_section, "\n".join(current_texts)))
-            current_section = line.lstrip("# ").strip()
-            current_texts = [line]
-        elif line.startswith("### ") or line.startswith("# "):
-            if current_texts:
-                sections.append((current_section, "\n".join(current_texts)))
-            current_section = line.lstrip("# ").strip()
-            current_texts = [line]
-        else:
-            current_texts.append(line)
-    if current_texts:
-        sections.append((current_section, "\n".join(current_texts)))
-
-    CHUNK_SIZE = 384
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE, chunk_overlap=50,
-        separators=["\n\n", "\n", "。", "，", " ", ""]
-    )
-
+    sidecar = Path(file_path).with_suffix(".meta.json")
+    file_metadata = {}
+    if sidecar.exists():
+        try:
+            file_metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("读取文档元数据失败: %s", sidecar)
+    version_warning = next((line.strip() for line in text.splitlines()[:5] if "⚠️" in line), "")
     chunks = []
-    for idx, (sec_title, sec_text) in enumerate(sections):
-        if len(sec_text) > CHUNK_SIZE:
-            sub_chunks = splitter.split_text(sec_text)
-            for i, sub in enumerate(sub_chunks):
-                content = sub
-                if version_warning:
-                    content = f"{version_warning}\n\n{sub}"
-                chunks.append({"content": content, "file_name": stem, "category": cat,
-                               "section": sec_title, "chunk_id": f"{stem}__s{idx}__{i}",
-                               "parent_id": f"{stem}__s{idx}"})
-        else:
-            content = sec_text
-            if version_warning:
-                content = f"{version_warning}\n\n{sec_text}"
-            chunks.append({"content": content, "file_name": stem, "category": cat,
-                           "section": sec_title, "chunk_id": f"{stem}__s{idx}",
-                           "parent_id": f"{stem}__s{idx}"})
+    for index, item in enumerate(chunk_markdown_document(text, stem, chunk_size=800)):
+        content = item["content"]
+        if version_warning:
+            content = f"{version_warning}\n\n{content}"
+        suffix = item.get("clause") or f"p{item.get('piece_index', index)}"
+        chunks.append({
+            "content": content, "file_name": stem, "category": cat,
+            "section": item["section"], "clause": item.get("clause", ""),
+            "chunk_type": item.get("chunk_type", "section"),
+            "chunk_id": f"{stem}__s{item['section_index']}__{suffix}",
+            "parent_id": f"{stem}__s{item['section_index']}", **file_metadata})
     return chunks
 
 
@@ -107,16 +81,14 @@ for fp, cat, stem in files:
 logger.info(f"切片完成：{len(all_chunks)} chunks")
 
 texts = [c["content"] for c in all_chunks]
-metadatas = [{"file_name": c["file_name"], "category": c["category"],
-              "section": c["section"], "chunk_id": c["chunk_id"],
-              "parent_id": c["parent_id"]} for c in all_chunks]
+metadatas = [normalize_metadata(c) for c in all_chunks]
 ids = [c["chunk_id"] for c in all_chunks]
 
 # 3. 用 ollama.embed() 批量计算 embedding（比 LangChain 逐条快很多）
 logger.info(f"批量计算 {len(texts)} 个 embeddings (Ollama batch API)...")
+record_index_stage(STORE_DIR, "embedding", "started", batch_size=BATCH_SIZE, item_count=len(texts), model=EMBED_MODEL)
 t0 = time.time()
 
-BATCH_SIZE = 16
 all_embeddings = []
 for i in range(0, len(texts), BATCH_SIZE):
     batch = texts[i:i+BATCH_SIZE]
@@ -128,6 +100,7 @@ for i in range(0, len(texts), BATCH_SIZE):
 
 elapsed = time.time() - t0
 logger.info(f"embedding 完成，维度={len(all_embeddings[0])}，耗时={elapsed:.0f}s")
+record_index_stage(STORE_DIR, "embedding", "completed", item_count=len(texts), vector_dimension=len(all_embeddings[0]) if all_embeddings else 0, duration_s=round(elapsed, 3))
 
 # 4. 重建 Chroma
 chroma_dir = os.path.join(str(STORE_DIR), "chroma_db")
@@ -142,8 +115,10 @@ chroma_client = chromadb.PersistentClient(
 collection = chroma_client.create_collection(
     name="cyber_security",
     metadata={
-        "hnsw:space": "cosine",
+        "hnsw:space": _INDEX_CONFIG["chroma_space"],
         "hnsw:sync_threshold": 100000,
+        "index_contract_version": _INDEX_CONFIG["contract_version"],
+        "embedding_model": EMBED_MODEL,
     },
 )
 
@@ -157,6 +132,7 @@ for i in range(0, len(ids), BATCH):
         metadatas=metadatas[i:end],
     )
 logger.info(f"Chroma 重建完成：{collection.count()} chunks")
+record_index_stage(STORE_DIR, "chroma_index", "completed", item_count=collection.count(), space=_INDEX_CONFIG["chroma_space"])
 
 # 5. 重建 FAISS（复用预计算 embedding）
 faiss_dir = str(STORE_DIR / "faiss_index")
@@ -179,6 +155,9 @@ faiss_db.save_local(_tmp_faiss)
 shutil.copytree(_tmp_faiss, faiss_dir)
 shutil.rmtree(_tmp_faiss)
 logger.info(f"FAISS 重建完成：{faiss_db.index.ntotal} vectors")
+record_index_stage(STORE_DIR, "faiss_index", "completed", item_count=faiss_db.index.ntotal)
+write_manifest(STORE_DIR / "index_manifest.json", all_chunks,
+               len(all_embeddings[0]) if all_embeddings else 0)
 
 # 6. 验证
 logger.info(f"\n{'='*60}")

@@ -16,6 +16,7 @@ import json
 import re
 import random
 import threading
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
 import chromadb
@@ -39,14 +40,19 @@ from metadata_filter import (
 )
 from security_taxonomy import infer_categories_from_text
 from profile_classifier import available_profiles, enabled_retrieval_profiles, profile_for_metadata
+from clause_awareness import apply_clause_awareness
+from index_contract import validate_manifest
+from retrieval_text import build_bm25_text, tokenize_for_retrieval
 
 jieba = load_jieba()
 
 logger = logging.getLogger(__name__)
 
 _RAG = Path(__file__).resolve().parent.parent.parent.parent / "RAG_DATA"
-_FAISS_DIR = os.path.join(str(_RAG / "04_vector_store" / "faiss_index"))
-_CHROMA_DIR = os.path.join(str(_RAG / "04_vector_store" / "chroma_db"))
+_VECTOR_STORE_ROOT = Path(os.environ.get("SECURENEXUS_VECTOR_STORE_DIR", str(_RAG / "04_vector_store")))
+_FAISS_DIR = str(_VECTOR_STORE_ROOT / "faiss_index")
+_CHROMA_DIR = str(_VECTOR_STORE_ROOT / "chroma_db")
+_CHROMA_COLLECTION = os.environ.get("SECURENEXUS_CHROMA_COLLECTION", "cyber_security")
 
 _RETRIEVE_MULTIPLIER = 5
 
@@ -165,6 +171,29 @@ def _backoff_rerank(attempt: int, base: float = 2.0) -> float:
 _rerank_circuit_breaker = _RerankCircuitBreaker()
 
 
+def validate_rerank_results(raw_results: list[dict], candidate_count: int) -> tuple[list[dict], str]:
+    """Validate provider output without losing candidates or accepting bad indexes."""
+    accepted = []
+    seen = set()
+    invalid = 0
+    for item in raw_results or []:
+        try:
+            index = int(item.get("index"))
+            score = float(item.get("relevance_score"))
+        except (TypeError, ValueError, AttributeError):
+            invalid += 1
+            continue
+        if index < 0 or index >= candidate_count or index in seen:
+            invalid += 1
+            continue
+        if not (-1.0 <= score <= 1.0):
+            invalid += 1
+            continue
+        seen.add(index)
+        accepted.append({"index": index, "relevance_score": score})
+    return accepted, ("invalid_results" if invalid else "ok")
+
+
 class CyberRetriever:
     """网络安全知识库检索器 — Chroma + FAISS 双库 + 硅基流动 Reranker + 父文档检索 + BM25 混合检索"""
 
@@ -191,7 +220,10 @@ class CyberRetriever:
         self._bm25: Optional[BM25Okapi] = None
         self._bm25_docs: Optional[list[dict]] = None
         self._use_hybrid = use_hybrid
+        self._index_manifest_path = _VECTOR_STORE_ROOT / "index_manifest.json"
+        self._index_contract_errors: list[str] = []
         self.last_trace: dict = {}
+        self._last_rerank_trace: dict = {"status": "not_run"}
         # BM25 在首次检索时按需构建，避免应用启动阶段读取并扫描全部父文档。
         # 用于匹配文档编号的正则，如 YD/T 2692-2014, GB/T 22239-2019
         self._doc_id_pattern = re.compile(r"([A-Z]+/[T]\s*\d+[-]?\d*)")
@@ -324,7 +356,7 @@ class CyberRetriever:
                 "content": pdata["text"],
                 "file_name": pdata["file_name"],
                 "category": pdata["category"],
-                "section": pdata["section"],
+                "section": pdata.get("section", ""),
                 "chunk_id": pid,
                 "parent_id": pid,
                 "profile": pdata.get("profile", ""),
@@ -349,6 +381,7 @@ class CyberRetriever:
     def _load_faiss(self):
         if self._faiss_db is not None:
             return
+        self._validate_index_contract()
         idx_path = os.path.join(_FAISS_DIR, "index.faiss")
         if not os.path.exists(idx_path):
             raise FileNotFoundError(f"FAISS 索引不存在: {_FAISS_DIR}")
@@ -377,11 +410,18 @@ class CyberRetriever:
             )
         finally:
             shutil.rmtree(_tmp_load, ignore_errors=True)
+        if self._index_manifest_path.exists():
+            manifest = json.loads(self._index_manifest_path.read_text(encoding="utf-8"))
+            expected_dimension = int(manifest.get("vector_dimension") or 0)
+            actual_dimension = int(getattr(self._faiss_db.index, "d", 0) or 0)
+            if expected_dimension and actual_dimension and expected_dimension != actual_dimension:
+                raise RuntimeError(f"Embedding 维度不匹配: {actual_dimension} != {expected_dimension}")
         logger.info(f"FAISS 加载完成 ({time.time() - t0:.2f}s, {self._faiss_db.index.ntotal} vectors)")
 
     def _load_chroma(self):
         if self._chroma_collection is not None:
             return
+        self._validate_index_contract()
         if not os.path.exists(_CHROMA_DIR):
             raise FileNotFoundError(f"Chroma 库不存在: {_CHROMA_DIR}")
         t0 = time.time()
@@ -389,14 +429,35 @@ class CyberRetriever:
             path=_CHROMA_DIR,
             settings=Settings(anonymized_telemetry=False),
         )
-        self._chroma_collection = self._chroma_client.get_collection("cyber_security")
+        self._chroma_collection = self._chroma_client.get_collection(_CHROMA_COLLECTION)
+        metadata = self._chroma_collection.metadata or {}
+        expected_space = os.environ.get("SECURENEXUS_CHROMA_SPACE", "cosine")
+        actual_space = metadata.get("hnsw:space")
+        if actual_space and actual_space != expected_space:
+            raise RuntimeError(f"Chroma 距离空间不匹配: {actual_space} != {expected_space}")
         cnt = self._chroma_collection.count()
         logger.info(f"Chroma 加载完成 ({time.time() - t0:.2f}s, {cnt} chunks)")
+
+    def _validate_index_contract(self):
+        if self._index_contract_errors:
+            raise RuntimeError("索引契约不匹配: " + "; ".join(self._index_contract_errors))
+        if not self._index_manifest_path.exists():
+            logger.warning("索引 manifest 不存在，使用兼容模式: %s", self._index_manifest_path)
+            return
+        try:
+            manifest = json.loads(self._index_manifest_path.read_text(encoding="utf-8"))
+            model = getattr(self._embedding_model, "model", "") or ""
+            dimension = int(manifest.get("vector_dimension") or 0)
+            self._index_contract_errors = validate_manifest(manifest, model=model, dimension=dimension)
+        except Exception as exc:
+            self._index_contract_errors = [f"manifest unreadable: {exc}"]
+        if self._index_contract_errors:
+            raise RuntimeError("索引契约不匹配: " + "; ".join(self._index_contract_errors))
 
     def _load_parent_index(self):
         if self._parent_index is not None:
             return
-        p = _RAG / "04_vector_store" / "parent_texts.json"
+        p = _VECTOR_STORE_ROOT / "parent_texts.json"
         if not p.exists():
             logger.warning(f"父文档索引不存在: {p}，跳过父文档检索")
             self._parent_index = {}
@@ -405,8 +466,11 @@ class CyberRetriever:
         self._parent_index = json.loads(p.read_text(encoding="utf-8"))
         logger.info(f"父文档索引加载完成: {len(self._parent_index)} 条 ({time.time() - t0:.2f}s)")
 
+    def _bm25_cache_path(self) -> Path:
+        return _VECTOR_STORE_ROOT / "bm25_cache.pkl"
+
     def _build_bm25_index(self):
-        """从 parent_texts.json 构建 BM25 索引（懒加载）"""
+        """从 parent_texts.json 构建 BM25 索引（懒加载 + 磁盘缓存）"""
         if self._bm25 is not None:
             return
         self._load_parent_index()
@@ -416,20 +480,39 @@ class CyberRetriever:
             self._bm25_docs = []
             return
 
+        # L4: try loading from cache; invalidate when parent_texts.json is newer
+        cache_file = self._bm25_cache_path()
+        parent_file = _VECTOR_STORE_ROOT / "parent_texts.json"
+        parent_mtime = parent_file.stat().st_mtime if parent_file.exists() else 0
+        if cache_file.exists() and cache_file.stat().st_mtime > parent_mtime:
+            try:
+                import pickle as _pkl
+                with open(cache_file, "rb") as _f:
+                    cached = _pkl.load(_f)
+                self._bm25 = cached["bm25"]
+                self._bm25_docs = cached["docs"]
+                logger.info(f"BM25 索引从缓存加载: {len(self._bm25_docs)} 条")
+                return
+            except Exception:
+                logger.warning("BM25 缓存加载失败，回退到完整构建")
+
         t0 = time.time()
         texts = []
         docs = []
         for pid, pdata in self._parent_index.items():
-            text = pdata["text"].strip()
+            text = build_bm25_text(pdata)
             if len(text) < 20:
                 continue
-            tokens = list(jieba.cut(text))
+            tokens = tokenize_for_retrieval(text)
             texts.append(tokens)
             docs.append({
-                "content": text,
+                "content": str(pdata.get("text", "")).strip(),
                 "file_name": pdata["file_name"],
+                "title": pdata.get("title", ""),
+                "standard_name": pdata.get("standard_name", ""),
+                "aliases": pdata.get("aliases", []),
                 "category": pdata["category"],
-                "section": pdata["section"],
+                "section": pdata.get("section", ""),
                 "chunk_id": pid,
                 "parent_id": pid,
                 "profile": pdata.get("profile", ""),
@@ -446,6 +529,15 @@ class CyberRetriever:
         self._bm25_docs = docs
         logger.info(f"BM25 索引构建完成: {len(docs)} 条 ({time.time() - t0:.2f}s)")
 
+        # L4: save to cache for next startup
+        try:
+            import pickle as _pkl
+            with open(cache_file, "wb") as _f:
+                _pkl.dump({"bm25": self._bm25, "docs": docs}, _f)
+            logger.info(f"BM25 缓存已写入: {cache_file.name}")
+        except Exception as _e:
+            logger.warning(f"BM25 缓存写入失败: {_e}")
+
     def _bm25_search(self, query: str, top_k: int, access_scope: Optional[dict] = None) -> list[dict]:
         """BM25 关键词检索"""
         self._build_bm25_index()
@@ -453,7 +545,7 @@ class CyberRetriever:
             return []
 
         t0 = time.time()
-        tokens = list(jieba.cut(query))
+        tokens = tokenize_for_retrieval(query)
         scores = self._bm25.get_scores(tokens)
         top_indices = sorted(
             range(len(scores)), key=lambda i: scores[i], reverse=True
@@ -474,12 +566,25 @@ class CyberRetriever:
         return results
 
     @staticmethod
-    def _rrf_merge(vector_results: list[dict], bm25_results: list[dict], top_k: int, k: int = 60) -> list[dict]:
-        """RRF 融合：将向量检索和 BM25 结果按倒数排名融合"""
+    def _fusion_weights(query_type: str = "general") -> tuple[float, float]:
+        """Return vector/keyword weights for the query's retrieval intent."""
+        if query_type in {"standard_lookup", "article_lookup"}:
+            return 0.35, 0.65
+        if query_type == "comparison":
+            return 0.45, 0.55
+        return 0.5, 0.5
+
+    @staticmethod
+    def _rrf_merge(
+        vector_results: list[dict], bm25_results: list[dict], top_k: int,
+        k: int = 60, query_type: str = "general",
+    ) -> list[dict]:
+        """RRF 融合：按查询意图自适应平衡向量和关键词结果。"""
+        vector_weight, keyword_weight = CyberRetriever._fusion_weights(query_type)
         seen = {}
         for rank, doc in enumerate(vector_results):
             pid = doc.get("chunk_id") or doc.get("parent_id") or id(doc)
-            score = 1.0 / (k + rank + 1)
+            score = vector_weight / (k + rank + 1)
             if pid not in seen or score > seen[pid]["_rrf_score"]:
                 seen[pid] = dict(doc)
                 seen[pid]["_rrf_score"] = score
@@ -487,7 +592,7 @@ class CyberRetriever:
 
         for rank, doc in enumerate(bm25_results):
             pid = doc.get("chunk_id") or doc.get("parent_id") or id(doc)
-            score = 1.0 / (k + rank + 1)
+            score = keyword_weight / (k + rank + 1)
             if pid not in seen:
                 seen[pid] = dict(doc)
                 seen[pid]["_rrf_score"] = score
@@ -503,8 +608,8 @@ class CyberRetriever:
         )
 
         for d in sorted_docs:
-            d.pop("_rrf_score", None)
-            d.pop("_rrf_contrib", None)
+            d["rank_score"] = round(float(d.pop("_rrf_score", 0.0)), 8)
+            d["rank_sources"] = d.pop("_rrf_contrib", "")
 
         logger.info(
             f"RRF 融合: {len(vector_results)} 向量 + {len(bm25_results)} BM25 → {len(sorted_docs)} 去重")
@@ -528,14 +633,14 @@ class CyberRetriever:
 
         sorted_docs = sorted(seen.values(), key=lambda d: d.get("_rrf_score", 0), reverse=True)
         for d in sorted_docs:
-            d.pop("_rrf_score", None)
-            d.pop("_rrf_contrib", None)
+            d["rank_score"] = round(float(d.pop("_rrf_score", 0.0)), 8)
+            d["rank_sources"] = d.pop("_rrf_contrib", [])
         return sorted_docs[:top_k]
 
     def _resolve_parent_docs(
         self, child_docs: list[dict], top_k: int, access_scope: Optional[dict] = None,
     ) -> list[dict]:
-        """将子chunk列表按 parent_id 分组去重，返回父节完整文本
+        """将子chunk列表按 parent_id 分组去重，返回带边界的父节上下文
 
         流程：
           子chunk（按rerank_score或score排序）→ 按parent_id聚合
@@ -554,19 +659,46 @@ class CyberRetriever:
                 continue
             score = d.get("rerank_score") if use_rerank_score else d.get("score", 0)
             if pid not in parent_best or score is None:
-                parent_best[pid] = (score, d.get("source", ""))
+                parent_best[pid] = (
+                    score,
+                    d.get("source", ""),
+                    d.get("clause_awareness", 0),
+                    d.get("clause_exact_match", False),
+                    d.get("clause", ""),
+                    {key: d.get(key, "") for key in ("chunk_id", "page", "page_number", "char_start", "char_end", "document_id", "knowledge_base_id", "tenant_id", "owner_user_id", "agent_id")},
+                )
             elif score is not None:
                 if use_rerank_score:
                     if score > parent_best[pid][0]:
-                        parent_best[pid] = (score, d.get("source", ""))
+                        parent_best[pid] = (
+                            score,
+                            d.get("source", ""),
+                            d.get("clause_awareness", 0),
+                            d.get("clause_exact_match", False),
+                            d.get("clause", ""),
+                            {key: d.get(key, "") for key in ("chunk_id", "page", "page_number", "char_start", "char_end", "document_id", "knowledge_base_id", "tenant_id", "owner_user_id", "agent_id")},
+                        )
                 else:
                     if score < parent_best[pid][0]:
-                        parent_best[pid] = (score, d.get("source", ""))
+                        parent_best[pid] = (
+                            score,
+                            d.get("source", ""),
+                            d.get("clause_awareness", 0),
+                            d.get("clause_exact_match", False),
+                            d.get("clause", ""),
+                            {key: d.get(key, "") for key in ("chunk_id", "page", "page_number", "char_start", "char_end", "document_id", "knowledge_base_id", "tenant_id", "owner_user_id", "agent_id")},
+                        )
 
         sorted_pids = sorted(
             parent_best.keys(),
-            key=lambda p: parent_best[p][0] if parent_best[p][0] is not None else 0,
-            reverse=use_rerank_score,
+            key=lambda p: (
+                1 if parent_best[p][3] else 0,
+                parent_best[p][2] or 0,
+                (parent_best[p][0] if parent_best[p][0] is not None else 0)
+                if use_rerank_score
+                else -(parent_best[p][0] if parent_best[p][0] is not None else 0),
+            ),
+            reverse=True,
         )
 
         result = []
@@ -584,12 +716,18 @@ class CyberRetriever:
             )
             if not parent_access:
                 continue
-            score, src = parent_best[pid]
+            score, src, clause_score, exact_match, clause, hit_metadata = parent_best[pid]
+            content, context_meta = self._build_parent_context(
+                parent_data.get("text", ""), clause, hit_metadata.get("content", ""),
+            )
             result.append({
-                "content": parent_data["text"],
+                "content": content,
                 "file_name": parent_data["file_name"],
                 "category": parent_data["category"],
-                "section": parent_data["section"],
+                "section": parent_data.get("section", ""),
+                "clause": clause,
+                "clause_awareness": clause_score,
+                "clause_exact_match": exact_match,
                 "chunk_id": pid,
                 "parent_id": pid,
                 "profile": parent_data.get("profile", ""),
@@ -603,10 +741,127 @@ class CyberRetriever:
                 "score": score if not use_rerank_score else None,
                 "rerank_score": score if use_rerank_score else None,
                 "source": src,
+                "matched_chunk": hit_metadata,
+                "parent_context": context_meta,
+                "evidence_location": {key: hit_metadata.get(key, "") for key in ("clause", "page", "page_number", "char_start", "char_end")},
             })
 
         logger.info(f"父文档检索: {len(child_docs)} 子chunk → {len(parent_best)} 父节 → {len(result)} 返回")
         return result
+
+    @staticmethod
+    def _build_parent_context(parent_text: str, clause: str = "",
+                              matched_text: str = "") -> tuple[str, dict]:
+        """Bound parent evidence while retaining the matched clause and nearby context."""
+        text = str(parent_text or "")
+        max_chars = max(1200, int(os.getenv("RAG_PARENT_CONTEXT_CHARS", "6000")))
+        radius = max(300, int(os.getenv("RAG_PARENT_CONTEXT_RADIUS", "1800")))
+        if len(text) <= max_chars:
+            return text, {"truncated": False, "original_chars": len(text), "returned_chars": len(text)}
+
+        anchors = [str(clause or "").strip()]
+        matched = str(matched_text or "").strip()
+        if matched:
+            anchors.append(matched[:160])
+        anchor_pos = -1
+        anchor_value = ""
+        for anchor in anchors:
+            if anchor and len(anchor) >= 2:
+                anchor_pos = text.find(anchor)
+                if anchor_pos >= 0:
+                    anchor_value = anchor
+                    break
+
+        if anchor_pos < 0:
+            head = max_chars // 2
+            content = text[:head] + "\n\n[父节中间内容已省略]\n\n" + text[-(max_chars - head):]
+            return content, {
+                "truncated": True, "original_chars": len(text), "returned_chars": len(content),
+                "strategy": "head_tail", "anchor": "",
+            }
+
+        start = max(0, anchor_pos - radius)
+        end = min(len(text), anchor_pos + max(len(anchor_value), 1) + radius)
+        if end - start > max_chars:
+            start = max(0, anchor_pos - max_chars // 2)
+            end = min(len(text), start + max_chars)
+            start = max(0, end - max_chars)
+        while start > 0 and text[start - 1] not in "\n。！？":
+            start -= 1
+        while end < len(text) and text[end] not in "\n。！？":
+            end += 1
+        prefix = "[父节前文已省略]\n" if start > 0 else ""
+        suffix = "\n[父节后文已省略]" if end < len(text) else ""
+        content = prefix + text[start:end].strip() + suffix
+        return content, {
+            "truncated": True, "original_chars": len(text), "returned_chars": len(content),
+            "strategy": "anchor_window", "anchor": anchor_value,
+        }
+
+    @staticmethod
+    def _clause_number(value: str) -> int | None:
+        match = re.search(r"第\s*(\d+)\s*条", str(value or ""))
+        if match:
+            return int(match.group(1))
+        return None
+
+    @classmethod
+    def _expand_adjacent_clauses(cls, docs: list[dict], query: str) -> list[dict]:
+        """Promote already-recalled adjacent clauses from the same document/section."""
+        signals = re.findall(r"第\s*(\d+)\s*条", str(query or ""))
+        if not signals or not docs:
+            return docs
+        requested = int(signals[0])
+        exact_docs = [d for d in docs if cls._clause_number(d.get("clause")) == requested]
+        if not exact_docs:
+            return docs
+        exact_keys = {(d.get("document_id") or d.get("file_name"), d.get("section")) for d in exact_docs}
+        expanded = list(docs)
+        for index, doc in enumerate(docs):
+            key = (doc.get("document_id") or doc.get("file_name"), doc.get("section"))
+            number = cls._clause_number(doc.get("clause"))
+            if key in exact_keys and number is not None and abs(number - requested) <= 1:
+                item = dict(doc)
+                item["adjacent_clause"] = number != requested
+                item["clause_expansion"] = "same_section_adjacent"
+                expanded[index] = item
+        return expanded
+
+    @staticmethod
+    def _diversify_docs(docs: list[dict], top_k: int) -> list[dict]:
+        """Apply light MMR-style diversification without changing relevance scores."""
+        if len(docs) <= top_k:
+            return docs
+        selected = []
+        remaining = list(docs)
+        while remaining and len(selected) < top_k:
+            best = None
+            best_value = None
+            for candidate in remaining:
+                base = candidate.get("rerank_score")
+                if base is None:
+                    base = candidate.get("rank_score", candidate.get("score", 0.0)) or 0.0
+                text = str(candidate.get("content", ""))[:3000]
+                max_similarity = 0.0
+                for prior in selected:
+                    prior_text = str(prior.get("content", ""))[:3000]
+                    if text and prior_text:
+                        max_similarity = max(max_similarity, SequenceMatcher(None, text, prior_text).ratio())
+                    if (candidate.get("parent_id") and candidate.get("parent_id") == prior.get("parent_id")):
+                        max_similarity = max(max_similarity, 1.0)
+                value = float(base) - 0.25 * max_similarity
+                if selected and candidate.get("parent_id") in {
+                    item.get("parent_id") for item in selected
+                } and any(
+                    item.get("parent_id") not in {prior.get("parent_id") for prior in selected}
+                    for item in remaining
+                ):
+                    value -= 0.5
+                if best_value is None or value > best_value:
+                    best, best_value = candidate, value
+            selected.append(best)
+            remaining.remove(best)
+        return selected
 
     def search(
         self,
@@ -621,6 +876,7 @@ class CyberRetriever:
         use_chroma_where: bool = False,
         profiles: Optional[set[str] | list[str] | tuple[str, ...]] = None,
         access_scope: Optional[dict] = None,
+        query_type: str = "general",
     ) -> list[dict]:
         """执行检索
 
@@ -649,13 +905,21 @@ class CyberRetriever:
         candidate_k = top_k * _RETRIEVE_MULTIPLIER
         trace = {
             "query": query,
+            "query_type": query_type,
+            "fusion_weights": {
+                "vector": self._fusion_weights(query_type)[0],
+                "keyword": self._fusion_weights(query_type)[1],
+            },
             "metadata_filter": filter_spec.to_dict(),
             "counts": {"faiss": 0, "chroma": 0, "bm25": 0, "merged": 0},
             "chroma_where": None,
             "chroma_where_fallback": False,
             "metadata_filter_fallback": False,
+            "hard_filter_no_match": False,
             "enabled_profiles": sorted(enabled_profiles),
             "profile_filter_fallback": False,
+            "retrieval_degraded": False,
+            "degraded_stages": [],
         }
 
         # ---- FAISS 召回 ----
@@ -674,6 +938,8 @@ class CyberRetriever:
                             "file_name": doc.metadata.get("file_name", ""),
                             "category": doc.metadata.get("category", ""),
                             "section": doc.metadata.get("section", ""),
+                            "clause": doc.metadata.get("clause", ""),
+                            "chunk_type": doc.metadata.get("chunk_type", "section"),
                             "chunk_id": cid,
                             "parent_id": doc.metadata.get("parent_id", ""),
                             "profile": doc.metadata.get("profile", ""),
@@ -689,6 +955,8 @@ class CyberRetriever:
                             "source": "faiss",
                         }
             except Exception as e:
+                trace["retrieval_degraded"] = True
+                trace["degraded_stages"].append("faiss")
                 logger.warning(f"FAISS 检索失败: {e}")
 
         # ---- Chroma 召回 ----
@@ -721,6 +989,8 @@ class CyberRetriever:
                             "file_name": meta.get("file_name", ""),
                             "category": meta.get("category", ""),
                             "section": meta.get("section", ""),
+                            "clause": meta.get("clause", ""),
+                            "chunk_type": meta.get("chunk_type", "section"),
                             "chunk_id": cid,
                             "parent_id": meta.get("parent_id", ""),
                             "profile": meta.get("profile", ""),
@@ -736,10 +1006,14 @@ class CyberRetriever:
                             "source": "chroma",
                         }
             except Exception as e:
+                trace["retrieval_degraded"] = True
+                trace["degraded_stages"].append("chroma")
                 logger.warning(f"Chroma 检索失败: {e}")
 
         if not seen:
             # 双库都失败时，尝试 BM25 兜底
+            trace["retrieval_degraded"] = True
+            trace["degraded_stages"].append("bm25_fallback")
             logger.warning("双库检索均失败，尝试 BM25 兜底检索")
             try:
                 bm25_fallback = self._bm25_search(query, candidate_k, access_scope)
@@ -747,9 +1021,12 @@ class CyberRetriever:
                     logger.info(f"BM25 兜底成功: {len(bm25_fallback)} 条")
                     docs = bm25_fallback
                 else:
+                    self.last_trace = trace
                     return []
             except Exception as e:
                 logger.error(f"BM25 兜底也失败: {e}")
+                trace["degraded_stages"].append("bm25")
+                self.last_trace = trace
                 return []
         else:
             docs = list(seen.values())
@@ -760,7 +1037,13 @@ class CyberRetriever:
             bm25_results = self._bm25_search(query, candidate_k, access_scope)
             trace["counts"]["bm25"] = len(bm25_results)
             if bm25_results:
-                docs = self._rrf_merge(docs, bm25_results, candidate_k)
+                docs = self._rrf_merge(
+                    docs, bm25_results, candidate_k, query_type=query_type,
+                )
+        elif docs:
+            for rank, doc in enumerate(docs):
+                doc["rank_score"] = round(1.0 / (60 + rank + 1), 8)
+                doc["rank_sources"] = doc.get("source", "vector")
         # ---------------------------------
         trace["counts"]["merged"] = len(docs)
 
@@ -771,9 +1054,23 @@ class CyberRetriever:
         trace["counts"]["after_access_filter"] = len(docs)
         trace["access_filter_excluded"] = before_access - len(docs)
         before_profile = len(docs)
+        normalized_for_profile = [_profile_metadata(item) for item in docs]
+        pending_before_profile = sum(
+            1 for item in normalized_for_profile if str(item.get("profile") or "") == "pending"
+        )
         docs = _filter_by_enabled_profiles(docs, enabled_profiles)
         trace["counts"]["after_profile_filter"] = len(docs)
         trace["profile_filter_excluded"] = before_profile - len(docs)
+        trace["pending_profile_excluded"] = (
+            pending_before_profile if "pending" not in enabled_profiles else 0
+        )
+        # Capture which docs were excluded for eval feedback loop (H1)
+        excluded_profiles = enabled_profiles | {"pending"}
+        profile_excluded_docs = [
+            str(item.get("file_name", "")) for item in normalized_for_profile
+            if str(item.get("profile") or "") not in excluded_profiles
+        ]
+        trace["profile_filter_excluded_docs"] = sorted(set(profile_excluded_docs))[:20]
         if not docs:
             logger.info(f"Profile 过滤后无候选: enabled={sorted(enabled_profiles)}")
             self.last_trace = trace
@@ -796,8 +1093,11 @@ class CyberRetriever:
                 docs = filtered_docs
                 logger.info(f"元数据过滤: {before_meta} → {len(docs)}")
             else:
-                trace["metadata_filter_fallback"] = True
-                logger.info("元数据过滤无结果，回退到未过滤候选集")
+                trace["hard_filter_no_match"] = True
+                trace["counts"]["after_metadata_filter"] = 0
+                logger.info("元数据硬过滤无结果，禁止回退到未过滤候选集")
+                trace["counts"]["after_metadata_filter"] = before_meta
+                logger.info("元数据硬过滤无结果，回退到 profile 过滤后的候选集")
         trace["counts"]["after_metadata_filter"] = len(docs)
         # --------------------------------
 
@@ -828,11 +1128,30 @@ class CyberRetriever:
                 logger.warning("所有检索结果均为废弃文档，返回空结果")
                 return []
 
+        docs = apply_clause_awareness(docs, query)
+        docs = self._expand_adjacent_clauses(docs, query)
+        trace["clause_awareness"] = any(float(d.get("clause_awareness", 0) or 0) > 0 for d in docs)
+
         if use_rerank and self._rerank_api_key:
             docs = self._rerank(query, docs, len(docs), timeout)
-        else:
-            docs = sorted(docs, key=lambda x: x["score"])
+            docs = apply_clause_awareness(docs, query)
+            rerank_trace = self._last_rerank_trace or {}
+            if rerank_trace.get("status") == "degraded":
+                trace["retrieval_degraded"] = True
+                if "reranker" not in trace["degraded_stages"]:
+                    trace["degraded_stages"].append("reranker")
+        docs = sorted(
+            docs,
+            key=lambda x: (
+                1 if x.get("clause_exact_match") else 0,
+                x.get("rerank_score") if x.get("rerank_score") is not None else x.get("rank_score", 0.0),
+                x.get("rank_score", 0.0),
+            ),
+            reverse=True,
+        )
+        docs = self._diversify_docs(docs, max(top_k * 2, top_k))
         trace["counts"]["after_rerank"] = len(docs)
+        trace["rerank"] = dict(self._last_rerank_trace)
 
         if use_parent:
             docs = self._resolve_parent_docs(docs, top_k, access_scope)
@@ -863,6 +1182,7 @@ class CyberRetriever:
         use_chroma_where: bool = False,
         profiles: Optional[set[str] | list[str] | tuple[str, ...]] = None,
         access_scope: Optional[dict] = None,
+        query_type: str = "general",
     ) -> list[dict]:
         """多 Query 召回后统一融合、过滤、重排和父文档聚合。"""
         unique_queries = []
@@ -890,6 +1210,7 @@ class CyberRetriever:
                 use_chroma_where=use_chroma_where,
                 profiles=profiles,
                 access_scope=access_scope,
+                query_type=query_type,
             )
             branch_results.append(docs)
             branch_traces.append(dict(self.last_trace))
@@ -898,17 +1219,32 @@ class CyberRetriever:
         before_meta = len(docs)
         docs = boost_by_metadata(docs, filter_spec)
         metadata_filter_fallback = False
+        hard_filter_no_match = False
         if filter_spec.hard_filter:
             filtered_docs = apply_metadata_filter(docs, filter_spec)
             if filtered_docs:
                 docs = filtered_docs
             else:
-                metadata_filter_fallback = True
+                hard_filter_no_match = True
+                docs = []
 
         if use_rerank and self._rerank_api_key:
             docs = self._rerank(rerank_query or unique_queries[0], docs, len(docs), timeout)
+            docs = apply_clause_awareness(docs, rerank_query or unique_queries[0])
         else:
-            docs = sorted(docs, key=lambda x: x["score"])
+            docs = apply_clause_awareness(docs, rerank_query or unique_queries[0])
+        docs = self._expand_adjacent_clauses(docs, rerank_query or unique_queries[0])
+
+        docs = sorted(
+            docs,
+            key=lambda x: (
+                1 if x.get("clause_exact_match") else 0,
+                x.get("rerank_score") if x.get("rerank_score") is not None else x.get("rank_score", 0.0),
+                x.get("rank_score", 0.0),
+            ),
+            reverse=True,
+        )
+        docs = self._diversify_docs(docs, max(top_k * 2, top_k))
 
         if use_parent:
             docs = self._resolve_parent_docs(docs, top_k, access_scope)
@@ -932,6 +1268,8 @@ class CyberRetriever:
                 "returned": len(docs),
             },
             "metadata_filter_fallback": metadata_filter_fallback,
+            "hard_filter_no_match": hard_filter_no_match,
+            "rerank": dict(getattr(self, "_last_rerank_trace", {"status": "not_run"})),
         }
         return docs
 
@@ -948,12 +1286,11 @@ class CyberRetriever:
         # 熔断检查
         if _rerank_circuit_breaker.is_open():
             logger.warning("Rerank熔断器 OPEN，跳过重排序，退回双库排序")
-            return sorted(docs, key=lambda x: x["score"])[:top_n]
+            self._last_rerank_trace = {"status": "degraded", "reason": "circuit_open", "returned": len(docs)}
+            return docs[:top_n]
 
         t0 = time.time()
         doc_texts = [d["content"] for d in docs]
-        last_exc = None
-
         for attempt in range(3):
             try:
                 resp = requests.post(
@@ -974,7 +1311,6 @@ class CyberRetriever:
                 resp.raise_for_status()
                 data = resp.json()
             except Exception as e:
-                last_exc = e
                 if attempt < 2 and _should_retry_rerank(e):
                     wait = _backoff_rerank(attempt)
                     logger.warning(f"Reranker 第{attempt+1}次失败: {e}，{wait:.1f}s后重试")
@@ -983,18 +1319,36 @@ class CyberRetriever:
                 # 重试耗尽或不可重试错误
                 _rerank_circuit_breaker.record_failure()
                 logger.warning(f"Reranker API 失败: {e}，退回双库排序")
-                return sorted(docs, key=lambda x: x["score"])[:top_n]
+                self._last_rerank_trace = {"status": "degraded", "reason": "provider_error", "error_type": type(e).__name__, "returned": len(docs)}
+                return docs[:top_n]
 
         _rerank_circuit_breaker.record_success()
 
+        validated, validation_status = validate_rerank_results(data.get("results", []), len(docs))
         ranked = []
-        for r in data.get("results", []):
+        used = set()
+        for r in validated:
             doc = dict(docs[r["index"]])
             doc["rerank_score"] = round(r["relevance_score"], 4)
             ranked.append(doc)
+            used.add(r["index"])
+        for index, doc in enumerate(docs):
+            if index not in used:
+                preserved = dict(doc)
+                preserved["rerank_score"] = None
+                ranked.append(preserved)
+
+        self._last_rerank_trace = {
+            "status": "completed" if validation_status == "ok" else "degraded",
+            "reason": validation_status,
+            "candidate_count": len(docs),
+            "provider_count": len(data.get("results", []) or []),
+            "accepted_count": len(validated),
+            "returned": len(ranked[:top_n]),
+        }
 
         logger.info(f"Reranker 重排序完成 ({time.time() - t0:.2f}s)")
-        return ranked
+        return ranked[:top_n]
 
     def stats(self) -> dict:
         """返回检索器状态"""

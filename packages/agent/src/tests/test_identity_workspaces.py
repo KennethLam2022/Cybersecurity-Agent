@@ -96,6 +96,26 @@ def test_password_session_and_request_principal(tmp_path):
     assert memory.get_auth_session(token) is None
 
 
+
+def test_front_and_admin_cookie_contexts_stay_separate(tmp_path):
+    memory = ConversationMemory(str(tmp_path / "split-session.db"))
+    user = memory.register_user("front@example.com", "Correct-Horse-01", "Front")
+    admin = memory.bootstrap_platform_admin("admin@example.com", "Correct-Horse-02", "Admin")
+    front_token = memory.create_auth_session(user)
+    admin_token = memory.create_auth_session(admin)
+    cookies = {
+        "securenexus_session": front_token,
+        "securenexus_admin_session": admin_token,
+    }
+    shared_url = SimpleNamespace(path="/api/auth/me")
+    front_request = SimpleNamespace(url=shared_url, headers={}, cookies=cookies)
+    admin_request = SimpleNamespace(
+        url=shared_url, headers={"X-Admin-Context": "1"}, cookies=cookies,
+    )
+    assert principal_from_request(front_request, memory).user_id == user["id"]
+    assert principal_from_request(admin_request, memory).user_id == admin["id"]
+
+
 def test_first_run_bootstrap_activates_the_local_platform_admin_once(tmp_path):
     memory = ConversationMemory(str(tmp_path / "bootstrap.db"))
     assert memory.platform_admin_setup_required() is True

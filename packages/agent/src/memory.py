@@ -1181,6 +1181,21 @@ class ConversationMemory:
                     eval_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # ---- misclassification_candidates 评测反馈闭环表 ----
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS misclassification_candidates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query TEXT NOT NULL,
+                    file_name TEXT NOT NULL,
+                    current_profile TEXT,
+                    suggested_profile TEXT,
+                    reason TEXT,
+                    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    resolved INTEGER DEFAULT 0,
+                    resolved_profile TEXT,
+                    UNIQUE(query, file_name)
+                )
+            """)
             # ---- retrieval_eval_items 测试集表 ----
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS retrieval_eval_items (
@@ -1194,6 +1209,24 @@ class ConversationMemory:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Feedback-to-eval provenance is additive so existing installations remain readable.
+            for column, definition in (
+                ("failure_class", "TEXT NOT NULL DEFAULT 'answer_quality'"),
+                ("eval_status", "TEXT NOT NULL DEFAULT 'unlabeled'"),
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE feedback_items ADD COLUMN {column} {definition}")
+                except sqlite3.OperationalError:
+                    pass
+            for column, definition in (
+                ("source_feedback_id", "INTEGER"),
+                ("label_status", "TEXT NOT NULL DEFAULT 'pending'"),
+                ("failure_class", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE retrieval_eval_items ADD COLUMN {column} {definition}")
+                except sqlite3.OperationalError:
+                    pass
             # ---- profile 字段迁移：历史评测记录默认属于通用主干 ----
             for table in ("retrieval_eval", "eval_comparison", "retrieval_eval_items"):
                 try:
@@ -1302,6 +1335,12 @@ class ConversationMemory:
                 );
                 CREATE INDEX IF NOT EXISTS idx_eval_human_reviews_run
                     ON eval_human_reviews(evaluation_type, run_id, result_key);
+                CREATE TABLE IF NOT EXISTS release_gate_evidence (
+                    evidence_key TEXT PRIMARY KEY,
+                    evidence_json TEXT NOT NULL DEFAULT '{}',
+                    updated_by TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
 
                 CREATE TABLE IF NOT EXISTS sso_providers (
                     id TEXT PRIMARY KEY,
@@ -1760,6 +1799,7 @@ class ConversationMemory:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_eval_results_tenant ON agent_eval_results(tenant_id, run_id, id)")
             self._ensure_default_workspace(conn)
             self._ensure_workflow_templates(conn)
+            self._ensure_default_model_pricing(conn)
 
     @staticmethod
     def _ensure_default_workspace(conn) -> None:
@@ -1775,6 +1815,18 @@ class ConversationMemory:
         conn.execute("""
             INSERT OR IGNORE INTO agents (id, tenant_id, name)
             VALUES ('default-agent', 'local-default', '安枢默认 Agent')
+        """)
+
+    @staticmethod
+    def _ensure_default_model_pricing(conn) -> None:
+        """Seed one editable default so cost analysis is not empty on first run."""
+        conn.execute("""
+            INSERT OR IGNORE INTO model_pricing
+            (id, provider, model, input_price_per_million, output_price_per_million,
+             quality_score, enabled, notes, updated_by)
+            VALUES ('price-default-deepseek-v4-flash', 'DeepSeek', 'deepseek-v4-flash',
+                    0.27, 1.10, 0.78, 1,
+                    '内置参考价；上线前请按供应商合同价复核。', 'system')
         """)
 
     @staticmethod
@@ -1810,7 +1862,7 @@ class ConversationMemory:
             "items": {
                 "unread_notifications": self.notification_summary(tenant_id).get("unread", 0),
                 "pending_invitations": count("SELECT COUNT(*) FROM workspace_invitations WHERE tenant_id=? AND status IN ('pending','accepted_pending')", (tenant_id,)),
-                "documents_pending_review": count("SELECT COUNT(*) FROM documents WHERE tenant_id=? AND lifecycle_status IN ('review','staged')", (tenant_id,)),
+                "documents_pending_review": count("SELECT COUNT(*) FROM documents WHERE (tenant_id=? OR tenant_id='') AND lifecycle_status IN ('review','staged')", (tenant_id,)),
                 "graph_entities_pending_review": count("SELECT COUNT(*) FROM knowledge_graph_entities WHERE tenant_id=? AND status='pending_review'", (tenant_id,)),
                 "graph_relations_pending_review": count("SELECT COUNT(*) FROM knowledge_graph_relations WHERE tenant_id=? AND status='pending_review'", (tenant_id,)),
                 "knowledge_gaps_open": count("SELECT COUNT(*) FROM knowledge_gaps WHERE status='open'"),
@@ -2784,24 +2836,30 @@ class ConversationMemory:
                            resource_id=user_id, detail={"status": status})
         return cur.rowcount > 0
 
-    def update_workspace_member_status(self, tenant_id: str, user_id: str, status: str) -> bool:
+    def update_workspace_member_status(self, tenant_id: str, user_id: str, status: str,
+                                       return_revoked_count: bool = False) -> bool | int | None:
         """Disable membership in one workspace without disabling the user's other workspaces."""
         if status not in {"active", "disabled"}:
             raise ValueError("成员状态仅支持 active 或 disabled")
+        revoked_count = 0
         with sqlite3.connect(self._db_path) as conn:
             cur = conn.execute("""
                 UPDATE organization_memberships SET status=?, updated_at=CURRENT_TIMESTAMP
                 WHERE tenant_id=? AND user_id=?
             """, (status, tenant_id, user_id))
             if status != "active":
-                conn.execute("""
+                revoked_cur = conn.execute("""
                     UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP
                     WHERE tenant_id=? AND user_id=? AND revoked_at IS NULL
                 """, (tenant_id, user_id))
+                revoked_count = max(0, int(revoked_cur.rowcount))
         if cur.rowcount:
             self.log_audit(tenant_id, user_id, action="workspace.member.status.update",
-                           resource_type="user", resource_id=user_id, detail={"status": status})
-        return cur.rowcount > 0
+                           resource_type="user", resource_id=user_id,
+                           detail={"status": status, "revoked_sessions": revoked_count})
+        if not cur.rowcount:
+            return None
+        return revoked_count if return_revoked_count else True
 
     def create_workspace_user(self, tenant_id: str, email: str, password: str = "",
                               display_name: str = "", role: str = "user",
@@ -6805,85 +6863,6 @@ class ConversationMemory:
             })
         return items
 
-    # ---- 对外 API 应用 ----
-    def create_external_app(self, tenant_id: str, name: str, scopes: list[str] | None = None,
-                            rate_limit_per_minute: int = 60, created_by: str = "admin") -> dict:
-        name = str(name or "").strip()
-        if not name:
-            raise ValueError("应用名称不能为空")
-        scopes = scopes or ["chat"]
-        allowed = {"chat", "chat_stream", "generation", "usage", "embed"}
-        if not set(scopes).issubset(allowed):
-            raise ValueError("包含不支持的应用作用域")
-        app_id = "app-" + uuid.uuid4().hex[:16]
-        app_key = "snx_" + uuid.uuid4().hex
-        app_secret = "sns_" + secrets.token_urlsafe(32)
-        rate = max(1, min(int(rate_limit_per_minute), 10000))
-        secret_hash = hashlib.sha256(app_secret.encode("utf-8")).hexdigest()
-        with sqlite3.connect(self._db_path) as conn:
-            conn.execute("""
-                INSERT INTO external_apps
-                    (id, tenant_id, name, app_key, app_secret_hash, scopes_json,
-                     rate_limit_per_minute, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (app_id, str(tenant_id or "local-default"), name, app_key, secret_hash,
-                  json.dumps(scopes, ensure_ascii=False), rate, str(created_by or "admin")))
-        return {"id": app_id, "tenant_id": tenant_id, "name": name, "app_key": app_key,
-                "app_secret": app_secret, "scopes": scopes, "rate_limit_per_minute": rate,
-                "enabled": True, "secret_shown_once": True}
-
-    def list_external_apps(self, tenant_id: str | None = None) -> list[dict]:
-        sql = """
-            SELECT id, tenant_id, name, app_key, scopes_json, rate_limit_per_minute,
-                   enabled, created_by, created_at, updated_at, last_used_at
-            FROM external_apps
-        """
-        params = []
-        if tenant_id:
-            sql += " WHERE tenant_id=?"
-            params.append(tenant_id)
-        sql += " ORDER BY updated_at DESC, name"
-        with sqlite3.connect(self._db_path) as conn:
-            rows = conn.execute(sql, params).fetchall()
-        items = []
-        for r in rows:
-            try:
-                scopes = json.loads(r[4] or "[]")
-            except (TypeError, json.JSONDecodeError):
-                scopes = []
-            items.append({"id": r[0], "tenant_id": r[1], "name": r[2], "app_key": r[3],
-                          "app_key_mask": r[3][:8] + "..." + r[3][-6:], "scopes": scopes,
-                          "rate_limit_per_minute": r[5], "enabled": bool(r[6]),
-                          "created_by": r[7], "created_at": self._utc_to_local(r[8] or ""),
-                          "updated_at": self._utc_to_local(r[9] or ""),
-                          "last_used_at": self._utc_to_local(r[10] or "") if r[10] else ""})
-        return items
-
-    def authenticate_external_app(self, app_key: str, app_secret: str) -> dict | None:
-        digest = hashlib.sha256(str(app_secret or "").encode("utf-8")).hexdigest()
-        with sqlite3.connect(self._db_path) as conn:
-            row = conn.execute("""
-                SELECT id, tenant_id, name, scopes_json, rate_limit_per_minute, enabled
-                FROM external_apps WHERE app_key=? AND app_secret_hash=?
-            """, (str(app_key or ""), digest)).fetchone()
-            if not row or not row[5]:
-                return None
-            conn.execute("UPDATE external_apps SET last_used_at=CURRENT_TIMESTAMP WHERE id=?", (row[0],))
-        try:
-            scopes = json.loads(row[3] or "[]")
-        except (TypeError, json.JSONDecodeError):
-            scopes = []
-        return {"id": row[0], "tenant_id": row[1], "name": row[2], "scopes": scopes,
-                "rate_limit_per_minute": row[4], "enabled": bool(row[5])}
-
-    def update_external_app_status(self, app_id: str, enabled: bool) -> bool:
-        with sqlite3.connect(self._db_path) as conn:
-            cur = conn.execute(
-                "UPDATE external_apps SET enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (int(bool(enabled)), str(app_id)),
-            )
-        return cur.rowcount > 0
-
     def external_app_rate_allowed(self, app_id: str) -> bool:
         """Check the configured rolling one-minute request limit."""
         with sqlite3.connect(self._db_path) as conn:
@@ -6968,64 +6947,6 @@ class ConversationMemory:
             row = conn.execute("SELECT signing_secret_enc FROM webhook_subscriptions WHERE id=?", (subscription_id,)).fetchone()
         return _decrypt_api_key(row[0]) if row and row[0] else ""
 
-    def update_webhook_subscription_status(self, subscription_id: str, enabled: bool) -> bool:
-        with sqlite3.connect(self._db_path) as conn:
-            cur = conn.execute("UPDATE webhook_subscriptions SET enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                               (int(bool(enabled)), str(subscription_id)))
-        return cur.rowcount > 0
-
-    def create_embed_token(self, app_id: str, origin: str = "", ttl_hours: int = 24,
-                           created_by: str = "admin") -> dict:
-        app_id = str(app_id or "").strip()
-        origin = str(origin or "").strip()
-        if not app_id:
-            raise ValueError("应用 ID 不能为空")
-        with sqlite3.connect(self._db_path) as conn:
-            app = conn.execute("SELECT tenant_id, enabled, scopes_json FROM external_apps WHERE id=?", (app_id,)).fetchone()
-        if not app:
-            raise ValueError("外部应用不存在")
-        if not app[1]:
-            raise ValueError("外部应用已停用")
-        try:
-            scopes = json.loads(app[2] or "[]")
-        except (TypeError, json.JSONDecodeError):
-            scopes = []
-        if "chat" not in scopes and "embed" not in scopes:
-            raise ValueError("应用没有 chat 或 embed 作用域")
-        token = "emb_" + secrets.token_urlsafe(36)
-        token_id = "embtok-" + uuid.uuid4().hex[:16]
-        ttl = max(1, min(int(ttl_hours), 24 * 30))
-        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        with sqlite3.connect(self._db_path) as conn:
-            conn.execute("""
-                INSERT INTO embed_tokens (id, app_id, tenant_id, token_hash, origin, expires_at, created_by)
-                VALUES (?, ?, ?, ?, ?, datetime('now', ?), ?)
-            """, (token_id, app_id, app[0], token_hash, origin, f"+{ttl} hours", str(created_by or "admin")))
-        return {"id": token_id, "app_id": app_id, "tenant_id": app[0], "origin": origin,
-                "token": token, "expires_in_hours": ttl, "secret_shown_once": True}
-
-    def authenticate_embed_token(self, token: str, origin: str = "") -> dict | None:
-        digest = hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
-        origin = str(origin or "").strip()
-        with sqlite3.connect(self._db_path) as conn:
-            row = conn.execute("""
-                SELECT t.id, t.app_id, t.tenant_id, t.origin, a.scopes_json, a.enabled
-                FROM embed_tokens t JOIN external_apps a ON a.id=t.app_id
-                WHERE t.token_hash=? AND t.enabled=1 AND a.enabled=1 AND t.expires_at > CURRENT_TIMESTAMP
-            """, (digest,)).fetchone()
-            if not row:
-                return None
-            if row[3] and row[3] != origin:
-                return None
-            conn.execute("UPDATE embed_tokens SET last_used_at=CURRENT_TIMESTAMP WHERE id=?", (row[0],))
-        try:
-            scopes = json.loads(row[4] or "[]")
-        except (TypeError, json.JSONDecodeError):
-            scopes = []
-        if "chat" not in scopes and "embed" not in scopes:
-            return None
-        return {"id": row[0], "app_id": row[1], "tenant_id": row[2], "origin": row[3], "scopes": scopes}
-
     def list_embed_tokens(self, app_id: str = "") -> list[dict]:
         sql = "SELECT id, app_id, tenant_id, origin, expires_at, enabled, created_by, created_at, last_used_at FROM embed_tokens"
         params: list[object] = []
@@ -7039,11 +6960,6 @@ class ConversationMemory:
                  "expires_at": self._utc_to_local(r[4] or ""), "enabled": bool(r[5]),
                  "created_by": r[6], "created_at": self._utc_to_local(r[7] or ""),
                  "last_used_at": self._utc_to_local(r[8] or "") if r[8] else ""} for r in rows]
-
-    def update_embed_token_status(self, token_id: str, enabled: bool) -> bool:
-        with sqlite3.connect(self._db_path) as conn:
-            cur = conn.execute("UPDATE embed_tokens SET enabled=? WHERE id=?", (int(bool(enabled)), str(token_id)))
-        return cur.rowcount > 0
 
     # Agent-bound external applications. Existing applications with an empty
     # binding are intentionally not accepted for chat until an administrator
@@ -7112,6 +7028,57 @@ class ConversationMemory:
             cur = conn.execute("UPDATE external_apps SET agent_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=?",
                                (agent_id, app_id, tenant_id))
         return cur.rowcount > 0
+
+    def create_embed_token(self, app_id: str, origin: str = "", ttl_hours: int = 24,
+                           created_by: str = "admin") -> dict:
+        app_id = str(app_id or "").strip()
+        origin = str(origin or "").strip()
+        if not app_id:
+            raise ValueError("应用 ID 不能为空")
+        ttl = max(1, min(int(ttl_hours), 24 * 30))
+        with sqlite3.connect(self._db_path) as conn:
+            app = conn.execute(
+                """SELECT tenant_id, agent_id, enabled, scopes_json
+                   FROM external_apps WHERE id=?""",
+                (app_id,),
+            ).fetchone()
+            if not app:
+                raise ValueError("外部应用不存在")
+            if not app[2]:
+                raise ValueError("外部应用已停用")
+            if not conn.execute(
+                """SELECT 1 FROM agents
+                   WHERE id=? AND tenant_id=? AND status='active'""",
+                (app[1], app[0]),
+            ).fetchone():
+                raise ValueError("外部应用未绑定有效 Agent")
+        try:
+            scopes = json.loads(app[3] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            scopes = []
+        if "chat" not in scopes and "embed" not in scopes:
+            raise ValueError("应用没有 chat 或 embed 作用域")
+
+        token = "emb_" + secrets.token_urlsafe(36)
+        token_id = "embtok-" + uuid.uuid4().hex[:16]
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                """INSERT INTO embed_tokens
+                   (id, app_id, tenant_id, token_hash, origin, expires_at, created_by)
+                   VALUES (?, ?, ?, ?, ?, datetime('now', ?), ?)""",
+                (token_id, app_id, app[0], token_hash, origin,
+                 f"+{ttl} hours", str(created_by or "admin")),
+            )
+        return {
+            "id": token_id,
+            "app_id": app_id,
+            "tenant_id": app[0],
+            "origin": origin,
+            "token": token,
+            "expires_in_hours": ttl,
+            "secret_shown_once": True,
+        }
 
     def authenticate_embed_token(self, token: str, origin: str = "") -> dict | None:
         digest, origin = hashlib.sha256(str(token or "").encode("utf-8")).hexdigest(), str(origin or "").strip()
@@ -7449,7 +7416,8 @@ class ConversationMemory:
                 import shutil
                 shutil.copy2(str(active_path), str(active_path.with_suffix(".bak")))
             # 写入新的 system prompt
-            active_path.write_text(row[0], encoding="utf-8")
+            from agent import sanitize_system_prompt
+            active_path.write_text(sanitize_system_prompt(row[0]), encoding="utf-8")
             # 切换激活标记
             conn.execute("UPDATE prompt_versions SET is_active = 0")
             conn.execute(
@@ -7797,6 +7765,37 @@ class ConversationMemory:
 
     # ==================== 反馈与知识缺口 ====================
     _FEEDBACK_TYPES = ("copy", "refresh", "correction", "unhelpful", "no_source")
+    _FAILURE_CLASSES = (
+        "retrieval_miss",
+        "insufficient_evidence",
+        "answer_quality",
+        "knowledge_gap",
+        "positive",
+    )
+
+    @classmethod
+    def classify_feedback(cls, feedback_type: str, feedback_text: str = "",
+                          trace: dict | None = None) -> str:
+        """Classify feedback for retrieval evaluation without changing user-facing semantics."""
+        if feedback_type == "copy":
+            return "positive"
+        if feedback_type == "no_source":
+            return "knowledge_gap"
+        text = str(feedback_text or "").casefold()
+        retrieval_terms = ("没找到", "找不到", "检索", "搜索", "搜不到", "文档不对", "引用不对")
+        evidence_terms = ("没有依据", "缺少依据", "证据不足", "没有来源", "未引用", "引用不足")
+        knowledge_terms = ("知识库没有", "库里没有", "缺资料", "没有资料", "缺少文档")
+        if any(term in text for term in knowledge_terms):
+            return "knowledge_gap"
+        if any(term in text for term in evidence_terms):
+            return "insufficient_evidence"
+        if feedback_type == "refresh" and any(term in text for term in retrieval_terms):
+            return "retrieval_miss"
+        if feedback_type in ("refresh", "unhelpful") and trace:
+            retrieval = trace.get("retrieval") or trace.get("steps") or {}
+            if isinstance(retrieval, dict) and retrieval.get("returned_count") == 0:
+                return "retrieval_miss"
+        return "answer_quality"
 
     @staticmethod
     def _normalize_query_for_cluster(query: str) -> str:
@@ -7850,11 +7849,17 @@ class ConversationMemory:
             else:
                 conversation_id, query = row[0], row[1] or ""
                 user_rating, semantic_rating, trace_data = row[2], row[3], row[4]
+            try:
+                trace = json.loads(trace_data or "{}") if trace_data else {}
+            except (TypeError, json.JSONDecodeError):
+                trace = {}
+            failure_class = self.classify_feedback(feedback_type, feedback_text, trace)
             cur = conn.execute("""
-                INSERT INTO feedback_items (message_id, conversation_id, query, feedback_type, feedback_text, user_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO feedback_items
+                    (message_id, conversation_id, query, feedback_type, feedback_text, user_id, failure_class)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (int(message_id), conversation_id, str(query)[:500], feedback_type,
-                  str(feedback_text or "")[:2000], str(user_id or "")))
+                  str(feedback_text or "")[:2000], str(user_id or ""), failure_class))
             feedback_id = int(cur.lastrowid)
             if apply_rating and feedback_type in ("copy", "refresh", "unhelpful")                     and user_rating is None and semantic_rating is None:
                 rating = 5 if feedback_type == "copy" else 1
@@ -7862,12 +7867,9 @@ class ConversationMemory:
                     "UPDATE usage_logs SET user_rating = ? WHERE message_id = ? AND user_rating IS NULL",
                     (rating, int(message_id)),
                 )
-            try:
-                trace = json.loads(trace_data or "{}") if trace_data else {}
-            except (TypeError, json.JSONDecodeError):
-                trace = {}
             trace.setdefault("feedback", []).append({
                 "id": feedback_id, "type": feedback_type,
+                "failure_class": failure_class,
                 "has_text": bool(str(feedback_text or "").strip()),
             })
             conn.execute(
@@ -7876,6 +7878,41 @@ class ConversationMemory:
             )
         self.rebuild_knowledge_gaps()
         return feedback_id
+
+    def promote_feedback_to_retrieval_eval(self, feedback_id: int, created_by: str = "admin",
+                                            expected=None, category: str = "feedback") -> Optional[dict]:
+        """Create a pending retrieval-eval case from one feedback record.
+
+        Expected evidence is deliberately left for human labeling; feedback alone is not
+        treated as ground truth.
+        """
+        from retrieval_eval_contract import serialize_retrieval_expectation
+        with sqlite3.connect(self._db_path) as conn:
+            row = conn.execute(
+                """SELECT id, query, failure_class FROM feedback_items WHERE id = ?""",
+                (int(feedback_id),),
+            ).fetchone()
+            if not row:
+                return None
+            existing = conn.execute(
+                "SELECT id FROM retrieval_eval_items WHERE source_feedback_id = ? LIMIT 1",
+                (int(feedback_id),),
+            ).fetchone()
+            if existing:
+                return {"id": int(existing[0]), "created": False, "label_status": "pending"}
+            cur = conn.execute(
+                """INSERT INTO retrieval_eval_items
+                   (query, expected, profile, category, difficulty, source_feedback_id,
+                    label_status, failure_class)
+                   VALUES (?, ?, 'general', ?, 'medium', ?, 'pending', ?)""",
+                (row[1] or "", serialize_retrieval_expectation(expected or {}),
+                 f"{category}:{row[2] or 'answer_quality'}", int(feedback_id),
+                 row[2] or "answer_quality"),
+            )
+            return {
+                "id": int(cur.lastrowid), "created": True, "label_status": "pending",
+                "source_feedback_id": int(feedback_id), "created_by": created_by,
+            }
 
     def promote_knowledge_gap_to_prompt_test(self, gap_id: int,
                                                 created_by: str = "admin", tenant_id: str = "") -> Optional[dict]:
@@ -7929,13 +7966,15 @@ class ConversationMemory:
     def list_feedback_items(self, limit: int = 50) -> list[dict]:
         with sqlite3.connect(self._db_path) as conn:
             rows = conn.execute("""
-                SELECT id, message_id, conversation_id, query, feedback_type, feedback_text, user_id, created_at
+                SELECT id, message_id, conversation_id, query, feedback_type, feedback_text,
+                       user_id, failure_class, created_at
                 FROM feedback_items ORDER BY id DESC LIMIT ?
             """, (int(limit),)).fetchall()
         return [
             {"id": r[0], "message_id": r[1], "conversation_id": r[2], "query": r[3],
              "feedback_type": r[4], "feedback_text": r[5], "user_id": r[6],
-             "created_at": self._utc_to_local(r[7])}
+             "failure_class": r[7] or "answer_quality",
+             "created_at": self._utc_to_local(r[8])}
             for r in rows
         ]
 
@@ -8291,6 +8330,51 @@ class ConversationMemory:
         except (ValueError, TypeError):
             return utc_str
 
+
+    def save_misclassification_candidates(self, query: str, candidates: list[dict]) -> int:
+        """Store suspected misclassified docs from a failed retrieval eval query."""
+        with sqlite3.connect(self._db_path) as conn:
+            saved = 0
+            for c in (candidates or []):
+                file_name = str(c.get("file_name") or "").strip()
+                if not file_name:
+                    continue
+                try:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO misclassification_candidates
+                           (query, file_name, current_profile, suggested_profile, reason)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (query, file_name,
+                         str(c.get("current_profile") or ""),
+                         str(c.get("suggested_profile") or ""),
+                         str(c.get("reason") or "")),
+                    )
+                    saved += 1
+                except sqlite3.IntegrityError:
+                    pass
+            conn.commit()
+        return saved
+
+    def get_misclassification_candidates(self, include_resolved: bool = False) -> list[dict]:
+        """Return pending misclassification candidates for admin review."""
+        where = "" if include_resolved else "WHERE resolved = 0"
+        with sqlite3.connect(self._db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                f"SELECT * FROM misclassification_candidates {where} ORDER BY detected_at DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def resolve_misclassification(self, candidate_id: int, resolved_profile: str) -> bool:
+        """Mark a candidate as reviewed and record the corrected profile."""
+        with sqlite3.connect(self._db_path) as conn:
+            cur = conn.execute(
+                "UPDATE misclassification_candidates SET resolved = 1, resolved_profile = ? WHERE id = ?",
+                (resolved_profile, candidate_id),
+            )
+            conn.commit()
+        return cur.rowcount > 0
+
     def save_retrieval_eval(self, query: str, expected_source: str,
                             recall_5: int, recall_10: int, mrr: float,
                             faiss_count: int, chroma_count: int, rerank_top1_match: int,
@@ -8423,13 +8507,16 @@ class ConversationMemory:
         with sqlite3.connect(self._db_path) as conn:
             if include_inactive:
                 rows = conn.execute(
-                    """SELECT id, query, expected, profile, category, difficulty, is_active, created_at
+                    """SELECT id, query, expected, profile, category, difficulty, is_active,
+                              source_feedback_id, label_status, failure_class, created_at
                        FROM retrieval_eval_items ORDER BY id DESC""").fetchall()
             else:
                 rows = conn.execute(
-                    """SELECT id, query, expected, profile, category, difficulty, is_active, created_at
+                    """SELECT id, query, expected, profile, category, difficulty, is_active,
+                              source_feedback_id, label_status, failure_class, created_at
                        FROM retrieval_eval_items WHERE is_active=1 ORDER BY id DESC""").fetchall()
-        cols = ["id", "query", "expected", "profile", "category", "difficulty", "is_active", "created_at"]
+        cols = ["id", "query", "expected", "profile", "category", "difficulty", "is_active",
+                "source_feedback_id", "label_status", "failure_class", "created_at"]
         items = [dict(zip(cols, r)) for r in rows]
         for i in items:
             i["created_at"] = self._utc_to_local(i.get("created_at", ""))
@@ -8630,7 +8717,7 @@ class ConversationMemory:
                     "generation_evidence_search"}
         migrated = [item for item in items if item.get("active_version")]
         deterministic = [item for item in items if item.get("model_role") == "deterministic"]
-        unmigrated = [item for item in items if item.get("status") == "unmigrated"]
+        unmigrated = [item for item in items if item.get("status") == "unmigrated" and item.get("model_role") != "deterministic"]
         missing_critical = sorted(slot for slot in critical if not any(item.get("slot") == slot and item.get("active_version") for item in items))
         return {"total": len(items), "migrated": len(migrated), "deterministic": len(deterministic),
                 "unmigrated": len(unmigrated), "missing_critical": missing_critical,
@@ -8731,7 +8818,8 @@ class ConversationMemory:
                     "memory_conflict", "judge_faithfulness", "judge_relevancy",
                     "judge_hallucination", "tool_router", "skill_call_planner",
                     "mcp_call_planner", "tool_result_summarizer",
-                    "tool_failure_fallback"}:
+                    "tool_failure_fallback", "query_rewrite", "jailbreak_detect",
+                    "semantic_scoring", "generation_evidence_search"}:
             report = self.get_latest_prompt_asset_test_report(slot, version)
             if not report or not report.get("passed"):
                 raise ValueError("关键 Prompt 必须先通过该版本的黄金回归测试后才能发布")
@@ -9823,7 +9911,8 @@ class ConversationMemory:
         with sqlite3.connect(self._db_path) as conn:
             rows = conn.execute("""
                 SELECT run_id, profile, status, context_json, summary_json, started_at, finished_at, tenant_id, agent_id, requested_by
-                FROM agent_eval_runs WHERE tenant_id=? ORDER BY started_at DESC LIMIT ?
+                FROM agent_eval_runs WHERE tenant_id=?
+                ORDER BY started_at DESC, rowid DESC LIMIT ?
             """, (str(tenant_id or "local-default"), limit)).fetchall()
         items = []
         for row in rows:
@@ -9922,3 +10011,55 @@ class ConversationMemory:
             item["updated_at"] = self._utc_to_local(item.get("updated_at", ""))
             items.append(item)
         return items
+
+    # ====== Release gate evidence ======
+
+    def save_release_gate_evidence(self, evidence_key: str, evidence: dict,
+                                   updated_by: str = "") -> None:
+        """Persist explicit administrator evidence for a release gate item."""
+        key = str(evidence_key or "").strip()
+        if not key or not isinstance(evidence, dict):
+            raise ValueError("发布门禁证据必须包含有效 key 和对象内容")
+        payload = dict(evidence)
+        payload["passed"] = bool(payload.get("passed"))
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                """INSERT INTO release_gate_evidence
+                   (evidence_key, evidence_json, updated_by, updated_at)
+                   VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(evidence_key) DO UPDATE SET
+                     evidence_json=excluded.evidence_json,
+                     updated_by=excluded.updated_by,
+                     updated_at=CURRENT_TIMESTAMP""",
+                (key, json.dumps(payload, ensure_ascii=False),
+                 str(updated_by or payload.get("reviewer") or "").strip()),
+            )
+
+    def get_release_gate_evidence(self, evidence_key: str = "") -> dict | dict[str, dict]:
+        """Read release evidence without exposing unrelated database fields."""
+        with sqlite3.connect(self._db_path) as conn:
+            if evidence_key:
+                row = conn.execute(
+                    """SELECT evidence_key, evidence_json, updated_by, updated_at
+                       FROM release_gate_evidence WHERE evidence_key=?""",
+                    (str(evidence_key).strip(),),
+                ).fetchone()
+                rows = [row] if row else []
+            else:
+                rows = conn.execute(
+                    """SELECT evidence_key, evidence_json, updated_by, updated_at
+                       FROM release_gate_evidence ORDER BY evidence_key"""
+                ).fetchall()
+        result = {}
+        for row in rows:
+            try:
+                payload = json.loads(row[1] or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            payload["evidence_key"] = row[0]
+            payload["updated_by"] = row[2] or ""
+            payload["updated_at"] = self._utc_to_local(row[3] or "")
+            result[row[0]] = payload
+        if evidence_key:
+            return result.get(str(evidence_key).strip(), {})
+        return result

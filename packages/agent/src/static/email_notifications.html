@@ -8,7 +8,7 @@
 <script src="/static/page_i18n.js"></script>
 <script>
 const eventNames={"approval.pending":"账号审批","eval.completed":"评测完成","quota.warning":"配额告警","jailbreak.alert":"安全告警","ingestion.failed":"入库失败","external_api.failed":"开放 API 失败"};
-const $=id=>document.getElementById(id); const headers=()=>{const csrf=(document.cookie.match(/(?:^|; )securenexus_csrf=([^;]+)/)||[])[1];return {'Content-Type':'application/json',...(csrf?{'X-CSRF-Token':decodeURIComponent(csrf)}:{})};};
+const $=id=>document.getElementById(id); const headers=()=>{const csrf=(document.cookie.match(/(?:^|; )securenexus_admin_csrf=([^;]+)/)||[])[1];return {'Content-Type':'application/json',...(csrf?{'X-CSRF-Token':decodeURIComponent(csrf)}:{})};};
 async function api(url,opt={}){const r=await fetch(url,{...opt,headers:{...headers(),...(opt.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'请求失败');return d;}
 function setStatus(t,error=false){$('status').textContent=t||'';$('status').className='status'+(error?' error':'')}
 function renderEvents(selected=[]){$('events').innerHTML='<strong style="width:100%">订阅事件</strong>'+Object.entries(eventNames).map(([k,v])=>`<label style="flex-direction:row;align-items:center"><input type="checkbox" value="${k}" ${selected.includes(k)?'checked':''}> ${v}</label>`).join('')}

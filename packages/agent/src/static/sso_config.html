@@ -90,7 +90,7 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   function headers() {
-    var csrf = (document.cookie.match(/(?:^|; )securenexus_csrf=([^;]+)/) || [])[1];
+    var csrf = (document.cookie.match(/(?:^|; )securenexus_admin_csrf=([^;]+)/) || [])[1];
     return Object.assign({'Content-Type':'application/json'}, csrf ? {'X-CSRF-Token': decodeURIComponent(csrf)} : {});
   }
   function setStatus(el, text, kind) { el.textContent = text; el.className = 'status ' + (kind || ''); }

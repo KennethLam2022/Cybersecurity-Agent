@@ -6,7 +6,7 @@
 Prompt 架构设计（参考知识库 三层架构 E.5）：
   第一层 System Prompt  → 角色 + 能力边界 + 行为约束
   第二层 Context        → 结构化参考资料 + 来源标注
-  第三层 CoT + 示例     → 思维链引导 + one-shot 示例
+  第三层 Evidence + 示例 → 证据边界 + one-shot 示例
 """
 from memory import ConversationMemory, get_llm_config_card
 from llm_provider import LLMProvider
@@ -93,6 +93,15 @@ COMPLIANCE_DECISION_EXPANSION_TERMS = (
     "法律依据 合规要求 授权 未经授权 禁止 不得 法律责任 处罚 义务 边界 条件"
 )
 
+LEGAL_DATE_QUERY_PATTERN = re.compile(
+    r"(什么时候|何时|哪一年|日期|时间|颁布|发布|通过|施行|生效|实施|公布|签署|修订)",
+    re.I,
+)
+
+LEGAL_DATE_EXPANSION_TERMS = (
+    "通过日期 颁布日期 发布日期 施行日期 生效日期 实施日期 附则"
+)
+
 LEGAL_REFERENCE_PATTERN = re.compile(
     r"《[^》]{2,40}(?:法|条例|办法|规定|规范|标准|指南)》|"
     r"[\u4e00-\u9fff]{2,30}(?:法|条例|办法|规定|规范|标准|指南)"
@@ -104,6 +113,26 @@ COMPLIANCE_DECISION_FALLBACK_ANSWER = (
     "是否存在法律责任”这类结论。需要知识库召回明确涉及授权条件、禁止性要求、责任后果或适用条款的资料后，"
     "才能给出结论。"
 )
+
+
+
+def _retrieval_degradation_note(trace_data: dict) -> str:
+    """Return a short user-facing note when retrieval was degraded, empty otherwise."""
+    degraded = bool(trace_data.get("retrieval_degraded"))
+    stages = trace_data.get("degraded_stages") or []
+    if not degraded:
+        return ""
+    stage_labels = {
+        "faiss": "FAISS 向量库",
+        "chroma": "Chroma 向量库",
+        "bm25_fallback": "BM25 兜底",
+        "bm25": "BM25",
+        "reranker": "Reranker 重排序",
+    }
+    names = [stage_labels.get(s, s) for s in stages if stage_labels.get(s, s)]
+    detail = "、".join(names) if names else "检索组件"
+    return f"\n\n> **检索降级提示**：本轮检索由 {detail} 降级完成，排序与相关性可信度受限，答案中的事实请结合原始文档人工核验。"
+
 
 
 def infer_query_type_from_text(query: str) -> str:
@@ -275,11 +304,14 @@ def _validate_annotations(answer: str) -> str:
         # 跳过表格行、列表项、标注行自身
         if s.startswith("|") or s.startswith("- ") or s.startswith("* ") or s.startswith("[") or s.endswith("]"):
             continue
+        if re.match(r"^\d+[.、)]\s*", s):
+            continue
         content_lines.append(s)
 
+    citation = re.compile(r"\[(?:来源|source|citation|注)[^\]]*\]", re.I)
     unannotated = []
     for line in content_lines:
-        if "[来源" not in line and "[注：" not in line:
+        if not citation.search(line):
             unannotated.append(line[:60])
     if len(unannotated) > len(content_lines) * 0.3:  # 超过30%的行无标注
         logger.warning(
@@ -295,6 +327,8 @@ for p in [_SRC, _PREPROCESSOR]:
         sys.path.insert(0, p)
 
 from security_taxonomy import category_emoji, fallback_queries
+from metadata_filter import infer_metadata_filter_from_query
+from retrieval_text import extract_retrieval_identifiers
 from trace_observability import add_trace_step, build_trace_envelope, finish_trace, retrieval_counts
 from reflection_engine import PROMPT_ASSET_DEFAULTS, reflect_answer
 from external_retrieval import fetch_external_evidence
@@ -333,7 +367,7 @@ class SystemPromptLoader:
         except Exception:
             if cls._cache is None:
                 cls._cache = SYSTEM_PROMPT_SOURCE.strip()
-        return cls._cache or SYSTEM_PROMPT_SOURCE.strip()
+        return sanitize_system_prompt(cls._cache or SYSTEM_PROMPT_SOURCE.strip())
 
     @classmethod
     def get_raw_path(cls) -> Path:
@@ -344,10 +378,22 @@ class SystemPromptLoader:
     @classmethod
     def write(cls, content: str):
         """写入新的 System Prompt（版本还原时调用）"""
-        cls._path.write_text(content.strip(), encoding="utf-8")
-        cls._cache = content.strip()
+        normalized = sanitize_system_prompt(content.strip())
+        cls._path.write_text(normalized, encoding="utf-8")
+        cls._cache = normalized
         import time
         cls._mtime = cls._path.stat().st_mtime
+
+
+def sanitize_system_prompt(content: str) -> str:
+    """Remove legacy chain-of-thought instructions from persisted prompts."""
+    text = str(content or "").strip()
+    text = text.replace(
+        "第一部分：思考过程（让用户看到你在工作）",
+        "第一部分：依据摘要（仅列出来源与依据，不展示内部推理）",
+    )
+    text = text.replace("【思考过程】", "【依据摘要】")
+    return text
 
 
 SYSTEM_PROMPT_SOURCE = """你是一位**网络安全管理体系专家**。
@@ -410,10 +456,11 @@ SYSTEM_PROMPT_SOURCE = """你是一位**网络安全管理体系专家**。
 ### 5. 对比分析类问题：一次性全量对比
 - 用表格展示差异，有多少差异列多少，不设数量限制
 
-### 6. 首回答即完整（禁止"挤牙膏"）
+### 6. 首回答即完整（普通问答场景）
 - 用户问"XX设备能不能用于等保X级"：一次性给出合规匹配度+技术措施+部署建议
-- 用户问"怎么搞""怎么做"：直接给完整方案，不要反问"你要哪个方面"
+- 用户问"怎么搞""怎么做"：普通问答直接给完整方案，不要无谓反问
 - 对比分析也一次全量对比，不留尾巴
+- 写作、PPT、Skill/MCP 和外部检索任务另遵循对应流程；缺少影响交付质量或安全边界的必要信息时，必须先提出最少量澄清问题
 
 ## 具体系统分析推理框架
 
@@ -448,10 +495,10 @@ SYSTEM_PROMPT_SOURCE = """你是一位**网络安全管理体系专家**。
 
 回答包含两部分，之间用 `---` 分隔：
 
-**第一部分：思考过程（让用户看到你在工作）**
+**第一部分：依据摘要（仅列出来源与依据，不展示内部推理）**
 ```
-【思考过程】
-我分析了以下参考资料：
+【依据摘要】
+本回答使用了以下参考资料：
 - [来源1] 涉及...，直接相关
 - [来源2] 相关性中等
 - [来源3] 与问题无关
@@ -463,7 +510,7 @@ SYSTEM_PROMPT_SOURCE = """你是一位**网络安全管理体系专家**。
 2. **详细分析**（分点说明）
 3. **操作提醒**（可选）
 
-每个观点仍必须有 `[来源N: 文档名称 / 章节]` 标注。禁止空泛套话。"""
+每个观点仍必须有 `[来源N: 文档名称 / 章节]` 标注。只输出依据摘要和最终回答，不输出逐步推理、隐藏判断或内部策略。"""
 
 
 # ============================================================
@@ -577,17 +624,28 @@ def source_display_name(doc: dict) -> str:
     return file_name or inferred or "未知文档"
 
 
+def source_reference_id(doc: dict) -> str:
+    """Create a stable, non-database citation identifier for a source chunk."""
+    explicit = str(doc.get("source_id") or doc.get("document_id") or "").strip()
+    identity = explicit or "|".join((
+        str(doc.get("file_name") or ""),
+        str(doc.get("section") or ""),
+        str(doc.get("content_hash") or doc.get("content") or ""),
+    ))
+    return "SRC-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+
+
 def build_context_block(docs: list[dict]) -> str:
     """将检索结果格式化为结构化参考资料块
 
     格式参考：知识库 Context-Engineering D.1-RAG问答场景的Context设计
-    每个来源标注包含数学计算的置信度（0-1归一化）+ 等级标签
+    每个来源标注包含数学计算的检索相关度（0-1归一化）+ 等级标签
     """
     parts = ["【参考资料】（按相关性从高到低排列）："]
     for i, d in enumerate(docs, 1):
-        source_tag = f"[来源{i}: {source_display_name(d)} / {d['section']}]"
+        source_tag = f"[来源{i}: {source_display_name(d)} / {d.get('section', '')} / {source_reference_id(d)}]"
         conf = compute_confidence(d, len(docs))
-        score_str = f"（置信度：{conf['confidence']} — {conf['label']}）"
+        score_str = f"（检索相关度：{conf['confidence']} — {conf['label']}）"
         parts.append(f"\n{source_tag} {score_str}")
         parts.append(d["content"].strip())
     return "\n".join(parts)
@@ -618,73 +676,25 @@ def need_clarification(query: str, docs: list[dict]) -> Optional[str]:
 # 参考：知识库 B.2-少样本示例 + RAG冠军方案
 # ============================================================
 FEW_SHOT_EXAMPLE = """
-用户问：等保三级对安全计算环境有什么访问控制要求？
+用户问：某安全控制要求是什么？
 
-【思考过程】
-我分析了以下参考资料：
-- [来源1: GB/T 25070-2019 / 第5.2.3节] 直接规定了安全计算环境的访问控制要求，内容为自主访问控制+强制访问控制、最小权限、三权分立，高度相关
-- [来源2: 等级保护2.0实践课程 / 第3章] 补充了等保三级整体框架，相关性中等
-- [来源3: 数据安全管理办法] 是关于数据安全的，与访问控制无关
-
-基于以上分析，[来源1] 完全覆盖了问题，可以给出完整回答。
+【依据摘要】
+本回答使用了以下参考资料：
+- [来源1: 文档名称 / 章节] 直接支持核心结论
+- [来源2: 文档名称 / 章节] 补充相关背景或限制条件
 
 ---
-等保三级对安全计算环境的访问控制，核心要求是 **"自主访问控制 + 强制访问控制"** 两层机制。简单类比：自主访问控制像你家门锁——主人决定谁能进；强制访问控制像大楼保安——系统级别定死了访问规则，用户自己改不了。
+核心结论：仅保留当前来源明确支持的内容，并为每个结论绑定来源标记。
+未覆盖的事实、数字、处罚、适用范围和技术判断必须标为“待核验”，不得从示例或训练知识补充。
 
-具体要求（依据 [来源1: GB/T 25070-2019 / 第5.2.3节]）：
-1. 启用访问控制机制，对主体（用户/进程）和客体（文件/数据）设置访问权限
-2. 默认"最小权限"原则——只给完成任务所需的最小权限
-3. 特权用户权限分离——系统管理员、安全审计员、安全管理员三权分立
+用户问：两个安全对象有什么差异？
 
-这是合规红线，不过的话等保测评直接不合格。实际操作建议：先用堡垒机+4A平台落地权限分离，再在应用层做细粒度访问控制。
-
----
-
-用户问：《网络安全法》对网络运营者规定了哪些安全保护义务？
-
-【思考过程】
-我分析了以下参考资料：
-- [来源1: 网络安全法 / 第二十一条] 直接规定了网络运营者应当采取的五项安全保护技术措施，是回答的核心依据
-- [来源2: 网络安全法 / 第五十九条] 规定了不履行义务的处罚措施，可以用来补充
-
-[来源1] 完整覆盖了问题，可以直接引用。
+【依据摘要】
+- [来源1: 文档名称 / 章节] 支持对象一的要求
+- [来源2: 文档名称 / 章节] 支持对象二的要求
 
 ---
-网络运营者的安全保护义务包含 **5 项核心要求**，规定在《网络安全法》第二十一条。
-
-根据 [来源1: 网络安全法 / 第二十一条]，网络运营者应当：
-1. **制定内部安全管理制度和操作规程**，确定安全负责人
-2. **采取防范计算机病毒和网络攻击的技术措施**
-3. **采取监测、记录网络运行状态的技术措施**，日志留存不少于6个月
-4. **采取数据分类、重要数据备份和加密措施**
-5. **制定网络安全事件应急预案并定期演练**
-
-这 5 项是合规红线，不履行将面临警告、罚款（最高十万元）甚至吊销营业执照的风险[来源2: 网络安全法 / 第五十九条]。操作上建议先对照5项逐条自查差距，再分阶段整改。
-
----
-
-用户问：等保三级与等保二级的访问控制要求有什么主要区别？
-
-【思考过程】
-我分析了以下参考资料：
-1. **识别对比对象**：等保三级 vs 等保二级
-2. **提取安全要求**：
-   - [来源1: GB/T 22239-2019 / 第7.1.3节] 描述了二级安全区域边界的访问控制：基于源/目的地址、端口、协议进行过滤。
-   - [来源2: GB/T 22239-2019 / 第8.1.3节] 描述了三级安全区域边界的访问控制：在二级基础上增加了对虚拟化环境的访问控制、对应用协议内容的过滤要求等。
-3. **对比分析**：三级比二级在"协议深度"和"虚拟化支持"上有显著增强。
-
-基于以上分析，可以给出对比回答。
-
----
-等保三级与等保二级的访问控制要求主要在 **"过滤深度"** 和 **"环境适应性"** 上存在差异。
-
-| 维度 | 等保二级 [来源1] | 等保三级 [来源2] | 核心差异 |
-|------|----------------|----------------|----------|
-| **过滤规则** | 基于源/目的IP、端口、协议 | 同样基于基础信息，但增加协议内容过滤 | 三级要求能够识别应用层协议内容 |
-| **会话状态** | 检查会话状态 | 检查会话状态 | 无明显差异 |
-| **虚拟化支持** | 未显式强调 | 明确要求虚拟化网络间的访问控制 | 三级必须适配云计算/虚拟化场景 |
-
-总结来说，二级更像是个基础的包过滤防火墙，而三级则要求具备深度包检测（DPI）的能力，并能管住虚拟机之间的流量。这是因为三级系统通常承载更核心的业务，面临的攻击手段更复杂。"""
+请仅依据当前来源进行表格比较；没有来源支持的差异标为“待核验”。"""
 
 
 # ============================================================
@@ -725,7 +735,7 @@ def build_prompt_messages(
             )
         ]
         keep_ids = set(id(d) for d in docs)
-        while len(context_block) > MAX_CONTEXT_CHARS and len(keep_ids) > 3:
+        while len(context_block) > MAX_CONTEXT_CHARS and len(keep_ids) > 1:
             remove_id = doc_ids_low_first.pop(0)
             keep_ids.discard(remove_id)
             keep_docs = [d for d in docs if id(d) in keep_ids]
@@ -756,6 +766,53 @@ def build_prompt_messages(
     # P3-4: 全链路预算 — system+context 超过预算则截断最长的文档块
     system_budget = int(MAX_CONTEXT_CHARS * 0.65)
     if len(system_content) > system_budget:
+        doc_ids_low_first = [
+            id(d) for d in sorted(
+                docs, key=lambda d: compute_confidence(d)["confidence"]
+            )
+        ]
+        while len(system_content) > system_budget and len(keep_ids) > 1:
+            remove_id = doc_ids_low_first.pop(0)
+            keep_ids.discard(remove_id)
+            context_block = build_context_block([d for d in docs if id(d) in keep_ids])
+            context_part = f"\n\n## 以下是根据你问题检索到的参考资料\n\n{context_block}"
+            context_index = next(
+                index for index, part in enumerate(system_parts)
+                if part.startswith("\n\n## 以下是根据你问题检索到的参考资料")
+            )
+            system_parts[context_index] = context_part
+            system_content = "\n".join(system_parts)
+        logger.warning(
+            f"Prompt 预算: 按完整证据块裁剪，保留 {len(keep_ids)}/{len(docs)} 个来源"
+        )
+    # A single oversized source cannot be removed without losing all evidence.
+    # Keep a bounded evidence window instead so the model request remains valid.
+    if len(system_content) > system_budget and len(keep_ids) == 1:
+        kept_doc = next((d for d in docs if id(d) in keep_ids), None)
+        if kept_doc is not None:
+            fixed_chars = len(system_content) - len(context_block)
+            available = max(512, system_budget - fixed_chars - 128)
+            clipped = dict(kept_doc)
+            content = str(clipped.get("content") or "")
+            if len(content) > available:
+                location = clipped.get("evidence_location") or {}
+                try:
+                    start = max(0, int(location.get("char_start", 0)) - available // 3)
+                except (TypeError, ValueError):
+                    start = 0
+                start = min(start, max(0, len(content) - available))
+                clipped["content"] = content[start:start + available]
+                context_block = build_context_block([clipped])
+                context_index = next(
+                    index for index, part in enumerate(system_parts)
+                    if part.startswith("\n\n## 以下是根据你问题检索到的参考资料")
+                )
+                system_parts[context_index] = (
+                    f"\n\n## 以下是根据你问题检索到的参考资料\n\n{context_block}"
+                )
+                system_content = "\n".join(system_parts)
+                logger.warning("Prompt 预算: 单来源证据窗口已裁剪至预算范围")
+    if len(system_content) > system_budget:
         overflow = len(system_content) - system_budget
         # 优先截断 FEW_SHOT_EXAMPLE
         if include_example and len(FEW_SHOT_EXAMPLE) > 200:
@@ -763,8 +820,7 @@ def build_prompt_messages(
             system_content = system_content.replace(FEW_SHOT_EXAMPLE, example_trimmed)
             logger.warning(f"Prompt 预算: 截断 FEW_SHOT_EXAMPLE ({overflow} 字符)")
         if len(system_content) > system_budget:
-            system_content = system_content[:system_budget]
-            logger.warning(f"Prompt 预算: 强制截断至 {system_budget} 字符")
+            logger.warning("Prompt 预算仍超限，保留完整来源块并标记上下文超限")
 
     messages = [{"role": "system", "content": system_content}]
 
@@ -868,7 +924,29 @@ class QueryRewriteResult:
         if isinstance(self.entities, dict):
             for key in defaults:
                 merged[key] = _clean_string_list(self.entities.get(key, []))
+        # The rewrite model is advisory. Restore identifiers from the user's
+        # original wording before hard filters and retrieval branches run.
+        inferred = infer_metadata_filter_from_query(self.original_query)
+        identifiers = extract_retrieval_identifiers(self.original_query)
+        merged["doc_ids"] = _clean_string_list(
+            merged["doc_ids"] + inferred.doc_ids
+        )
+        merged["article_numbers"] = _clean_string_list(
+            merged["article_numbers"] + inferred.article_numbers
+        )
+        merged["standards"] = _clean_string_list(
+            merged["standards"] + identifiers.get("standards", [])
+        )
         self.entities = merged
+        hard_identifiers = identifiers.get("standards", []) + identifiers.get("clauses", [])
+        if hard_identifiers:
+            suffix = " ".join(hard_identifiers)
+            self.standalone_query = _append_missing_terms(self.standalone_query, suffix)
+            self.semantic_query = _append_missing_terms(self.semantic_query, suffix)
+            self.keyword_query = _append_missing_terms(self.keyword_query, suffix)
+            self.sub_queries = [
+                _append_missing_terms(item, suffix) for item in self.sub_queries
+            ]
 
     @classmethod
     def from_dict(cls, original_query: str, data: dict[str, Any], fallback_used: bool = False) -> "QueryRewriteResult":
@@ -931,6 +1009,86 @@ def _clean_string_list(items: list[Any]) -> list[str]:
     return result
 
 
+def _append_missing_terms(value: str, terms: str) -> str:
+    """Keep exact identifiers in rewritten branches without duplicating them."""
+    text = str(value or "").strip()
+    missing = [term for term in str(terms or "").split() if term not in text]
+    return " ".join(item for item in (text, *missing) if item).strip()
+
+
+def build_semantic_cache_key(
+    *,
+    normalized_query: str,
+    tenant_id: str = "",
+    user_id: str = "",
+    agent_id: str = "",
+    knowledge_base_id: str = "",
+    model: str = "",
+    profiles: list[str] | tuple[str, ...] | set[str] | None = None,
+    prompt_version: str = "",
+    top_k: int = 0,
+    use_rerank: bool = False,
+    use_hybrid: bool = False,
+) -> str:
+    """Build a cache key isolated by identity and retrieval scope."""
+    material = "|".join([
+        str(normalized_query or "").strip(),
+        str(tenant_id or ""),
+        str(user_id or ""),
+        str(agent_id or ""),
+        str(knowledge_base_id or ""),
+        str(model or ""),
+        ",".join(sorted({str(profile) for profile in (profiles or [])})),
+        str(prompt_version or ""),
+        str(top_k),
+        "1" if use_rerank else "0",
+        "1" if use_hybrid else "0",
+    ])
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def can_use_generic_fallback(query_plan: "QueryRewriteResult", query: str = "") -> bool:
+    """Only broad questions may use taxonomy fallback retrieval."""
+    if query_plan.metadata_filter().get("hard_filter"):
+        return False
+    # Query rewrite may fail or omit entities. Preserve the hard constraint
+    # inferred directly from the user's wording in that case.
+    if infer_metadata_filter_from_query(query).hard_filter:
+        return False
+    return query_plan.query_type not in {"article_lookup", "standard_lookup"}
+
+
+def enforce_reflection_safety(
+    query: str, query_type: str, answer: str, reflection: dict,
+    *, degraded_stages: list[str] | None = None,
+) -> tuple[str, bool]:
+    """Do not release a high-risk answer when final reflection degraded.
+
+    When the reranker is degraded, append a conservative disclaimer to
+    high-risk answers instead of blocking entirely (M1).
+    """
+    high_risk = is_compliance_decision_query(query, query_type)
+    if high_risk and str(reflection.get("decision") or "").lower() in {"degraded", "failed"}:
+        return COMPLIANCE_DECISION_FALLBACK_ANSWER, True
+    if high_risk and "reranker" in (degraded_stages or []):
+        disclaimer = (
+            "\n\n> ⚠️ 注意：当前检索重排序服务暂不可用，以上回答基于未经精排的召回结果，"
+            "仅供参考。如需做出合规决策，请交叉验证原始法规条文。"
+        )
+        if disclaimer.strip() not in (answer or ""):
+            answer = (answer or "") + disclaimer
+        return answer, True
+    return answer, False
+
+
+def evidence_coverage(sources: list[dict], answer: str = "") -> dict[str, Any]:
+    usable = [item for item in sources or [] if str(item.get("content") or "").strip()]
+    return {"source_count": len(sources or []), "usable_source_count": len(usable),
+            "answer_characters": len(answer or ""),
+            "covered": bool(usable),
+            "coverage_ratio": round(len(usable) / max(len(sources or []), 1), 3)}
+
+
 def is_compliance_decision_query(query: str, query_type: str = "") -> bool:
     """识别需要合规/法律依据支撑的判断类问题。"""
     return query_type == "compliance_decision" or bool(COMPLIANCE_DECISION_QUERY_PATTERN.search(query or ""))
@@ -943,6 +1101,18 @@ def enrich_queries_for_compliance_decision(query: str, queries: list[str], query
     base_query = (query or "").strip()
     expansion = f"{base_query} {COMPLIANCE_DECISION_EXPANSION_TERMS}".strip()
     return _clean_string_list([*(queries or []), expansion, COMPLIANCE_DECISION_EXPANSION_TERMS])
+
+
+def enrich_queries_for_date_fact(query: str, queries: list[str]) -> list[str]:
+    """Expand legal date questions toward issuance and effective-date clauses."""
+    base_query = (query or "").strip()
+    if not base_query or not LEGAL_DATE_QUERY_PATTERN.search(base_query):
+        return _clean_string_list(queries)
+    # Keep the user's document name and any explicit article number.  The
+    # router supplies only generic date/annex terms; document-specific clauses
+    # must come from the query or indexed metadata, never from hardcoded law.
+    expansion = f"{base_query} {LEGAL_DATE_EXPANSION_TERMS}".strip()
+    return _clean_string_list([*(queries or []), expansion, LEGAL_DATE_EXPANSION_TERMS])
 
 
 def _source_text_for_guard(source: dict) -> str:
@@ -983,6 +1153,51 @@ def compliance_decision_guard_answer(query: str, sources: list[dict], query_type
     return COMPLIANCE_DECISION_FALLBACK_ANSWER
 
 
+def _repair_truncated_json(candidate: str) -> dict[str, Any] | None:
+    """Best-effort repair for a JSON object truncated by max_tokens.
+
+    The repair is intentionally conservative: it keeps the longest complete
+    comma-separated prefix and closes its quotes/brackets instead of guessing
+    the contents of an incomplete value.
+    """
+    cut_points = [0] + [match.end() for match in re.finditer(",", candidate)]
+    for cut in reversed(cut_points):
+        text = candidate[:cut].rstrip(",: \t\r\n")
+        if not text:
+            continue
+        quotes = text.count('"') - text.count('\"')
+        if quotes % 2:
+            text += '"'
+        stack = []
+        pairs = {"]": "[", "}": "{"}
+        closers = {"[": "]", "{": "}"}
+        in_string = False
+        escaped = False
+        for ch in text:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch in "[{":
+                stack.append(ch)
+            elif ch in "]}" and stack and stack[-1] == pairs[ch]:
+                stack.pop()
+        text += "".join(closers[item] for item in reversed(stack))
+        try:
+            data = json.loads(text)
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
 def _extract_json_object(text: str) -> dict[str, Any] | None:
     if not text:
         return None
@@ -991,17 +1206,42 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
         cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.I).strip()
         cleaned = re.sub(r"```$", "", cleaned).strip()
     start = cleaned.find("{")
+    if start < 0:
+        return None
     end = cleaned.rfind("}")
-    if start < 0 or end <= start:
-        return None
     try:
-        data = json.loads(cleaned[start:end + 1])
+        if end > start:
+            data = json.loads(cleaned[start:end + 1])
+            return data if isinstance(data, dict) else None
     except Exception:
-        return None
-    return data if isinstance(data, dict) else None
+        pass
+    return _repair_truncated_json(cleaned[start:])
 
 
-SELF_VERIFY_PROMPT = """你是一个严格的"事实核查员"。请逐句核对回答中的每个结论是否在参考资料中有明确依据。
+def _verification_excerpt(source: dict, limit: int = 1800) -> str:
+    """保留命中条款和邻近上下文，避免自检只看到文档开头。"""
+    content = str(source.get("content") or "")
+    matched = str(source.get("matched_chunk") or source.get("matched_text") or "").strip()
+    if matched and len(matched) <= limit:
+        return matched
+    if len(content) <= limit:
+        return content
+    location = source.get("evidence_location") or {}
+    try:
+        start = int(location.get("char_start"))
+        end = int(location.get("char_end"))
+    except (TypeError, ValueError):
+        start = end = -1
+    if 0 <= start < len(content):
+        center = max(start, min(end if end > start else start, len(content)))
+        radius = max(300, (limit - 80) // 2)
+        excerpt = content[max(0, center - radius): min(len(content), center + radius)]
+        return "[前文省略]\n" + excerpt.strip() + "\n[后文省略]"
+    head = limit // 2
+    return content[:head].rstrip() + "\n[中间内容省略]\n" + content[-(limit - head):].lstrip()
+
+
+SELF_VERIFY_PROMPT = """你是一个严格的"事实核查员"。请逐句核对回答中的每个结论是否有参考资料明确依据。
 
 规则：
 1. 逐句检查，只有参考资料中明确支持的内容才能保留
@@ -1108,7 +1348,8 @@ class CyberAgent:
         self._greeting_threshold = 0.82
         self._greeting_proto_embs: list[list[float]] | None = None
 
-    def _verify_answer(self, answer: str, sources: list[dict]) -> str:
+    def _verify_answer(self, answer: str, sources: list[dict], tenant_id: str = "local-default",
+                       user_id: str = "", agent_id: str = "", conversation_id: str = "") -> str:
         """自检：用 LLM 核查回答中的每个结论是否有来源依据"""
         self._last_verify_prompt_version = 0
         if not self.use_verification or not sources or not answer:
@@ -1122,8 +1363,9 @@ class CyberAgent:
             asset = self.memory.get_active_prompt_asset("self_verify", SELF_VERIFY_PROMPT)
             self._last_verify_prompt_version = asset.get("version", 0)
             src_text = "\n---\n".join(
-                f"[来源 {i+1}] {s['file_name']} | {s['section']}\n{s.get('content', '')[:500]}"
-                for i, s in enumerate(sources)  # 使用全部来源，不再限制前5条
+                f"[来源 {i+1}] {s.get('file_name', '')} | {s.get('section', '')}\n"
+                f"{_verification_excerpt(s)}"
+                for i, s in enumerate(sources)
             )
             prompt = asset["template"].format(sources=src_text, answer=answer)
             t0 = time.time()
@@ -1135,7 +1377,8 @@ class CyberAgent:
             )
             usage = (result or {}).get("usage") if isinstance(result, dict) else {}
             self.memory.record_llm_usage_event(
-                tenant_id="local-default", module="self_verify",
+                tenant_id=tenant_id, user_id=user_id, agent_id=agent_id,
+                conversation_id=conversation_id, module="self_verify",
                 model=(result or {}).get("model") or getattr(self.llm, "model", ""),
                 prompt_tokens=(usage or {}).get("prompt_tokens", 0),
                 completion_tokens=(usage or {}).get("completion_tokens", 0),
@@ -1449,7 +1692,9 @@ class CyberAgent:
             rows.append(f"{role}: {content}")
         return "\n".join(rows) if rows else "无"
 
-    def _build_query_rewrite(self, query: str, history: Optional[list[dict]] = None) -> QueryRewriteResult:
+    def _build_query_rewrite(self, query: str, history: Optional[list[dict]] = None,
+                             tenant_id: str = "local-default", user_id: str = "",
+                             agent_id: str = "", conversation_id: str = "") -> QueryRewriteResult:
         """检索前 Query 重构：生成独立问题、语义 Query、关键词 Query 和元数据实体。"""
         if not self.use_query_rewrite:
             return QueryRewriteResult(original_query=query, fallback_used=True)
@@ -1460,20 +1705,23 @@ class CyberAgent:
                 "template": QUERY_REWRITE_PROMPT, "variables": ["query", "history"],
             }])
             asset = self.memory.get_active_prompt_asset("query_rewrite", QUERY_REWRITE_PROMPT)
-            prompt = asset["template"].format(
-                query=query,
-                history=self._format_history_for_rewrite(history or []),
-            )
+            # Use targeted substitution: managed Prompt templates contain a JSON
+            # example whose braces must remain literal and must not be parsed as
+            # ``str.format`` fields.
+            prompt = str(asset["template"] or QUERY_REWRITE_PROMPT)
+            prompt = prompt.replace("{query}", query)
+            prompt = prompt.replace("{history}", self._format_history_for_rewrite(history or []))
             t0 = time.time()
             rewritten = self.llm.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.1,
-                max_tokens=128,
+                max_tokens=384,
                 timeout=30,
             )
             usage = (rewritten or {}).get("usage") if isinstance(rewritten, dict) else {}
             self.memory.record_llm_usage_event(
-                tenant_id="local-default", module="query_rewrite",
+                tenant_id=tenant_id, user_id=user_id, agent_id=agent_id,
+                conversation_id=conversation_id, module="query_rewrite",
                 model=(rewritten or {}).get("model") or getattr(self.llm, "model", ""),
                 prompt_tokens=(usage or {}).get("prompt_tokens", 0),
                 completion_tokens=(usage or {}).get("completion_tokens", 0),
@@ -1715,21 +1963,26 @@ class CyberAgent:
                 "stats": {"search_time": 0, "llm_time": 0, "total_time": 0, "docs_count": 0},
             }
 
-        # ---- 语义缓存（精确归一化命中，键包含知识库/模型/Profile/Prompt） ----
-        cache_hit = False
+        # ---- 语义缓存（按身份、知识库和检索配置隔离） ----
         cache_key = ""
         cache_prompt_version = hashlib.sha256(SystemPromptLoader.get().encode("utf-8")).hexdigest()[:16]
         if not skip_memory:
             normalized_query = self.memory.normalize_cache_query(query)
-            profile_scope = ",".join(sorted({str(profile) for profile in (profiles or [])}))
-            cache_material = "|".join([
-                normalized_query, str(knowledge_base_id or ""), str(getattr(self.llm, "model", "")),
-                profile_scope, cache_prompt_version,
-            ])
-            cache_key = hashlib.sha256(cache_material.encode("utf-8")).hexdigest()
+            cache_key = build_semantic_cache_key(
+                normalized_query=normalized_query,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                knowledge_base_id=knowledge_base_id,
+                model=getattr(self.llm, "model", ""),
+                profiles=profiles,
+                prompt_version=cache_prompt_version,
+                top_k=effective_top_k,
+                use_rerank=effective_use_rerank,
+                use_hybrid=effective_use_hybrid,
+            )
             cached = self.memory.get_semantic_cache(cache_key)
             if cached:
-                cache_hit = True
                 answer = cached["answer"]
                 sources = cached.get("sources") or []
                 add_trace_step(trace_data, "semantic_cache", hit=True, cache_key=cache_key[:12])
@@ -1749,10 +2002,15 @@ class CyberAgent:
 
         # ---- Query 改写 / 多路检索计划 ----
         t0_rw = time.time()
-        query_plan = self._build_query_rewrite(query, conv_history)
+        query_plan = self._build_query_rewrite(
+            query, conv_history, tenant_id, user_id, agent_id, conversation_id,
+        )
         rewrite_time = time.time() - t0_rw
-        search_queries = enrich_queries_for_compliance_decision(
-            query, query_plan.retrieval_queries(), query_plan.query_type
+        search_queries = enrich_queries_for_date_fact(
+            query,
+            enrich_queries_for_compliance_decision(
+                query, query_plan.retrieval_queries(), query_plan.query_type
+            ),
         )
         add_trace_step(
             trace_data,
@@ -1778,6 +2036,7 @@ class CyberAgent:
                 use_chroma_where=True,
                 profiles=profiles,
                 access_scope={"tenant_id": tenant_id, "user_id": user_id, "agent_id": agent_id, "knowledge_base_id": knowledge_base_id},
+                query_type=query_plan.query_type,
             )
         else:
             docs = list(retrieved_docs_override)
@@ -1787,6 +2046,12 @@ class CyberAgent:
         trace_data["query_rewrite"] = query_plan.to_dict()
         trace_data["effective_retrieval_queries"] = search_queries
         trace_data["retrieval"] = getattr(self.retriever, "last_trace", {})
+        retrieval_trace = trace_data["retrieval"] or {}
+        trace_data["retrieval_degraded"] = bool(retrieval_trace.get("retrieval_degraded"))
+        trace_data["degraded_stages"] = list(retrieval_trace.get("degraded_stages") or [])
+        if retrieval_trace.get("rerank", {}).get("status") == "degraded" and "reranker" not in trace_data["degraded_stages"]:
+            trace_data["retrieval_degraded"] = True
+            trace_data["degraded_stages"].append("reranker")
         add_trace_step(
             trace_data,
             "retrieval",
@@ -1795,15 +2060,19 @@ class CyberAgent:
             returned_count=len(docs),
             total_results=len(docs),
             top_sources=[
-                {"file_name": d.get("file_name", ""), "section": d.get("section", "")}
+                {"file_name": d.get("file_name", ""), "section": d.get("section", ""),
+                 "chunk_id": d.get("chunk_id", ""), "clause": d.get("clause", ""),
+                 "rank_score": d.get("rank_score"), "rank_sources": d.get("rank_sources", ""),
+                 "rerank_score": d.get("rerank_score")}
                 for d in docs[:5]
             ],
+            evidence_coverage=evidence_coverage(docs),
             trace=trace_data["retrieval"],
         )
 
         # ---- 空结果预检 + 降级处理 ----
-        if not docs:
-            # 尝试用通用 taxonomy 配置里的宽泛查询做二次检索。
+        if not docs and can_use_generic_fallback(query_plan, query):
+            # 只对没有明确文档/条款约束的宽泛问题做二次检索。
             for fq in fallback_queries("default"):
                 fallback_docs = self.retriever.search(
                     fq, top_k=5, use_rerank=False, profiles=profiles,
@@ -1820,6 +2089,13 @@ class CyberAgent:
                         returned_count=len(fallback_docs),
                     )
                     break
+        elif not docs:
+            add_trace_step(
+                trace_data,
+                "fallback_retrieval",
+                skipped=True,
+                reason="hard_retrieval_constraint",
+            )
 
         external_docs = self._maybe_external_evidence(
             query, trace_data, conversation_id, tenant_id, user_id, docs,
@@ -1833,7 +2109,12 @@ class CyberAgent:
                 {"query_length": len(query), "knowledge_base_id_present": bool(knowledge_base_id)},
                 trace_data.get("trace_id", ""), "本轮授权检索未返回知识库文档；未保存查询正文。",
             )
-            answer = "该问题超出我的知识范围，知识库中暂无相关文件覆盖。"
+            pending_excluded = int((trace_data.get("retrieval") or {}).get("pending_profile_excluded") or 0)
+            answer = (
+                "已检索到相关资料，但这些资料尚未完成知识库审核，当前不能作为正式依据。"
+                if pending_excluded else
+                "该问题超出我的知识范围，知识库中暂无相关文件覆盖。"
+            )
             sources = []
             finish_trace(trace_data, "no_retrieval_result")
             msg_id = self.memory.add_message(conversation_id, "assistant", answer, sources=[])
@@ -1870,12 +2151,13 @@ class CyberAgent:
                 },
             }
 
-        sources = [
+        source_candidates = [
             {
                 "file_name": d["file_name"],
                 "display_name": source_display_name(d),
+                "source_id": source_reference_id(d),
                 "category": d["category"],
-                "section": d["section"],
+                "section": d.get("section", ""),
                 "content": d.get("content", ""),
                 **compute_confidence(d),
                 **({
@@ -1890,6 +2172,9 @@ class CyberAgent:
             }
             for d in docs
         ]
+        sources = [d for d in source_candidates if d.get("external") or float(d.get("confidence") or 0) >= 0.05]
+        if not sources and source_candidates:
+            sources = source_candidates
 
         graph_evidence = collect_graph_evidence(
             self.memory, tenant_id, knowledge_base_id, query, retrieved_docs=docs,
@@ -2024,7 +2309,7 @@ class CyberAgent:
 
         # ---- 自检 ----
         was_verified = False
-        verified = self._verify_answer(answer, sources)
+        verified = self._verify_answer(answer, sources, tenant_id, user_id, agent_id, conversation_id)
         if verified != answer:
             logger.info(f"自检对回答进行了修正: {len(answer)} → {len(verified)} 字符")
             answer = verified
@@ -2033,6 +2318,8 @@ class CyberAgent:
                        corrected=was_verified, enabled=bool(self.use_verification and sources))
 
         reflection_cfg = get_llm_config_card("reflection")
+        if not (reflection_cfg.get("model") and reflection_cfg.get("base_url")):
+            reflection_cfg = get_llm_config_card("chat")
         reflection_llm = None
         if reflection_cfg.get("model") and reflection_cfg.get("base_url"):
             try:
@@ -2053,6 +2340,13 @@ class CyberAgent:
             ),
         )
         answer = reflection["answer"]
+        answer, reflection_guarded = enforce_reflection_safety(
+            query, query_plan.query_type, answer, reflection,
+            degraded_stages=trace_data.get("degraded_stages") or [],
+        )
+        if reflection_guarded:
+            reflection["decision"] = "blocked"
+            reflection["reason"] = "high_risk_reflection_degraded"
         add_trace_step(trace_data, "reflection", decision=reflection["decision"],
                        duration_ms=reflection.get("duration_ms", 0), rounds=reflection.get("rounds", 0),
                        reason=reflection.get("reason", ""), rule_version=reflection.get("rule_version", 0),
@@ -2067,6 +2361,12 @@ class CyberAgent:
                 logger.warning(f"合规依据护栏：回答提及未召回法规/标准名 {unbacked_refs}，改为低覆盖兜底")
                 answer = COMPLIANCE_DECISION_FALLBACK_ANSWER
                 was_verified = True
+
+        # Append retrieval degradation note when applicable
+        degradation_note = _retrieval_degradation_note(trace_data)
+        if degradation_note and answer:
+            answer = answer + degradation_note
+            trace_data["degradation_note_appended"] = True
 
         # ---- 输出越界过滤（防御纵深） ----
         answer = _filter_output_forbidden(answer)
@@ -2190,10 +2490,6 @@ class CyberAgent:
         t_search = 0.0
         t_llm = 0.0
         was_truncated = False
-        llm_success = True
-        was_circuit_break = False
-        circuit_provider = None
-
         # ---- 用户越狱检测（含渐进式越狱） ----
         conv_history = self.memory.get_history(conversation_id)
         is_jailbreak, jb_reason = _detect_user_jailbreak(query, conv_history)
@@ -2285,9 +2581,14 @@ class CyberAgent:
         yield {"type": "status", "stage": "retrieving", "message": "正在检索知识库..."}
 
         t0_rw = time.time()
-        query_plan = self._build_query_rewrite(query, conv_history)
-        search_queries = enrich_queries_for_compliance_decision(
-            query, query_plan.retrieval_queries(), query_plan.query_type
+        query_plan = self._build_query_rewrite(
+            query, conv_history, tenant_id, user_id, agent_id, conversation_id,
+        )
+        search_queries = enrich_queries_for_date_fact(
+            query,
+            enrich_queries_for_compliance_decision(
+                query, query_plan.retrieval_queries(), query_plan.query_type
+            ),
         )
         t_rewrite = time.time() - t0_rw
         trace_data = build_trace_envelope(
@@ -2325,6 +2626,7 @@ class CyberAgent:
                 use_chroma_where=True,
                 profiles=profiles,
                 access_scope={"tenant_id": tenant_id, "user_id": user_id, "agent_id": agent_id, "knowledge_base_id": knowledge_base_id},
+                query_type=query_plan.query_type,
             ),
         )
         t_search = time.time() - t0_sr
@@ -2340,14 +2642,18 @@ class CyberAgent:
             returned_count=len(docs),
             total_results=len(docs),
             top_sources=[
-                {"file_name": d.get("file_name", ""), "section": d.get("section", "")}
+                {"file_name": d.get("file_name", ""), "section": d.get("section", ""),
+                 "chunk_id": d.get("chunk_id", ""), "clause": d.get("clause", ""),
+                 "rank_score": d.get("rank_score"), "rank_sources": d.get("rank_sources", ""),
+                 "rerank_score": d.get("rerank_score")}
                 for d in docs[:5]
             ],
+            evidence_coverage=evidence_coverage(docs),
             trace=trace_data["retrieval"],
         )
 
         # ---- 空结果预检 + 降级处理 ----
-        if not docs:
+        if not docs and can_use_generic_fallback(query_plan, query):
             for fq in fallback_queries("default"):
                 t0_fb = time.time()
                 fallback_docs = await loop.run_in_executor(
@@ -2369,6 +2675,13 @@ class CyberAgent:
                         returned_count=len(fallback_docs),
                     )
                     break
+        elif not docs:
+            add_trace_step(
+                trace_data,
+                "fallback_retrieval",
+                skipped=True,
+                reason="hard_retrieval_constraint",
+            )
 
         external_docs = self._maybe_external_evidence(
             query, trace_data, conversation_id, tenant_id, user_id, docs,
@@ -2382,7 +2695,12 @@ class CyberAgent:
                 {"query_length": len(query), "knowledge_base_id_present": bool(knowledge_base_id)},
                 trace_data.get("trace_id", ""), "本轮授权检索未返回知识库文档；未保存查询正文。",
             )
-            answer = "该问题超出我的知识范围，知识库中暂无相关文件覆盖。"
+            pending_excluded = int((trace_data.get("retrieval") or {}).get("pending_profile_excluded") or 0)
+            answer = (
+                "已检索到相关资料，但这些资料尚未完成知识库审核，当前不能作为正式依据。"
+                if pending_excluded else
+                "该问题超出我的知识范围，知识库中暂无相关文件覆盖。"
+            )
             sources = []
             finish_trace(trace_data, "no_retrieval_result")
             total_time = round(time.time() - t_start, 3)
@@ -2400,12 +2718,13 @@ class CyberAgent:
             yield {"type": "done", "sources": sources, "conversation_id": conversation_id, "message_id": msg_id}
             return
 
-        sources = [
+        source_candidates = [
             {
                 "file_name": d["file_name"],
                 "display_name": source_display_name(d),
+                "source_id": source_reference_id(d),
                 "category": d["category"],
-                "section": d["section"],
+                "section": d.get("section", ""),
                 "content": d.get("content", ""),
                 **compute_confidence(d),
                 **({
@@ -2420,6 +2739,9 @@ class CyberAgent:
             }
             for d in docs
         ]
+        sources = [d for d in source_candidates if d.get("external") or float(d.get("confidence") or 0) >= 0.05]
+        if not sources and source_candidates:
+            sources = source_candidates
 
         graph_evidence = collect_graph_evidence(
             self.memory, tenant_id, knowledge_base_id, query, retrieved_docs=docs,
@@ -2566,6 +2888,8 @@ class CyberAgent:
         # 流式草稿已经输出；终审可能返回替换文本，前端以 answer_replace 事件呈现最终版本。
         yield {"type": "status", "stage": "reviewing", "message": "正在进行安全复核..."}
         reflection_cfg = get_llm_config_card("reflection")
+        if not (reflection_cfg.get("model") and reflection_cfg.get("base_url")):
+            reflection_cfg = get_llm_config_card("chat")
         reflection_llm = None
         if reflection_cfg.get("model") and reflection_cfg.get("base_url"):
             try:
@@ -2586,6 +2910,13 @@ class CyberAgent:
             ),
         )
         reviewed_content = reflection["answer"]
+        reviewed_content, reflection_guarded = enforce_reflection_safety(
+            query, query_plan.query_type, reviewed_content, reflection,
+            degraded_stages=trace_data.get("degraded_stages") or [],
+        )
+        if reflection_guarded:
+            reflection["decision"] = "blocked"
+            reflection["reason"] = "high_risk_reflection_degraded"
         add_trace_step(trace_data, "reflection", decision=reflection["decision"],
                        duration_ms=reflection.get("duration_ms", 0), rounds=reflection.get("rounds", 0),
                        reason=reflection.get("reason", ""), rule_version=reflection.get("rule_version", 0),
@@ -2614,6 +2945,13 @@ class CyberAgent:
                 logger.warning(f"流式路径合规依据护栏：回答提及未召回法规/标准名 {unbacked_refs}，改为低覆盖兜底")
                 full_content = COMPLIANCE_DECISION_FALLBACK_ANSWER
                 self.memory._update_last_message(conversation_id, full_content, sources=sources)
+
+        # Append retrieval degradation note when applicable (streaming path)
+        degradation_note = _retrieval_degradation_note(trace_data)
+        if degradation_note and full_content:
+            full_content = full_content + degradation_note
+            self.memory._update_last_message(conversation_id, full_content, sources=sources)
+            trace_data["degradation_note_appended"] = True
 
         # ---- 输出越界过滤（防御纵深） ----
         filtered = _filter_output_forbidden(full_content)
@@ -2683,6 +3021,10 @@ class CyberAgent:
             return {"ok": True, "skipped": True, "reason": "user_already_rated"}
         if item.get("semantic_rating") is not None:
             return {"ok": True, "skipped": True, "reason": "semantic_already_rated"}
+        owner = self.memory.get_conversation_owner(item.get("conversation_id", "")) or {}
+        usage_scope = {"tenant_id": owner.get("tenant_id", "local-default"),
+                       "user_id": owner.get("user_id", ""), "agent_id": owner.get("agent_id", ""),
+                       "conversation_id": item.get("conversation_id", "")}
 
         self.memory.ensure_prompt_assets([{
             "slot": "semantic_scoring", "name": "语义评分", "model_role": "scoring",
@@ -2720,7 +3062,7 @@ class CyberAgent:
                     payload = resp.json()
                     usage = payload.get("usage") or {}
                     self.memory.record_llm_usage_event(
-                        tenant_id="local-default", module="semantic_scoring",
+                        **usage_scope, module="semantic_scoring",
                         model=payload.get("model") or scoring_model,
                         prompt_tokens=usage.get("prompt_tokens", 0),
                         completion_tokens=usage.get("completion_tokens", 0),
@@ -2747,7 +3089,7 @@ class CyberAgent:
                     payload = resp.json()
                     usage = payload.get("usage") or {}
                     self.memory.record_llm_usage_event(
-                        tenant_id="local-default", module="semantic_scoring_fallback",
+                        **usage_scope, module="semantic_scoring_fallback",
                         model=payload.get("model") or fb_model,
                         prompt_tokens=usage.get("prompt_tokens", 0),
                         completion_tokens=usage.get("completion_tokens", 0),
@@ -2780,6 +3122,10 @@ class CyberAgent:
         prev = self.memory.get_unrated_assistant_message(conversation_id)
         if not prev:
             return {}
+        owner = self.memory.get_conversation_owner(conversation_id) or {}
+        usage_scope = {"tenant_id": owner.get("tenant_id", "local-default"),
+                       "user_id": owner.get("user_id", ""), "agent_id": owner.get("agent_id", ""),
+                       "conversation_id": conversation_id}
 
         prev_answer = prev["content"][:500]
         self.memory.ensure_prompt_assets([{
@@ -2819,7 +3165,7 @@ class CyberAgent:
                     payload = resp.json()
                     usage = payload.get("usage") or {}
                     self.memory.record_llm_usage_event(
-                        tenant_id="local-default", module="semantic_scoring",
+                        **usage_scope, module="semantic_scoring",
                         model=payload.get("model") or scoring_model,
                         prompt_tokens=usage.get("prompt_tokens", 0),
                         completion_tokens=usage.get("completion_tokens", 0),
@@ -2847,7 +3193,7 @@ class CyberAgent:
                     payload = resp.json()
                     usage = payload.get("usage") or {}
                     self.memory.record_llm_usage_event(
-                        tenant_id="local-default", module="semantic_scoring_fallback",
+                        **usage_scope, module="semantic_scoring_fallback",
                         model=payload.get("model") or fb_model,
                         prompt_tokens=usage.get("prompt_tokens", 0),
                         completion_tokens=usage.get("completion_tokens", 0),
@@ -2895,7 +3241,7 @@ class CyberAgent:
                     payload = resp.json()
                     usage = payload.get("usage") or {}
                     self.memory.record_llm_usage_event(
-                        tenant_id="local-default", module="jailbreak_detect",
+                        **usage_scope, module="jailbreak_detect",
                         model=payload.get("model") or jb_model,
                         prompt_tokens=usage.get("prompt_tokens", 0),
                         completion_tokens=usage.get("completion_tokens", 0),

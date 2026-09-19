@@ -233,18 +233,22 @@ def test_fetch_mcp_accepts_public_https_url():
 
 
 def test_governed_mcp_executes_after_policy_and_redacts_audit(tmp_path, monkeypatch):
-    store = GovernanceStore(str(tmp_path / "governed-mcp.db"))
-    secret = store.create_secret("tenant-a", "mcp-token", "mcp", "secret-token", "admin", "org_admin")
+    db_path = tmp_path / "governed-mcp.db"
+    memory = ConversationMemory(str(db_path))
+    owner = memory.register_user("governed-mcp@example.com", "Correct-Horse-30", "Governed MCP")
+    tenant_id, agent_id, user_id = owner["tenant_id"], owner["agent_id"], owner["id"]
+    store = GovernanceStore(str(db_path))
+    secret = store.create_secret(tenant_id, "mcp-token", "mcp", "secret-token", user_id, "org_admin")
     server = store.register_mcp_server(
-        "tenant-a", "governed", "https://mcp.example.test/rpc", "admin",
+        tenant_id, "governed", "https://mcp.example.test/rpc", user_id,
         secret_ref_id=secret["id"], auth_type="bearer",
     )
-    store.upsert_mcp_tool("tenant-a", server["id"], "search", "lookup", {"type": "object"}, False, "admin", "org_admin")
-    store.set_mcp_status("tenant-a", server["id"], "enabled", "admin", "org_admin")
+    store.upsert_mcp_tool(tenant_id, server["id"], "search", "lookup", {"type": "object"}, False, user_id, "org_admin")
+    store.set_mcp_status(tenant_id, server["id"], "enabled", user_id, "org_admin")
     store.set_mcp_tool_policy(
-        "tenant-a", server["id"], "search", allowed_roles=["org_admin"],
-        allowed_agents=["agent-a"], param_allowlist=["query"], param_denylist=["token"],
-        enabled=True, actor_user_id="admin", actor_role="org_admin",
+        tenant_id, server["id"], "search", allowed_roles=["org_admin"],
+        allowed_agents=[agent_id], param_allowlist=["query"], param_denylist=["token"],
+        enabled=True, actor_user_id=user_id, actor_role="org_admin",
     )
     seen = {}
 
@@ -261,7 +265,7 @@ def test_governed_mcp_executes_after_policy_and_redacts_audit(tmp_path, monkeypa
 
     monkeypatch.setattr("capability_executor.requests.post", fake_post)
     result = execute_governed_mcp(
-        store, "tenant-a", server["id"], "search", "user-a", "org_admin", "agent-a", {"query": "访问控制"},
+        store, tenant_id, server["id"], "search", user_id, "org_admin", agent_id, {"query": "访问控制"},
     )
     assert result["status"] == "success"
     assert seen["headers"]["Authorization"] == "Bearer secret-token"

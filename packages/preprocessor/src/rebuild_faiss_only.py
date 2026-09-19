@@ -3,6 +3,7 @@ from chromadb.config import Settings
 import chromadb
 from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
+from index_contract import index_config, merge_manifest
 import os
 import shutil
 import time
@@ -17,14 +18,15 @@ STORE_DIR = _RAG / "04_vector_store"
 FAISS_DIR = STORE_DIR / "faiss_index"
 
 
-lc_embeddings = OllamaEmbeddings(model="quentinz/bge-small-zh-v1.5",
-                                 base_url="http://localhost:11434")
+_INDEX_CONFIG = index_config()
+lc_embeddings = OllamaEmbeddings(model=_INDEX_CONFIG["embedding_model"],
+                                 base_url=_INDEX_CONFIG["embedding_base_url"])
 
 # 从 Chroma 读出所有数据
 
 chroma_dir = str(STORE_DIR / "chroma_db")
 client = chromadb.PersistentClient(path=chroma_dir, settings=Settings(anonymized_telemetry=False))
-collection = client.get_collection("cyber_security")
+collection = client.get_collection(_INDEX_CONFIG["chroma_collection"])
 count = collection.count()
 logger.info(f"Chroma 共有 {count} 条记录")
 
@@ -70,6 +72,8 @@ shutil.copytree(tmp_dir, str(FAISS_DIR))
 shutil.rmtree(tmp_dir)
 
 logger.info(f"FAISS 重建完成：{faiss_db.index.ntotal} vectors → {FAISS_DIR}")
+chunks = [{"content": texts[i], "chunk_id": ids[i], **(metadatas[i] or {})} for i in range(len(ids))]
+merge_manifest(STORE_DIR / "index_manifest.json", chunks, len(embeddings[0]) if embeddings else 0)
 logger.info(f"\n{'='*60}")
 logger.info(f"  FAISS 重建完成")
 logger.info(f"  目录: {FAISS_DIR}")

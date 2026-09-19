@@ -32,11 +32,22 @@ def _knowledge_base_snapshot() -> dict[str, Any]:
     rag = _PROJECT_ROOT / "RAG_DATA"
     cleaned = rag / "03_cleaned"
     store = rag / "04_vector_store"
+    manifest_path = store / "index_manifest.json"
+    manifest = {}
+    try:
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
     return {
         "cleaned_docs": sum(1 for p in cleaned.rglob("*.md")) if cleaned.exists() else 0,
         "parent_sections": _safe_count_json_items(store / "parent_texts.json"),
         "faiss_index_exists": (store / "faiss_index" / "index.faiss").exists(),
         "chroma_exists": (store / "chroma_db").exists(),
+        "index_contract_version": manifest.get("contract_version", ""),
+        "embedding_model": manifest.get("embedding_model", ""),
+        "vector_dimension": manifest.get("vector_dimension", 0),
+        "index_chunk_count": manifest.get("chunk_count", 0),
     }
 
 

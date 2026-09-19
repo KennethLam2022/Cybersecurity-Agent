@@ -27,6 +27,20 @@ def test_reflection_degrades_without_model_and_keeps_original_answer(tmp_path):
     assert result["answer"] == "原始回答"
 
 
+def test_reflection_failure_is_explicitly_degraded(tmp_path):
+    memory = ConversationMemory(str(tmp_path / "reflection-failure.db"))
+    memory.save_reflection_rule({"name": "边界", "rule_text": "限制范围", "capability_modes": ["chat"], "status": "published"})
+
+    class _BrokenLlm:
+        def chat(self, *_args, **_kwargs):
+            raise RuntimeError("provider unavailable")
+
+    result = reflect_answer(memory, _BrokenLlm(), "问题", "原始回答", [], "chat")
+
+    assert result["decision"] == "degraded"
+    assert result["reason"] == "reflection_failed"
+
+
 def test_reflection_runs_are_observable_and_rule_changes_are_audited(tmp_path):
     memory = ConversationMemory(str(tmp_path / "reflection.db"))
     rule = memory.save_reflection_rule({

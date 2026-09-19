@@ -35,7 +35,18 @@ def main() -> int:
 
     if args.scope == "current":
         basetemp = ROOT / ".pytest-tmp-current"
-        command = [sys.executable, "-m", "pytest", "packages/agent/src/tests", "-q", "-p", "no:cacheprovider", "--basetemp", str(basetemp)]
+        command = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "packages/agent/src/tests",
+            "packages/preprocessor/tests",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "--basetemp",
+            str(basetemp),
+        ]
     elif args.scope == "root":
         basetemp = ROOT / ".pytest-tmp-root"
         command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--basetemp", str(basetemp)]

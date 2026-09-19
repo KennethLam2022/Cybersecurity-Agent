@@ -19,8 +19,14 @@ from agent import (
     answer_mentions_unbacked_legal_references,
     compliance_decision_guard_answer,
     enrich_queries_for_compliance_decision,
+    enrich_queries_for_date_fact,
+    build_semantic_cache_key,
+    can_use_generic_fallback,
+    enforce_reflection_safety,
+    evidence_coverage,
     has_authoritative_compliance_sources,
     source_display_name,
+    SystemPromptLoader,
 )
 from metadata_filter import (
     apply_metadata_filter,
@@ -73,6 +79,101 @@ def test_query_rewrite_result_uses_original_query_when_model_fields_are_empty():
     assert result.retrieval_queries()
 
 
+def test_query_rewrite_restores_identifiers_omitted_by_model():
+    result = QueryRewriteResult.from_dict(
+        "请问 GB/T 22239-2019 第8.1.4条要求是什么？",
+        {
+            "standalone_query": "网络安全等级保护访问控制要求",
+            "semantic_query": "等级保护访问控制要求",
+            "keyword_query": "访问控制",
+            "entities": {},
+        },
+    )
+
+    assert "22239" in result.entities["doc_ids"]
+    assert "8.1.4" in result.entities["article_numbers"]
+    assert any("GB/T22239-2019" in query for query in result.retrieval_queries())
+    assert any("第8.1.4条" in query for query in result.retrieval_queries())
+
+
+def test_hard_reference_queries_do_not_use_generic_fallback():
+    article_plan = QueryRewriteResult.from_dict(
+        "GB/T 22239-2019 第8.1.4条要求是什么？",
+        {"query_type": "article_lookup", "entities": {"doc_ids": ["22239"], "article_numbers": ["8.1.4"]}},
+    )
+    standard_plan = QueryRewriteResult.from_dict(
+        "GB/T 22239-2019有哪些要求？",
+        {"query_type": "standard_lookup", "entities": {"doc_ids": ["22239"]}},
+    )
+
+    assert can_use_generic_fallback(article_plan) is False
+    assert can_use_generic_fallback(standard_plan) is False
+
+
+def test_general_query_can_use_generic_fallback():
+    plan = QueryRewriteResult.from_dict(
+        "访问控制有哪些常见做法？",
+        {"query_type": "general", "entities": {}},
+    )
+
+    assert can_use_generic_fallback(plan) is True
+
+
+def test_high_risk_reflection_degradation_blocks_original_answer():
+    answer, guarded = enforce_reflection_safety(
+        "网络安全法规定的法律责任是什么？",
+        "article_lookup",
+        "可能需要承担相应责任。",
+        {"decision": "degraded"},
+    )
+
+    assert guarded is True
+    assert answer == COMPLIANCE_DECISION_FALLBACK_ANSWER
+
+
+def test_normal_reflection_degradation_does_not_block_general_answer():
+    answer, guarded = enforce_reflection_safety(
+        "访问控制有哪些常见做法？",
+        "general",
+        "请结合组织实际情况设计访问控制。",
+        {"decision": "degraded"},
+    )
+
+    assert guarded is False
+    assert answer.startswith("请结合")
+
+
+def test_evidence_coverage_is_traceable():
+    result = evidence_coverage([{"content": "依据"}, {"content": ""}], "回答")
+
+    assert result == {"source_count": 2, "usable_source_count": 1,
+                      "answer_characters": 2, "covered": True,
+                      "coverage_ratio": 0.5}
+
+
+def test_semantic_cache_key_isolated_by_access_and_retrieval_scope():
+    base = dict(
+        normalized_query="访问控制",
+        tenant_id="tenant-a",
+        user_id="user-a",
+        agent_id="agent-a",
+        knowledge_base_id="kb-a",
+        model="model-a",
+        profiles=["general"],
+        prompt_version="prompt-a",
+        top_k=10,
+        use_rerank=True,
+        use_hybrid=True,
+    )
+
+    key = build_semantic_cache_key(**base)
+    assert key != build_semantic_cache_key(**{**base, "tenant_id": "tenant-b"})
+    assert key != build_semantic_cache_key(**{**base, "user_id": "user-b"})
+    assert key != build_semantic_cache_key(**{**base, "agent_id": "agent-b"})
+    assert key != build_semantic_cache_key(**{**base, "knowledge_base_id": "kb-b"})
+    assert key != build_semantic_cache_key(**{**base, "use_rerank": False})
+
+
 def test_legitimate_single_turn_procedure_question_is_not_jailbreak():
     from agent import _detect_user_jailbreak
 
@@ -87,6 +188,14 @@ def test_infer_metadata_filter_from_standard_and_article():
     assert "22239" in spec.doc_ids
     assert "8.1.4" in spec.article_numbers
     assert "02-等保国标" in spec.categories
+    assert spec.hard_filter is True
+
+
+def test_infer_metadata_filter_recognizes_iso_iec_identifiers():
+    spec = infer_metadata_filter_from_query("ISO/IEC 27001:2022 控制措施")
+
+    assert "ISO/IEC27001:2022" in spec.file_name_contains
+    assert "ISO/IEC27001:2022" in spec.doc_ids
     assert spec.hard_filter is True
 
 
@@ -174,6 +283,52 @@ def test_compliance_decision_query_enrichment_when_rewrite_fallback():
     assert "法律责任" in joined
     assert "边界" in joined
     assert len(queries) == len(set(queries))
+
+
+def test_date_fact_query_enrichment_targets_legal_dates_and_effective_clause():
+    queries = enrich_queries_for_date_fact(
+        "中国的网络安全法什么时候颁布",
+        ["中国的网络安全法什么时候颁布"],
+    )
+
+    joined = "\n".join(queries)
+    assert "通过日期" in joined
+    assert "施行日期" in joined
+    assert "附则" in joined
+    assert "第七十九条" not in joined
+    assert "网络安全法" in joined
+    assert len(queries) == len(set(queries))
+
+
+def test_date_fact_query_enrichment_does_not_hardcode_one_law_for_other_documents():
+    queries = enrich_queries_for_date_fact(
+        "GB/T 22239-2019 什么时候发布",
+        ["GB/T 22239-2019 什么时候发布"],
+    )
+
+    joined = "\n".join(queries)
+    assert "发布日期" in joined
+    assert "网络安全法" not in joined
+
+
+def test_date_fact_query_enrichment_keeps_other_law_name_without_network_security_terms():
+    queries = enrich_queries_for_date_fact(
+        "中华人民共和国数据安全法什么时候施行",
+        ["中华人民共和国数据安全法什么时候施行"],
+    )
+
+    joined = "\n".join(queries)
+    assert "中华人民共和国数据安全法" in joined
+    assert "网络安全法" not in joined
+    assert "第七十九条" not in joined
+
+
+def test_runtime_prompt_is_general_and_does_not_allow_training_knowledge_fallback():
+    prompt = SystemPromptLoader.get()
+
+    assert "禁止用自己的训练知识补充任何内容" in prompt
+    assert "运营商系统分类标准" not in prompt
+    assert "核心网 | 5GC/EPC/IMS/HLR/HSS" not in prompt
 
 
 def test_compliance_decision_guard_blocks_low_confidence_operational_sources():

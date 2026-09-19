@@ -188,6 +188,10 @@ class TestValidateLlmUrl:
     def test_invalid_url(self):
         assert validate_llm_url("not a url") is False
 
+    def test_rejects_non_https_schemes(self):
+        assert validate_llm_url("http://api.openai.com/v1") is False
+        assert validate_llm_url("ftp://api.openai.com") is False
+
 
 class TestIsAdminRoute:
     def test_admin_document_path(self):
@@ -196,14 +200,28 @@ class TestIsAdminRoute:
 
     def test_admin_llm_configs(self):
         assert is_admin_route("/api/llm/configs/save") is True
+        assert is_admin_route("/api/llm/configs") is True
 
     def test_admin_llm_legacy_config_routes(self):
         assert is_admin_route("/api/llm/config") is True
         assert is_admin_route("/api/llm/presets") is True
         assert is_admin_route("/api/llm/test") is True
 
-    def test_public_llm_current_config_readonly(self):
-        assert is_admin_route("/api/llm/config/current") is False
+    def test_llm_current_config_is_admin_only(self):
+        assert is_admin_route("/api/llm/config/current") is True
+
+    def test_stats_and_retrieval_eval_are_admin_only(self):
+        assert is_admin_route("/api/stats") is True
+        assert is_admin_route("/api/stats/health") is True
+        assert is_admin_route("/api/stats/retrieval-eval/items") is True
+        assert is_platform_only_admin_route("/api/stats") is True
+        assert is_platform_only_admin_route("/api/stats/retrieval-eval/items") is True
+
+    def test_legacy_prompt_routes_are_platform_only(self):
+        assert is_admin_route("/api/prompt/versions") is True
+        assert is_admin_route("/api/prompt/test/items") is True
+        assert is_platform_only_admin_route("/api/prompt/versions") is True
+        assert is_platform_only_admin_route("/api/prompt/test/export") is True
 
     def test_public_chat_path(self):
         assert is_admin_route("/api/conversations") is False

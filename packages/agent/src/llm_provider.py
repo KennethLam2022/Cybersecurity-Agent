@@ -250,7 +250,6 @@ class LLMProvider:
             )
             resp.raise_for_status()
             data = resp.json()
-            content = data["choices"][0]["message"]["content"]
             elapsed = time.time() - t0
             return {
                 "ok": True, "message": f"连接成功 ({elapsed:.1f}s)", "model": model,

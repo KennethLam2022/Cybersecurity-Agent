@@ -11,6 +11,8 @@ import base64
 import json
 import urllib.parse
 import urllib.request
+import ipaddress
+import socket
 from typing import Any
 
 OIDC_PRESETS = {
@@ -34,6 +36,38 @@ _OIDC_WELL_KNOWN_PATHS = (
     "/.well-known/openid-configuration",
     "/.well-known/oauth-authorization-server",
 )
+
+
+class _RejectRedirect(urllib.request.HTTPRedirectHandler):
+    """OIDC endpoints must not silently redirect to an unvalidated host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        raise ValueError("OIDC 出站请求禁止重定向")
+
+
+_OIDC_OPENER = urllib.request.build_opener(_RejectRedirect)
+
+
+def _validate_oidc_outbound_url(url: str, *, require_https: bool = True) -> str:
+    """Validate an OIDC endpoint immediately before making an outbound call."""
+    value = _clean_str(url).rstrip("/")
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme != "https" and (require_https or parsed.scheme not in {"http", "https"}):
+        raise ValueError("OIDC 出站地址必须使用 HTTPS")
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if not hostname:
+        raise ValueError("OIDC 出站地址缺少主机名")
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)}
+    except OSError as exc:
+        raise ValueError("OIDC 出站地址无法解析") from exc
+    for address in addresses:
+        parsed_address = ipaddress.ip_address(address)
+        if (parsed_address.is_private or parsed_address.is_loopback
+                or parsed_address.is_link_local or parsed_address.is_reserved
+                or parsed_address.is_multicast or parsed_address.is_unspecified):
+            raise ValueError("OIDC 出站地址不得指向内网、回环或保留地址")
+    return value
 
 
 def _clean_str(value: Any, default: str = "") -> str:
@@ -86,6 +120,23 @@ def validate_oidc_config(config: dict | None) -> dict:
         raise ValueError("OIDC 颁发者地址 (issuer_url) 不能为空")
     if not issuer_url.startswith(("https://", "http://")):
         raise ValueError("OIDC 颁发者地址必须以 http(s):// 开头")
+    parsed_issuer = urllib.parse.urlparse(issuer_url)
+    if parsed_issuer.scheme != "https":
+        raise ValueError("OIDC 颁发者地址必须使用 HTTPS")
+    hostname = (parsed_issuer.hostname or "").lower().rstrip(".")
+    if not hostname:
+        raise ValueError("OIDC 颁发者地址缺少主机名")
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)}
+    except OSError:
+        # DNS may be unavailable during configuration; the actual connection
+        # path performs the same check again before making an outbound request.
+        addresses = set()
+    for address in addresses:
+        parsed_address = ipaddress.ip_address(address)
+        if (parsed_address.is_private or parsed_address.is_loopback
+                or parsed_address.is_link_local or parsed_address.is_reserved):
+            raise ValueError("OIDC 颁发者地址不得指向内网或回环地址")
     if not client_id:
         raise ValueError("OIDC Client ID 不能为空")
     if not redirect_uri.startswith(("http://", "https://")):
@@ -113,14 +164,16 @@ def validate_oidc_config(config: dict | None) -> dict:
 
 
 def _http_get_json(url: str, timeout: int) -> dict:
+    url = _validate_oidc_outbound_url(url)
     request = urllib.request.Request(
         url, headers={"Accept": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with _OIDC_OPENER.open(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def _http_post_form(url: str, data: dict, timeout: int) -> dict:
+    url = _validate_oidc_outbound_url(url)
     body = urllib.parse.urlencode(data).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -130,13 +183,13 @@ def _http_post_form(url: str, data: dict, timeout: int) -> dict:
             "Accept": "application/json",
         },
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with _OIDC_OPENER.open(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def discover_oidc_provider(issuer_url: str, timeout: int = 8) -> dict:
     """Fetch OIDC discovery metadata from the issuer."""
-    issuer_url = _clean_str(issuer_url).rstrip("/")
+    issuer_url = _validate_oidc_outbound_url(issuer_url)
     if not issuer_url:
         raise ValueError("OIDC 颁发者地址不能为空")
     last_error: Exception | None = None
@@ -207,6 +260,7 @@ def exchange_oidc_code(provider: dict, secrets: dict, code: str) -> dict:
     userinfo: dict = {}
     userinfo_endpoint = discovery.get("userinfo_endpoint")
     if userinfo_endpoint:
+        userinfo_endpoint = _validate_oidc_outbound_url(userinfo_endpoint)
         request = urllib.request.Request(
             userinfo_endpoint,
             headers={
@@ -215,7 +269,7 @@ def exchange_oidc_code(provider: dict, secrets: dict, code: str) -> dict:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with _OIDC_OPENER.open(request, timeout=timeout) as response:
                 userinfo = json.loads(response.read().decode("utf-8"))
         except Exception as exc:  # noqa: BLE001 - surface as login error
             raise RuntimeError(f"获取 OIDC 用户信息失败: {exc}") from exc

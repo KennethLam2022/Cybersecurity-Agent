@@ -1,6 +1,6 @@
 import json
 import asyncio
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
 
 from app_state import (
@@ -14,8 +14,14 @@ from app_state import (
     validate_llm_url,
 )
 import requests as http_requests
+from identity import require_platform_permission
 
 router = APIRouter()
+
+
+def _legacy_eval_principal(request: Request):
+    """Protect the compatibility E2E API while its storage remains global."""
+    return require_platform_permission(request, agent.memory)
 
 
 def _record_eval_usage(module: str, response: dict | None, model: str = "") -> None:
@@ -59,8 +65,9 @@ def _check_llm_conflict() -> dict:
 
 # ==================== E2E Eval ====================
 @router.get("/api/stats/e2e-eval/items")
-def get_e2e_eval_items():
+def get_e2e_eval_items(request: Request):
     try:
+        _legacy_eval_principal(request)
         items = agent.memory.get_e2e_eval_items()
         return {"items": items, "total": len(items)}
     except Exception as e:
@@ -69,8 +76,9 @@ def get_e2e_eval_items():
 
 
 @router.post("/api/stats/e2e-eval/items")
-def add_e2e_eval_item(data: dict):
+def add_e2e_eval_item(request: Request, data: dict):
     try:
+        _legacy_eval_principal(request)
         query = data.get("query", "").strip()
         if not query:
             return JSONResponse({"error": "query 不能为空"}, status_code=400)
@@ -87,8 +95,9 @@ def add_e2e_eval_item(data: dict):
 
 
 @router.put("/api/stats/e2e-eval/items")
-def update_e2e_eval_item(data: dict):
+def update_e2e_eval_item(request: Request, data: dict):
     try:
+        _legacy_eval_principal(request)
         item_id = data.get("id")
         if not item_id:
             return JSONResponse({"error": "id 不能为空"}, status_code=400)
@@ -107,8 +116,9 @@ def update_e2e_eval_item(data: dict):
 
 
 @router.delete("/api/stats/e2e-eval/items/{item_id}")
-def delete_e2e_eval_item(item_id: int):
+def delete_e2e_eval_item(item_id: int, request: Request):
     try:
+        _legacy_eval_principal(request)
         ok = agent.memory.delete_e2e_eval_item(item_id)
         return JSONResponse({"success": ok})
     except Exception as e:
@@ -116,8 +126,9 @@ def delete_e2e_eval_item(item_id: int):
 
 
 @router.post("/api/stats/e2e-eval/items/seed")
-def seed_e2e_eval_items():
+def seed_e2e_eval_items(request: Request):
     try:
+        _legacy_eval_principal(request)
         from eval_e2e import QUESTIONS
         items = [
             {
@@ -136,7 +147,8 @@ def seed_e2e_eval_items():
 
 
 @router.post("/api/stats/e2e-eval/generate-items")
-def e2e_eval_generate_items(data: dict = None):
+def e2e_eval_generate_items(request: Request, data: dict = None):
+    _legacy_eval_principal(request)
     keywords = (data or {}).get("keywords", "网络安全 等保 数据安全")
     profile = (data or {}).get("profile", "general")
     eval_llm = _get_backend_eval_llm()
@@ -203,8 +215,9 @@ def e2e_eval_generate_items(data: dict = None):
 
 
 @router.post("/api/stats/e2e-eval/run")
-def e2e_eval_run(data: dict = None):
+def e2e_eval_run(request: Request, data: dict = None):
     try:
+        _legacy_eval_principal(request)
         from pathlib import Path as _Path
         from datetime import datetime as _datetime
         from eval_e2e import run_evaluation, generate_html, _save_version, _compute_stats, _EVAL_DIR, _HTML_DIR
@@ -321,7 +334,8 @@ def e2e_eval_run(data: dict = None):
 
 
 @router.get("/api/stats/e2e-eval/report")
-def e2e_eval_report():
+def e2e_eval_report(request: Request):
+    _legacy_eval_principal(request)
     from eval_e2e import find_latest_results
     _, latest_html = find_latest_results()
     if not latest_html or not latest_html.exists():
@@ -330,13 +344,15 @@ def e2e_eval_report():
 
 
 @router.get("/api/stats/e2e-eval/versions")
-def e2e_eval_versions():
+def e2e_eval_versions(request: Request):
+    _legacy_eval_principal(request)
     from eval_e2e import _load_versions
     return {"versions": _load_versions()}
 
 
 @router.get("/api/stats/e2e-eval/latest")
-def e2e_eval_latest():
+def e2e_eval_latest(request: Request):
+    _legacy_eval_principal(request)
     from eval_e2e import find_latest_results
     latest_json, _ = find_latest_results()
     if not latest_json or not latest_json.exists():
@@ -345,18 +361,21 @@ def e2e_eval_latest():
 
 
 @router.get("/api/stats/e2e-eval/llm-conflict")
-def e2e_eval_llm_conflict():
+def e2e_eval_llm_conflict(request: Request):
     """检查 chat 和 promptEval 是否配置了相同的 LLM，返回冲突告警"""
+    _legacy_eval_principal(request)
     return _check_llm_conflict()
 
 
 @router.get("/api/stats/eval-summary/e2e-quality")
-def get_e2e_quality_summary():
+def get_e2e_quality_summary(request: Request):
+    _legacy_eval_principal(request)
     return _load_eval_summary("e2e_quality")
 
 
 @router.get("/api/stats/e2e-eval/analysis")
-def get_e2e_eval_analysis():
+def get_e2e_eval_analysis(request: Request):
+    _legacy_eval_principal(request)
     from eval_e2e import _load_versions
 
     versions = _load_versions()
@@ -391,13 +410,13 @@ def get_e2e_eval_analysis():
 - Context Recall（CR，检索召回）：{_s(latest, 'context_recall')}
 - Faithfulness（FT，回答忠实度）：{_s(latest, 'faithfulness')}
 - Relevancy（RL，回答相关性）：{_s(latest, 'relevancy')}
-- Hallucination（HC，幻觉率，越低越好）：{_s(latest, 'hallucination')}
+- No-Hallucination Rate（HC，无幻觉率，越高越好）：{_s(latest, 'hallucination')}
 
 ## 趋势变化（最近 {"3" if len(history) == 3 else len(history)} 次评测）
 {trend_lines}
 
 ## 目标阈值参考
-- CP ≥ 80%，CR ≥ 70%，FT ≥ 85%，RL ≥ 80%，HC ≤ 10%
+- CP ≥ 80%，CR ≥ 70%，FT ≥ 85%，RL ≥ 80%，HC ≥ 50%
 
 请输出以下结构分析报告（500字以内，用中文）：
 
