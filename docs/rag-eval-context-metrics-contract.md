@@ -12,9 +12,55 @@
 - `retrieved_contexts`：检索器实际返回的上下文片段，保持检索顺序；每项至少包含内容和稳定来源标识。
 - `reference_evidence`：由评测集提供的、回答该问题所需的最小事实/要求清单。它是可审查的参考证据，不是模型生成的回答。
 - 判断单位和标签必须保留在评测明细中，不能只持久化最终分数。
-- 每项计算输出 0 到 1 的分数，或明确的未评分状态。只有成功评分的结果可以进入平均值；报告同时显示已评分数和总样本数。
+- 每项计算都返回下表规定的全部字段；`details` 保留对应指标的判断单位/标签、分子、分母及必要的中间值，但不复制检索文档原文。
+
+| 字段 | 类型 | 必填及取值约定 |
+|:--|:--|:--|
+| `score` | number 或 null | 必填；成功评分为 0–1 数值；未评分或错误时为 null |
+| `status` | enum string | 必填；只允许使用下表列出的状态 |
+| `explanation` | 非空 string | 必填；说明分数含义或未评分/错误原因，不包含原始 Prompt 或敏感上下文 |
+| `details` | object | 必填；按下方状态与指标结构保留标签/单位、计数及公式中间值；不得复制检索文档原文 |
+| `evaluator` | object | 必填；字段为 `method`、`model_id`、`prompt_version`。`method` 只允许 `annotation`、`llm_judge`、`heuristic`、`deterministic`、`not_run`；`model_id` 和 `prompt_version` 类型为 string 或 null |
+
+`evaluator.method` 与状态的约束：
+
+- `scored`：`annotation`（使用已有标注）或 `llm_judge`；方法与输入标签来源必须一致。
+- 若结果由输入结构和公式直接确定（例如有效参考证据下空检索的 Recall），`scored` 必须使用 `deterministic`，不得伪称使用 Judge 或数据集标签。
+- `unverified_heuristic`：必须为 `heuristic`。
+- `unscored_*`：必须为 `not_run`。
+- `judge_error`：必须为 `llm_judge`；若回退尝试失败，在 `details` 记录失败类别。
+- `llm_judge` 必须提供非空 `model_id` 和 `prompt_version`；其他方法两者必须为 null。`annotation` 必须提供非空 `details.annotation_source`；若来源无法识别，不得使用 `annotation`。
+- 每条结果只有一个 `status`；`scored`、`unverified_heuristic`、`judge_error`、`unscored_*` 互斥。
+
+成功评分的 `details` 最少包含下列字段；标注缺失或评估失败时保留已有判断信息，并用 `missing_inputs` 或 `failure_category` 说明原因：
+
+| 指标 | `details` 必需字段 | 标签含义 |
+|:--|:--|:--|
+| Context Precision | `judgments: [{rank: integer, relevant: boolean}]`、`ap_numerator: number`、`relevant_count: integer` | `rank` 从 1 开始，`relevant` 对应 `v_k` |
+| Context Recall | `judgments: [{evidence_id: string, covered: boolean}]`、`covered_count: integer`、`reference_count: integer` | `evidence_id` 对应唯一参考证据项 |
+| Context Relevance | `judgments: [{unit_id: string, relevant: boolean}]`、`relevant_unit_count: integer`、`unit_count: integer` | `unit_id` 是来源标识与单元序号组成的稳定定位符 |
+
+`annotation` 表示使用评测集已有标签，必须在 `details.annotation_source` 记录非空来源标识。`judgments` 只保留稳定定位符和标签，不保留对应原文。
+
+按状态约束 `details`：
+
+| 状态 | 必需字段与类型 |
+|:--|:--|
+| `scored` | 使用对应指标表中的全部字段；计数字段为非负 integer，分数字段为 number。`annotation_source` 为非空 string（`method=annotation` 时）；`method=llm_judge` 时必须有完整 Judge 判断明细 |
+| `unscored_missing_annotation` | `missing_inputs: enum[]`，非空；元素为 `relevance_annotations` 或 `judgment_units`；可包含已得到的部分判断明细 |
+| `unscored_missing_reference` | `missing_inputs: ["reference_evidence"]`；可包含已得到的部分判断明细 |
+| `unscored_empty_retrieval` | `missing_inputs: ["retrieved_contexts"]`；仅用于该指标因空检索确实无法计算的情况 |
+| `unscored_no_evaluable_units` | `missing_inputs: ["evaluable_units"]`；检索结果非空，但清洗、拆分、去重后没有可判断的信息单元 |
+| `judge_error` | `failure_category: enum string`，限 `call_failed`、`invalid_response`、`invalid_judgment`；`fallback_attempted: boolean`；当其为 true 时，`fallback_failure_category: enum string`，限 `unavailable`、`invalid_result` |
+| `unverified_heuristic` | 对应指标表中的全部字段；`judge_failure_category: enum string`，限 `call_failed`、`invalid_response`、`invalid_judgment`；`fallback_method: string`，非空且符合 `<method_name>@<version>` 格式 |
+
+以上字段在适用状态下必填；不适用的字段必须省略，不以空字符串或任意 null 代替。额外诊断字段不得包含 Prompt、原文或敏感内容。
+
+- 只有 `scored` 结果可以进入校准分数平均值；报告同时显示已评分数、总样本数和未评分原因。
+- 所有 `unscored_*` 和 `judge_error` 结果的 `score` 必须为 `null`；`unverified_heuristic` 可以带数值分数，但默认不进入校准均值。
 - 未提供标签、参考证据或有效上下文，与“全部不相关”是不同状态；不得将其悄悄当作 0 分。
-- Judge 调用失败时，结果为 `judge_error` 且无分数。启发式回退若仍被调用，必须标记为 `unverified_heuristic`，与已校准 Judge 分数分开统计、不可混合比较。
+- 输入不完整时先返回对应的 `unscored_*` 状态且不调用 Judge，`evaluator.method=not_run`。所有必需判断标签齐全且公式成功计算时为 `scored`；标签可来自评测集标注或成功的 Judge，`evaluator.method` 必须记录实际来源。
+- Judge 失败且没有成功的启发式回退时返回 `judge_error` 和 `score=null`。若显式启用的启发式回退成功，则返回带数值分数的 `unverified_heuristic`，`evaluator.method=heuristic`，`details.fallback_method` 记录符合 `<method_name>@<version>` 格式的回退标识，并保留 Judge 失败类别及计算明细；回退失败则返回 `judge_error` 和 `score=null`，`details` 记录失败类别。`status` 只表示最终结果，不同时标记 `judge_error` 与 `unverified_heuristic`。
 - 保存评测时使用的 Judge 模型标识和 Prompt 版本。更换模型或 Prompt 后，分数不应默认视为可直接比较；比较前需用同一校准样例复核。
 - 本契约不定义发布通过阈值。
 
@@ -22,12 +68,15 @@
 
 | 状态 | 含义 | 是否参与均值 |
 |:--|:--|:--:|
-| `scored` | 输入和 Judge 结果均有效，已按公式计算 | 是 |
+| `scored` | 所需输入和标签完整，已按公式计算；标签可来自标注或成功的 Judge | 是 |
 | `unscored_missing_annotation` | 所需相关性标签未提供或未完整 | 否 |
 | `unscored_missing_reference` | Recall 所需参考证据未提供或为空 | 否 |
-| `unscored_empty_retrieval` | 检索结果为空，无法评估返回上下文质量 | 否 |
+| `unscored_empty_retrieval` | 对应指标因检索结果为空而无法计算 | 否 |
+| `unscored_no_evaluable_units` | 检索非空，但没有可评估的信息单元 | 否 |
 | `judge_error` | Judge 调用、结构化解析或必要校验失败 | 否 |
 | `unverified_heuristic` | 使用未校准启发式回退所得结果 | 默认否 |
+
+状态选择按指标专节优先：Precision 在无检索项时为 `unscored_empty_retrieval`；Relevance 在无检索项时为 `unscored_empty_retrieval`，有检索项但无可评估信息单元时为 `unscored_no_evaluable_units`。Recall 若参考证据有效，即使检索为空也可确定没有任何参考项被覆盖，因此得 `score=0, status=scored, evaluator.method=deterministic`，不适用 `unscored_empty_retrieval`。
 
 ## Context Precision
 
@@ -41,7 +90,7 @@
 
 `Context Precision@K = (Σ(k=1..K) P@k × v_k) / (Σ(k=1..K) v_k)`
 
-该值为按排名加权的 Average Precision。越相关的片段越靠前，分数越高。
+该值为按排名加权的 Average Precision。越相关的片段越靠前，分数越高。若已完整标注且 `Σv_k = 0`，按边界约定直接返回 `0`，不执行上述除法。
 
 **边界：**
 
@@ -66,6 +115,7 @@
 
 - 没有参考证据或参考清单为空：`unscored_missing_reference`，不把 Recall 记为 0 或 1。
 - 参考证据有效但检索结果为空：分数为 `0`，状态为 `scored`。
+- 此边界结果可由空检索这一确定事实直接计算，`evaluator.method=deterministic`、`model_id=null`、`prompt_version=null`；`judgments` 中每个参考证据项的 `covered=false`，`covered_count=0`，`reference_count` 等于参考证据项数。
 - 同一证据被多个片段重复支持，只计一次。
 - 证据是否被回答覆盖属于 Answer Completeness，不属于本项 Context Recall。
 
@@ -85,7 +135,8 @@
 
 **边界：**
 
-- 没有检索片段，或没有可评估的信息单元：`unscored_empty_retrieval`。
+- 没有检索片段：`unscored_empty_retrieval`。
+- 检索片段存在但清洗、拆分、去重后没有可判断单元：`unscored_no_evaluable_units`。
 - 缺少对任一信息单元的判断：`unscored_missing_annotation`。
 - 内容与问题有关但事实错误/过时，仍可被判为相关；正确性、来源权威性应由其他检查承担。
 - 改变回答文本但保持 Query 和检索上下文不变时，分数不变。
@@ -141,14 +192,14 @@ Query 为“网络安全事件报告应包含哪些内容？”。去重后上�
 
 此分数不因模型回答是否提到这三项而变化。
 
-## 指标评审清单
+## 后续实现复核要点
 
-- [ ] Precision 输入的检索顺序、逐片段标签和计算明细可复核。
-- [ ] Recall 的参考证据是原子、去重并对应 Query；没有参考证据时不产生伪分数。
-- [ ] Relevance 只看 Query 和检索上下文，不看生成答案；信息单元拆分及去重结果可复核。
-- [ ] 空输入、未标注、Judge 错误及启发式回退均保留不同状态。
-- [ ] 报告仅聚合 `scored` 项，并同时显示样本数及未评分原因。
-- [ ] 未将历史目标值或未经人工抽样校准的 Judge 分数解释为发布门槛。
+- Precision 输入的检索顺序、逐片段标签和计算明细可复核。
+- Recall 的参考证据是原子、去重并对应 Query；没有参考证据时不产生伪分数。
+- Relevance 只看 Query 和检索上下文，不看生成答案；信息单元拆分及去重结果可复核。
+- 空输入、未标注、Judge 错误及启发式回退均保留不同状态。
+- 结果包含 `score`、`status`、`explanation`、`details`、`evaluator`；报告仅聚合 `scored` 项并显示样本数及未评分原因。
+- 未将历史目标值或未经人工抽样校准的 Judge 分数解释为发布门槛。
 
 ## 参考资料
 
