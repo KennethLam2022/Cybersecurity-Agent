@@ -20,9 +20,11 @@
     python eval_e2e.py --limit 5
 """
 from _eval_generation import eval_faithfulness, eval_relevancy, eval_hallucination
-from _eval_context import eval_context_precision, eval_context_recall
+from _eval_context import eval_context_precision, eval_context_recall, eval_context_relevance
 from e2e_eval_contract import (
     evaluate_e2e_gates,
+    REQUIRED_METRICS,
+    metric_coverage,
     metric_score_value,
     normalize_metric_result,
     summarize_e2e_gates,
@@ -261,6 +263,7 @@ def run_evaluation(
                 coverage_annotations=q.get("coverage_annotations"),
                 annotation_source=q.get("coverage_annotation_source"),
             )
+            score_cx = eval_context_relevance(query, retrieved_docs, llm=llm, usage_sink=usage_sink)
             score_ft = eval_faithfulness(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)
             score_rl = eval_relevancy(query, answer, retrieved_docs, llm=llm, usage_sink=usage_sink)
             score_hc = eval_hallucination(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)
@@ -282,6 +285,7 @@ def run_evaluation(
                 "scores": {
                     "context_precision": normalize_metric_result(score_cp, "context_precision_judge"),
                     "context_recall": normalize_metric_result(score_cr, "context_recall_judge"),
+                    "context_relevance": normalize_metric_result(score_cx, "context_relevance_judge"),
                     "faithfulness": normalize_metric_result(score_ft, "faithfulness_judge"),
                     "relevancy": normalize_metric_result(score_rl, "relevancy_judge"),
                     "hallucination": normalize_metric_result(score_hc, "hallucination_judge"),
@@ -296,8 +300,8 @@ def run_evaluation(
             trunc_str = f"截断 {trunc.get('truncated_count', 0)}条" if trunc.get(
                 "truncated_count", 0) > 0 else "未截断"
             available_scores = [
-                item["score"] for item in (score_cp, score_cr, score_ft, score_rl, score_hc)
-                if item.get("score") is not None
+                score for item in (score_cp, score_cr, score_cx, score_ft, score_rl, score_hc)
+                if (score := metric_score_value(item)) is not None
             ]
             avg_score = sum(available_scores) / len(available_scores) if available_scores else None
             avg_label = f"{avg_score:.3f}" if avg_score is not None else "未评分"
@@ -344,7 +348,7 @@ def run_evaluation(
 
     if scorable:
         avg_scores = {}
-        for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
+        for key in REQUIRED_METRICS:
             avg_scores[key] = _average_metric(results, key)
         def _display_average(key):
             value = avg_scores.get(key)
@@ -353,6 +357,7 @@ def run_evaluation(
         logger.info(f"  平均评分:")
         logger.info(f"    Context Precision: {_display_average('context_precision')}")
         logger.info(f"    Context Recall:    {_display_average('context_recall')}")
+        logger.info(f"    Context Relevance: {_display_average('context_relevance')}")
         logger.info(f"    Faithfulness:      {_display_average('faithfulness')}")
         logger.info(f"    Relevancy:         {_display_average('relevancy')}")
         logger.info(f"    Hallucination:     {_display_average('hallucination')}")
@@ -698,6 +703,7 @@ def _save_version(results_json: Path, html_path: Path, version_tag: str, stats: 
         "total": stats.get("total"),
         "errors": stats.get("errors"),
         "avg_scores": stats.get("avg_scores", {}),
+        "metric_coverage": stats.get("metric_coverage", {}),
         "profile_counts": stats.get("profile_counts", {}),
         "profile_stats": stats.get("profile_stats", {}),
     })
@@ -709,7 +715,7 @@ def _save_version(results_json: Path, html_path: Path, version_tag: str, stats: 
 def _compute_stats(results: list) -> dict:
     scorable = [r for r in results if r.get("scores")]
     avg_scores = {}
-    for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
+    for key in REQUIRED_METRICS:
         avg_scores[key] = _average_metric(results, key)
     # C5 截断影响
     trunc_records = [r for r in scorable if r.get("truncation", {}).get("truncated_count", 0) > 0]
@@ -726,12 +732,13 @@ def _compute_stats(results: list) -> dict:
 
     for profile, stats in profile_stats.items():
         profile_results = [r for r in results if (r.get("profile") or "general") == profile and r.get("scores")]
-        for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
+        for key in REQUIRED_METRICS:
             stats["avg_scores"][key] = _average_metric(profile_results, key)
     return {
         "total": len(results),
         "errors": sum(1 for r in results if r.get("auto_status") == "运行错误"),
         "avg_scores": avg_scores,
+        "metric_coverage": {key: metric_coverage(results, key) for key in REQUIRED_METRICS},
         "c5_truncation_rate": round(c5_rate, 1),
         "c5_truncated_count": len(trunc_records),
         "profile_counts": profile_counts,
