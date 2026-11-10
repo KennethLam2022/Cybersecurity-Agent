@@ -28,6 +28,7 @@ import requests
 import httpx
 
 from memory import get_llm_config_card
+from auth import validate_llm_url
 
 logger = logging.getLogger(__name__)
 
@@ -242,12 +243,17 @@ class LLMProvider:
         }
         t0 = time.time()
         try:
+            if not validate_llm_url(base_url, allow_local=True):
+                raise ValueError("LLM 地址必须为公网 HTTPS 地址，或本机 Ollama :11434")
             resp = requests.post(
                 f"{base_url}/chat/completions",
                 headers=headers,
                 json=payload,
                 timeout=(10, timeout),
+                allow_redirects=False,
             )
+            if 300 <= resp.status_code < 400:
+                raise ValueError("LLM 接口不允许重定向，请填写最终 API 地址")
             resp.raise_for_status()
             data = resp.json()
             elapsed = time.time() - t0
@@ -340,6 +346,8 @@ class LLMProvider:
 
     def _try_provider(self, payload: dict, timeout_read: int) -> dict:
         """调用 LLM 提供商，受限流保护，返回完整响应 JSON"""
+        if not validate_llm_url(self.base_url, allow_local=True):
+            raise ValueError("LLM 地址必须为公网 HTTPS 地址，或本机 Ollama :11434")
         wait = self.rate_limiter.acquire()
         if wait > 0:
             logger.info(f"限流等待 {wait:.1f}s")
@@ -350,7 +358,10 @@ class LLMProvider:
             headers=self._build_headers(),
             json=payload,
             timeout=timeout_read,
+            allow_redirects=False,
         )
+        if 300 <= resp.status_code < 400:
+            raise ValueError("LLM 接口不允许重定向，请填写最终 API 地址")
         resp.raise_for_status()
         return resp.json()
 
@@ -478,7 +489,12 @@ class LLMProvider:
                     t0 = time.time()
                     token_count = 0
                     reasoning_count = 0
-                    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
+                    if not await asyncio.to_thread(validate_llm_url, self.base_url, allow_local=True):
+                        raise ValueError("LLM 地址必须为公网 HTTPS 地址，或本机 Ollama :11434")
+                    async with httpx.AsyncClient(
+                        timeout=httpx.Timeout(120.0, connect=10.0),
+                        follow_redirects=False,
+                    ) as client:
                         async with client.stream(
                             "POST",
                             f"{self.base_url}/chat/completions",

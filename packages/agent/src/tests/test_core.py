@@ -175,6 +175,13 @@ class TestCircuitBreaker:
 
 
 class TestValidateLlmUrl:
+    @pytest.fixture(autouse=True)
+    def public_dns(self, monkeypatch):
+        import socket
+        monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443)),
+        ])
+
     def test_allowed_domain(self):
         assert validate_llm_url("https://api.deepseek.com/v1") is True
         assert validate_llm_url("https://api.openai.com/v1") is True
@@ -182,8 +189,8 @@ class TestValidateLlmUrl:
     def test_allowed_subdomain(self):
         assert validate_llm_url("https://us-east-1.api.siliconflow.cn") is True
 
-    def test_disallowed_domain(self):
-        assert validate_llm_url("https://evil-hacker.com") is False
+    def test_rejects_private_address(self):
+        assert validate_llm_url("https://127.0.0.1") is False
 
     def test_invalid_url(self):
         assert validate_llm_url("not a url") is False
@@ -191,7 +198,6 @@ class TestValidateLlmUrl:
     def test_rejects_non_https_schemes(self):
         assert validate_llm_url("http://api.openai.com/v1") is False
         assert validate_llm_url("ftp://api.openai.com") is False
-
 
 class TestIsAdminRoute:
     def test_admin_document_path(self):

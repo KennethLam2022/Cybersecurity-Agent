@@ -497,6 +497,8 @@ def llm_save_config(data: dict = Body(...)):
 
     if not base_url or not model:
         return JSONResponse({"ok": False, "error": "base_url 和 model 不能为空"}, status_code=400)
+    if not validate_llm_url(base_url, allow_local=True):
+        return JSONResponse({"ok": False, "error": "LLM 地址必须为公网 HTTPS 地址，或本机 Ollama :11434"}, status_code=400)
 
     full = _load_llm_config_legacy()
     full.setdefault("providers", {})
@@ -578,8 +580,8 @@ def llm_test_connection(data: dict = Body(...)):
         if not is_local:
             return JSONResponse({"ok": False, "error": "未提供 API Key 且未找到已存储的 Key"}, status_code=400)
 
-    if base_url and not validate_llm_url(base_url):
-        return JSONResponse({"ok": False, "error": f"不允许的 LLM API 域名: {base_url}"}, status_code=400)
+    if not validate_llm_url(base_url, allow_local=True):
+        return JSONResponse({"ok": False, "error": "LLM 地址必须为公网 HTTPS 地址，或本机 Ollama :11434"}, status_code=400)
 
     temp = LLMProvider()
     result = temp.test_connection(
@@ -673,6 +675,8 @@ def llm_configs_save_one(data: dict = Body(...)):
     if not model:
         return JSONResponse({"ok": False, "error": "model 不能为空"}, status_code=400)
 
+    if not validate_llm_url(base_url, allow_local=True):
+        return JSONResponse({"ok": False, "error": "LLM 地址必须为公网 HTTPS 地址，或本机 Ollama :11434"}, status_code=400)
     api_key_mask = _save_llm_config_card(module_id, provider, model, base_url, api_key)
 
     if module_id == "chat":
@@ -728,8 +732,8 @@ def llm_configs_test(data: dict = Body(...)):
         if not is_local:
             return JSONResponse({"ok": False, "error": "未提供 API Key 且未找到已存储的 Key"}, status_code=400)
 
-    if not validate_llm_url(base_url):
-        return JSONResponse({"ok": False, "error": f"不允许的 LLM API 域名: {base_url}"}, status_code=400)
+    if not validate_llm_url(base_url, allow_local=True):
+        return JSONResponse({"ok": False, "error": "LLM 地址必须为公网 HTTPS 地址，或本机 Ollama :11434"}, status_code=400)
 
     base_url = base_url.rstrip("/")
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -741,7 +745,9 @@ def llm_configs_test(data: dict = Body(...)):
         try:
             payload = {"model": model, "input": "测试连接", "encoding_format": "float"}
             resp = _requests.post(f"{base_url}/embeddings", headers=headers,
-                                  json=payload, timeout=(10, 30))
+                                  json=payload, timeout=(10, 30), allow_redirects=False)
+            if 300 <= resp.status_code < 400:
+                raise ValueError("LLM 接口不允许重定向，请填写最终 API 地址")
             resp.raise_for_status()
             rdata = resp.json()
             dim = len(rdata["data"][0]["embedding"]) if rdata.get("data") else 0
@@ -754,7 +760,9 @@ def llm_configs_test(data: dict = Body(...)):
     try:
         payload = {"model": model, "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 5}
         resp = _requests.post(f"{base_url}/chat/completions",
-                              headers=headers, json=payload, timeout=(10, 30))
+                              headers=headers, json=payload, timeout=(10, 30), allow_redirects=False)
+        if 300 <= resp.status_code < 400:
+            raise ValueError("LLM 接口不允许重定向，请填写最终 API 地址")
         resp.raise_for_status()
         rdata = resp.json()
         content = rdata["choices"][0]["message"]["content"] if rdata.get("choices") else ""
