@@ -1,14 +1,10 @@
-"""域B：上下文质量评估 — Context Precision + Context Recall
-
-评估回答引用检索文档的准确率，以及检索文档关键信息被引用的比例。
-使用 LLM-as-Judge 进行评分，有回退到启发式方法。
+"""评估检索上下文质量，包括 Context Precision 和 Context Recall。
 
 用法:
     # 作为模块导入
     from _eval_context import eval_context_precision, eval_context_recall
 
-    result = eval_context_precision(query, retrieved_docs, answer, llm=llm)
-    # => {"score": 0.85, "explanation": "...", "details": {...}}
+    result = eval_context_precision(query, retrieved_docs, llm=llm)
 
     # 独立运行
     python _eval_context.py
@@ -21,27 +17,14 @@ import re
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+_EVAL_DOC_CHAR_LIMIT = 800
+_EVAL_CONTEXT_CHAR_LIMIT = 4000
 
 # ──────────────────────────────────────────────
-#  Context Precision — 回答引用检索文档的准确率
+#  Context Precision — 排序检索结果的相关性精度
 # ──────────────────────────────────────────────
 
-_CONTEXT_PRECISION_PROMPT = """你是一位严格的 RAG 评估专家。你的任务：评估"回答"中的每一个陈述是否被"检索文档"所支持。
-
-评分标准（0-1 分）：
-1. 逐句分析回答，列出每个陈述
-2. 判断每个陈述是否可以从检索文档中找到支持
-3. 计算支持率：supported_claims / total_claims
-
-规则：
-- 如果回答完全基于检索文档、没有编造 → 高分（0.9-1.0）
-- 如果回答部分内容在文档中找不到支持 → 中分（0.4-0.8）
-- 如果回答大量内容与文档无关或编造 → 低分（0.0-0.3）
-- 不要求逐字匹配，只要意思能在文档中找到支持即可
-- 如果回答拒绝回答或说"没有相关信息"而文档确实有相关内容，扣分
-
-输出必须是 JSON 格式（不要多余文字）：
-{{"score": 0.0-1.0, "total_claims": N, "supported_claims": N, "explanation": "简要分析理由"}}
+_CONTEXT_PRECISION_PROMPT = """你是严格的 RAG 检索评估专家。只根据用户问题，判断每个检索片段是否与回答该问题直接相关。不要评价回答，也不要使用外部知识补充判断。
 
 --- 用户问题 ---
 {query}
@@ -49,98 +32,215 @@ _CONTEXT_PRECISION_PROMPT = """你是一位严格的 RAG 评估专家。你的�
 --- 检索文档 ---
 {context}
 
---- 回答 ---
-{answer}
+按原始排名逐条返回判断，不得遗漏或重排。只输出 JSON：
+{{"judgments":[{{"rank":1,"relevant":true}},{{"rank":2,"relevant":false}}]}}
 """
 
 
 def eval_context_precision(
     query: str,
     retrieved_docs: list[dict],
-    answer: str,
-    llm=None,
-    usage_sink=None,
+    answer: str = "",
+    *legacy_args,
+    **options,
 ) -> dict:
-    """评估回答引用检索文档的准确率
+    """Calculate ranked context precision from labels or a Judge.
 
     Args:
-        query: 用户问题
-        retrieved_docs: 检索到的文档列表 [{"file_name":..., "content":..., ...}, ...]
-        answer: 模型回答
-        llm: LLMProvider 实例（可选），若为 None 则使用启发式回退
+        query: User query.
+        retrieved_docs: Retrieved documents in their original rank order.
+        answer: Legacy positional argument; ignored for this metric.
+        legacy_args: Legacy positional `llm` and `usage_sink` values.
+        **options: Optional `llm`, `usage_sink`, `relevance_annotations`, and
+            `annotation_source` values.
 
     Returns:
-        {"score": float (0-1), "explanation": str, "details": {...}}
+        A metric result with score, status, explanation, details, and evaluator.
+
+    Raises:
+        TypeError: If an unsupported option is supplied.
+
+    Example:
+        `eval_context_precision(query, docs, relevance_annotations=[True, False], annotation_source="gold-set-v1")`
     """
-    if not answer or not answer.strip():
-        return {"score": 0.0, "explanation": "回答为空", "details": {}}
+    if len(legacy_args) > 2 or any(
+        name in options for name in ("llm", "usage_sink")[:len(legacy_args)]
+    ):
+        raise TypeError("Invalid legacy positional options")
+    options.update(zip(("llm", "usage_sink"), legacy_args))
+    del answer
+    allowed = {"llm", "usage_sink", "relevance_annotations", "annotation_source"}
+    unknown = sorted(set(options) - allowed)
+    if unknown:
+        raise TypeError(f"Unsupported precision options: {', '.join(unknown)}")
+    return _evaluate_context_precision(query, retrieved_docs, options)
 
-    # 清洗引用标记，避免 [来源N: ...] 干扰评分
-    answer_clean = _clean_answer(answer)
 
-    context_text = _format_docs(retrieved_docs)
+def _evaluate_context_precision(query, retrieved_docs, options) -> dict:
+    llm = options.get("llm")
+    usage_sink = options.get("usage_sink")
+    relevance_annotations = options.get("relevance_annotations")
+    annotation_source = options.get("annotation_source")
+    if not retrieved_docs:
+        return _precision_unscored(
+            "unscored_empty_retrieval", "没有检索片段。", ["retrieved_contexts"]
+        )
 
-    if llm is not None:
-        try:
-            prompt = _CONTEXT_PRECISION_PROMPT.format(
-                query=query, context=context_text, answer=answer_clean
+    judgments = _precision_annotations(relevance_annotations, len(retrieved_docs))
+    if judgments is not None:
+        source = annotation_source.strip() if isinstance(annotation_source, str) else ""
+        if source:
+            return _precision_scored(judgments, "annotation", source)
+        if llm is None:
+            return _precision_unscored(
+                "unscored_missing_annotation",
+                "相关性标签缺少可审查的来源标识。",
+                ["relevance_annotations"],
+                judgments=judgments,
             )
-            result = _llm_judge(llm, prompt, usage_sink=usage_sink)
-            score = max(0.0, min(1.0, float(result.get("score", 0))))
-            return {
-                "score": round(score, 4),
-                "explanation": result.get("explanation", ""),
-                "details": {
-                    "total_claims": result.get("total_claims", 0),
-                    "supported_claims": result.get("supported_claims", 0),
-                },
-            }
-        except Exception as e:
-            logger.warning(f"LLM context_precision 评估失败: {e}")
+    elif relevance_annotations is not None:
+        return _precision_unscored(
+            "unscored_missing_annotation",
+            "相关性标签必须为与检索片段等长的布尔值列表。",
+            ["relevance_annotations"],
+            judgments=_partial_precision_annotations(relevance_annotations, len(retrieved_docs)),
+        )
+    if llm is None:
+        return _precision_unscored(
+            "unscored_missing_annotation",
+            "没有提供检索片段相关性标签或 Judge。",
+            ["relevance_annotations"],
+        )
+    try:
+        judged = _judge_context_precision(query, retrieved_docs, llm, usage_sink)
+        return _precision_scored(judged, "llm_judge", None, llm=llm)
+    except _InvalidContextJudgment as exc:
+        return _precision_judge_error(llm, "invalid_judgment", str(exc))
+    except ValueError as exc:
+        return _precision_judge_error(llm, "invalid_response", str(exc))
+    except Exception as exc:
+        logger.warning("LLM context_precision 评估失败: %s", exc)
+        return _precision_judge_error(llm, "call_failed", "Judge 调用失败。")
 
-    # ── 启发式回退：基于关键词重叠的近似评估 ──
-    return _heuristic_context_precision(answer, context_text)
+
+def _precision_annotations(labels, doc_count: int) -> list[dict] | None:
+    if not isinstance(labels, list) or len(labels) != doc_count:
+        return None
+    if any(not isinstance(label, bool) for label in labels):
+        return None
+    return [{"rank": rank, "relevant": label} for rank, label in enumerate(labels, 1)]
 
 
-def _heuristic_context_precision(answer: str, context_text: str) -> dict:
-    """基于关键词重叠的启发式 context precision 评估"""
-    sentences = _split_sentences(answer)
-    if not sentences:
-        return {"score": 0.0, "explanation": "无法分解句子", "details": {}}
+def _partial_precision_annotations(labels, doc_count: int) -> list[dict]:
+    if not isinstance(labels, list):
+        return []
+    return [{"rank": rank, "relevant": label} for rank, label in enumerate(labels[:doc_count], 1) if isinstance(label, bool)]
 
-    context_lower = context_text.lower()
-    context_chars = set(re.findall(r'[\u4e00-\u9fff]', context_lower))
-    context_words_en = set(re.findall(r'[a-z][a-z0-9]*', context_lower))
 
-    supported = 0
-    for sent in sentences:
-        sent_lower = sent.lower()
-        sent_chars = set(re.findall(r'[\u4e00-\u9fff]', sent_lower))
-        sent_words_en = set(re.findall(r'[a-z][a-z0-9]*', sent_lower))
+def _judge_context_precision(query: str, docs: list[dict], llm, usage_sink) -> list[dict]:
+    if _precision_context_is_truncated(docs):
+        raise _InvalidContextJudgment("Judge 可见的检索上下文不完整。")
+    prompt = _CONTEXT_PRECISION_PROMPT.format(
+        query=query, context=_format_docs(docs)
+    )
+    result = _llm_judge(llm, prompt, usage_sink=usage_sink)
+    raw_judgments = result.get("judgments")
+    if not isinstance(raw_judgments, list) or len(raw_judgments) != len(docs):
+        raise _InvalidContextJudgment("Judge 未为每个检索片段返回判断。")
 
-        if not sent_chars and not sent_words_en:
-            supported += 1
-            continue
+    judgments = []
+    for rank, item in enumerate(raw_judgments, start=1):
+        if (
+            not isinstance(item, dict)
+            or type(item.get("rank")) is not int
+            or item["rank"] != rank
+            or type(item.get("relevant")) is not bool
+        ):
+            raise _InvalidContextJudgment("Judge 返回了缺失、重复或无效的排名标签。")
+        judgments.append({"rank": rank, "relevant": item["relevant"]})
+    return judgments
 
-        # 中文字符重叠率
-        char_overlap = len(sent_chars & context_chars) / \
-            max(len(sent_chars), 1) if sent_chars else 1.0
-        # 英文词重叠率
-        word_overlap = len(sent_words_en & context_words_en) / \
-            max(len(sent_words_en), 1) if sent_words_en else 1.0
 
-        if char_overlap >= 0.3 or word_overlap >= 0.3:
-            supported += 1
+def _precision_context_is_truncated(docs: list[dict]) -> bool:
+    total_chars = 0
+    for rank, doc in enumerate(docs, start=1):
+        content = (doc.get("content", "") or "").strip()
+        if len(content) > _EVAL_DOC_CHAR_LIMIT:
+            return True
+        source = doc.get("file_name", f"doc_{rank}")
+        total_chars += len(f"[{rank}] 来源：{source}\n{content}")
+        total_chars += 2 if rank > 1 else 0
+        if total_chars > _EVAL_CONTEXT_CHAR_LIMIT:
+            return True
+    return False
 
-    score = supported / len(sentences) if sentences else 0
+
+class _InvalidContextJudgment(ValueError):
+    pass
+
+
+def _precision_score(judgments: list[dict]) -> tuple[float, int]:
+    relevant_count = sum(item["relevant"] for item in judgments)
+    if relevant_count == 0:
+        return 0.0, 0
+    relevant_seen = 0
+    numerator = 0.0
+    for item in judgments:
+        relevant_seen += int(item["relevant"])
+        if item["relevant"]:
+            numerator += relevant_seen / item["rank"]
+    return round(numerator / relevant_count, 4), round(numerator, 4)
+
+
+def _precision_scored(judgments, method, source, llm=None) -> dict:
+    score, numerator = _precision_score(judgments)
+    evaluator = _precision_evaluator(method, llm)
     return {
-        "score": round(score, 4),
-        "explanation": f"启发式评估：{supported}/{len(sentences)} 个句子与检索文档有显著关键词重叠",
+        "score": score,
+        "status": "scored",
+        "explanation": "按检索排名和相关性标签计算 Average Precision。",
         "details": {
-            "total_claims": len(sentences),
-            "supported_claims": supported,
-            "method": "heuristic",
+            "judgments": judgments,
+            "ap_numerator": numerator,
+            "relevant_count": sum(item["relevant"] for item in judgments),
+            **({"annotation_source": source} if method == "annotation" else {}),
         },
+        "evaluator": evaluator,
+    }
+
+
+def _precision_unscored(status, explanation, missing_inputs, judgments=None) -> dict:
+    details = {"missing_inputs": missing_inputs}
+    if judgments:
+        details["judgments"] = judgments
+    return {
+        "score": None,
+        "status": status,
+        "explanation": explanation,
+        "details": details,
+        "evaluator": _precision_evaluator("not_run"),
+    }
+
+
+def _precision_judge_error(llm, category, explanation) -> dict:
+    return {
+        "score": None,
+        "status": "judge_error",
+        "explanation": explanation,
+        "details": {
+            "failure_category": category,
+            "fallback_attempted": False,
+        },
+        "evaluator": _precision_evaluator("llm_judge", llm),
+    }
+
+
+def _precision_evaluator(method, llm=None) -> dict:
+    is_judge = method == "llm_judge"
+    return {
+        "method": method,
+        "model_id": getattr(llm, "model", None) if is_judge else None,
+        "prompt_version": "context-precision-v1" if is_judge else None,
     }
 
 
@@ -256,7 +356,7 @@ def _heuristic_context_recall(answer: str, context_text: str) -> dict:
 # ──────────────────────────────────────────────
 
 
-def _format_docs(docs: list[dict], max_chars: int = 4000) -> str:
+def _format_docs(docs: list[dict], max_chars: int = _EVAL_CONTEXT_CHAR_LIMIT) -> str:
     """将检索文档列表格式化为评评估上下文文本"""
     if not docs:
         return ""
@@ -265,7 +365,7 @@ def _format_docs(docs: list[dict], max_chars: int = 4000) -> str:
     for i, d in enumerate(docs, 1):
         content = d.get("content", "") or ""
         source = d.get("file_name", f"doc_{i}")
-        snippet = f"[{i}] 来源：{source}\n{content.strip()[:800]}"
+        snippet = f"[{i}] 来源：{source}\n{content.strip()[:_EVAL_DOC_CHAR_LIMIT]}"
         if total + len(snippet) > max_chars:
             remaining = max_chars - total
             if remaining > 200:
@@ -418,7 +518,9 @@ def main():
 
     # Context Precision
     result_p = eval_context_precision(query, docs, answer, llm=None)
-    logger.info(f"[Context Precision]  {result_p['score']:.4f}")
+    precision_score = result_p["score"]
+    precision_label = f"{precision_score:.4f}" if precision_score is not None else "未评分"
+    logger.info(f"[Context Precision]  {precision_label}")
     logger.info(f"  说明: {result_p['explanation'][:80]}")
     logger.info(f"  详情: {result_p['details']}\n")
 
@@ -430,7 +532,7 @@ def main():
 
     # 汇总
     logger.info(f"\n[OK] 域B评估完成")
-    logger.info(f"  Context Precision: {result_p['score']:.4f}")
+    logger.info(f"  Context Precision: {precision_label}")
     logger.info(f"  Context Recall:    {result_r['score']:.4f}")
 
 
