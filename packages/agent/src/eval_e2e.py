@@ -1,6 +1,6 @@
 """综合质量评测（Standalone 版本）
 
-一键跑 30 题，自动计算 域B（Context Precision/Recall）+ 域C（Faithfulness/Relevancy/Hallucination），
+一键跑 30 题，自动计算 域B（Context Precision/Recall/Relevance）+ 域C（Faithfulness/Relevancy/Hallucination），
 输出 JSON + HTML 报告，支持版本对比。
 
 用法:
@@ -402,7 +402,7 @@ def generate_html(results: list[dict], output_file: Path):
     # 计算平均分
     avg_scores = {}
     if scorable:
-        for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
+        for key in REQUIRED_METRICS:
             avg_scores[key] = _average_metric(results, key)
 
     # C5 截断影响率
@@ -426,23 +426,29 @@ def generate_html(results: list[dict], output_file: Path):
     score_labels = {
         "context_precision": "Context\nPrecision",
         "context_recall": "Context\nRecall",
+        "context_relevance": "Context\nRelevance",
         "faithfulness": "Faithfulness\n忠实度",
         "relevancy": "Relevancy\n相关性",
         "hallucination": "Hallucination\n幻觉检测",
     }
     for key, label in score_labels.items():
+        coverage = metric_coverage(results, key)
+        reasons = ", ".join(f"{status}: {count}" for status, count in coverage["unscored_reasons"].items())
+        coverage_label = html_lib.escape(f"已评分 {coverage['scored']}/{coverage['total']}" + (f" · {reasons}" if reasons else ""))
         v = avg_scores.get(key)
         if v is None:
             score_cards += f"""
     <div class="sc" style="text-align:center;padding:16px">
       <div style="font-size:28px;font-weight:700;color:#6e6e73">未评分</div>
       <div style="font-size:11px;color:#6e6e73;white-space:pre-line;margin-top:4px">{label}</div>
+      <div style="font-size:11px;color:#6e6e73;margin-top:4px;overflow-wrap:anywhere">{coverage_label}</div>
     </div>"""
             continue
         score_cards += f"""
     <div class="sc" style="text-align:center;padding:16px">
       <div style="font-size:28px;font-weight:700;color:{_score_color(v)}">{v:.3f}</div>
       <div style="font-size:11px;color:#6e6e73;white-space:pre-line;margin-top:4px">{label}</div>
+      <div style="font-size:11px;color:#6e6e73;margin-top:4px;overflow-wrap:anywhere">{coverage_label}</div>
       <div style="margin-top:8px">{_bar(v)}</div>
     </div>"""
 
@@ -459,7 +465,7 @@ def generate_html(results: list[dict], output_file: Path):
 
         scores = r.get("scores", {})
         cells = ""
-        for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
+        for key in REQUIRED_METRICS:
             metric = scores.get(key)
             v = metric_score_value(metric)
             if v is not None:
@@ -541,7 +547,7 @@ tr:hover{{background:#fafafa}}
   <div class="meta">
     {datetime.now().strftime('%Y-%m-%d %H:%M')} |
     跑分模式: 含启发式回退 |
-    <span style="color:var(--g)">域B: Context Precision/Recall</span> |
+    <span style="color:var(--g)">域B: Context Precision/Recall/Relevance</span> |
     <span style="color:var(--a)">域C: Faithfulness/Relevancy/Hallucination</span>
   </div>
 
@@ -550,7 +556,7 @@ tr:hover{{background:#fafafa}}
     <div class="kpi"><span class="n">{total}</span><span class="l">总题数</span></div>
     <div class="kpi"><span class="n" style="color:var(--g)">{has_src}</span><span class="l">有来源</span></div>
     <div class="kpi"><span class="n" style="color:var(--r)">{errors}</span><span class="l">错误</span></div>
-    <div class="kpi"><span class="n" style="color:var(--a)">{len(scorable)}</span><span class="l">已评分</span></div>
+    <div class="kpi"><span class="n" style="color:var(--a)">{len(scorable)}</span><span class="l">有指标记录</span></div>
     <div class="kpi"><span class="n" style="color:var(--y)">{c5_rate:.0f}%</span><span class="l">截断影响(C5)</span></div>
   </div>
   <div class="legend">Profile 分布：{html_lib.escape(' · '.join(f'{name} {count}题' for name, count in profile_counts.items()))}</div>
@@ -564,13 +570,15 @@ tr:hover{{background:#fafafa}}
   {compare_html}
 
   <!-- 明细表 -->
-  <div class="legend">💡 评分范围 0.0–1.0，绿色≥0.8 橙色≥0.5 红色<0.5 | 域B：Context Precision/Recall | 域C：Faithfulness/Relevancy/Hallucination</div>
+  <div class="legend">💡 评分范围 0.0–1.0，绿色≥0.8 橙色≥0.5 红色<0.5 | 域B：Context Precision/Recall/Relevance | 域C：Faithfulness/Relevancy/Hallucination</div>
+  <div style="overflow-x:auto" tabindex="0" role="region" aria-label="逐题评测明细">
   <table>
     <thead>
       <tr>
         <th>#</th><th>Profile</th><th>领域</th><th>难度</th><th>问题</th><th>回答片段</th>
         <th title="Context Precision">B-CP</th>
         <th title="Context Recall">B-CR</th>
+        <th title="Context Relevance">B-CX</th>
         <th title="Faithfulness">C-Faith</th>
         <th title="Relevancy">C-Rel</th>
         <th title="Hallucination">C-Halu</th>
@@ -582,6 +590,7 @@ tr:hover{{background:#fafafa}}
       {rows_html}
     </tbody>
   </table>
+  </div>
   <div style="text-align:center;margin-top:24px;font-size:12px;color:var(--t2)">
     综合质量评测报告 · 自动生成
   </div>
@@ -609,7 +618,7 @@ def _generate_compare_html(current_avg: dict, current_results: list = None) -> s
         prev_results = json.loads(prev_path.read_text(encoding="utf-8"))
         prev_scorable = [r for r in prev_results if r.get("scores")]
         prev_avg = {}
-        for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
+        for key in REQUIRED_METRICS:
             prev_avg[key] = _average_metric(prev_results, key)
         # C5
         prev_trunc = [r for r in prev_scorable if r.get(
@@ -626,6 +635,7 @@ def _generate_compare_html(current_avg: dict, current_results: list = None) -> s
     labels = {
         "context_precision": "Context Precision",
         "context_recall": "Context Recall",
+        "context_relevance": "Context Relevance",
         "faithfulness": "Faithfulness",
         "relevancy": "Relevancy",
         "hallucination": "Hallucination",
@@ -767,6 +777,7 @@ def show_comparison():
     labels = {
         "context_precision": "Context Precision",
         "context_recall": "Context Recall",
+        "context_relevance": "Context Relevance",
         "faithfulness": "Faithfulness",
         "relevancy": "Relevancy",
         "hallucination": "Hallucination",
