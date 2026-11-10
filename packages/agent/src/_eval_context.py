@@ -16,6 +16,7 @@ import logging
 import re
 from typing import Optional
 from _eval_recall import eval_context_recall
+from _eval_relevance import eval_context_relevance
 
 logger = logging.getLogger(__name__)
 _EVAL_DOC_CHAR_LIMIT = 800
