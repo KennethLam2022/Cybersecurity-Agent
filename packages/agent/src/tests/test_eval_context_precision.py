@@ -1,6 +1,7 @@
 import pytest
 
 from _eval_context import eval_context_precision
+import eval_e2e
 
 
 DOCS = [
@@ -49,6 +50,32 @@ def test_context_precision_marks_empty_retrieval_unscored():
     assert result["score"] is None
     assert result["status"] == "unscored_empty_retrieval"
     assert result["evaluator"]["method"] == "not_run"
+
+
+def test_e2e_keeps_empty_retrieval_as_unscored_instead_of_runtime_error(
+    tmp_path, monkeypatch
+):
+    class Agent:
+        llm = None
+
+        def ask(self, _query, profiles=None):
+            return {"answer": "", "sources": [], "retrieved_docs": [], "stats": {}}
+
+    def scored(*_args, **_kwargs):
+        return {"score": 0.8, "explanation": "test", "details": {}}
+
+    for metric in ("eval_context_recall", "eval_faithfulness", "eval_relevancy", "eval_hallucination"):
+        monkeypatch.setattr(eval_e2e, metric, scored)
+
+    result = eval_e2e.run_evaluation(
+        Agent(),
+        [{"id": "E01", "domain": "test", "difficulty": "基础", "query": "query"}],
+        use_llm=False,
+        output_file=tmp_path / "e2e.json",
+    )[0]
+
+    assert result["auto_status"] == "无来源" and "error" not in result
+    assert result["scores"]["context_precision"]["status"] == "unscored_empty_retrieval"
 
 
 def test_context_precision_requires_one_boolean_label_per_document():

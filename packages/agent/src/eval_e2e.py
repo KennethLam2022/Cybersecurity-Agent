@@ -269,11 +269,15 @@ def run_evaluation(
             trunc = entry["truncation"]
             trunc_str = f"截断 {trunc.get('truncated_count', 0)}条" if trunc.get(
                 "truncated_count", 0) > 0 else "未截断"
-            avg_score = (score_cp["score"] + score_cr["score"] + score_ft["score"]
-                         + score_rl["score"] + score_hc["score"]) / 5
+            available_scores = [
+                item["score"] for item in (score_cp, score_cr, score_ft, score_rl, score_hc)
+                if item.get("score") is not None
+            ]
+            avg_score = sum(available_scores) / len(available_scores) if available_scores else None
+            avg_label = f"{avg_score:.3f}" if avg_score is not None else "未评分"
             logger.info(f"  {'[OK]' if status_ok else '[WARN]'} {elapsed:.1f}s | "
                         f"来源: {len(retrieved_docs)}条 | {trunc_str} | "
-                        f"平均分: {avg_score:.3f}")
+                        f"平均分: {avg_label}")
 
         except Exception as e:
             elapsed = time.time() - t0
