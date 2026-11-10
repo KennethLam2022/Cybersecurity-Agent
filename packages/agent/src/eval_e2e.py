@@ -21,7 +21,12 @@
 """
 from _eval_generation import eval_faithfulness, eval_relevancy, eval_hallucination
 from _eval_context import eval_context_precision, eval_context_recall
-from e2e_eval_contract import evaluate_e2e_gates, normalize_metric_result, summarize_e2e_gates
+from e2e_eval_contract import (
+    evaluate_e2e_gates,
+    metric_score_value,
+    normalize_metric_result,
+    summarize_e2e_gates,
+)
 import os
 import sys
 import json
@@ -167,6 +172,14 @@ def _get_retrieved_docs(result: dict) -> list[dict]:
     return docs
 
 
+def _average_metric(results: list[dict], key: str) -> float | None:
+    values = [
+        score for result in results
+        if (score := metric_score_value(result.get("scores", {}).get(key))) is not None
+    ]
+    return round(sum(values) / len(values), 4) if values else None
+
+
 def run_evaluation(
     agent,
     questions: list[dict],
@@ -233,7 +246,15 @@ def run_evaluation(
             retrieved_docs = _get_retrieved_docs(result)
 
             # 2. 域B + 域C 评分
-            score_cp = eval_context_precision(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)
+            score_cp = eval_context_precision(
+                query,
+                retrieved_docs,
+                answer,
+                llm=llm,
+                usage_sink=usage_sink,
+                relevance_annotations=q.get("relevance_annotations"),
+                annotation_source=q.get("relevance_annotation_source"),
+            )
             score_cr = eval_context_recall(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)
             score_ft = eval_faithfulness(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)
             score_rl = eval_relevancy(query, answer, retrieved_docs, llm=llm, usage_sink=usage_sink)
@@ -319,14 +340,17 @@ def run_evaluation(
     if scorable:
         avg_scores = {}
         for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
-            vals = [r["scores"][key]["score"] for r in scorable if key in r.get("scores", {})]
-            avg_scores[key] = round(sum(vals) / len(vals), 4) if vals else 0
+            avg_scores[key] = _average_metric(results, key)
+        def _display_average(key):
+            value = avg_scores.get(key)
+            return f"{value:.4f}" if value is not None else "未评分"
+
         logger.info(f"  平均评分:")
-        logger.info(f"    Context Precision: {avg_scores.get('context_precision', 0):.4f}")
-        logger.info(f"    Context Recall:    {avg_scores.get('context_recall', 0):.4f}")
-        logger.info(f"    Faithfulness:      {avg_scores.get('faithfulness', 0):.4f}")
-        logger.info(f"    Relevancy:         {avg_scores.get('relevancy', 0):.4f}")
-        logger.info(f"    Hallucination:     {avg_scores.get('hallucination', 0):.4f}")
+        logger.info(f"    Context Precision: {_display_average('context_precision')}")
+        logger.info(f"    Context Recall:    {_display_average('context_recall')}")
+        logger.info(f"    Faithfulness:      {_display_average('faithfulness')}")
+        logger.info(f"    Relevancy:         {_display_average('relevancy')}")
+        logger.info(f"    Hallucination:     {_display_average('hallucination')}")
 
         # C5 截断影响统计
         trunc_records = [r for r in scorable if r.get(
@@ -369,8 +393,7 @@ def generate_html(results: list[dict], output_file: Path):
     avg_scores = {}
     if scorable:
         for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
-            vals = [r["scores"][key]["score"] for r in scorable if key in r.get("scores", {})]
-            avg_scores[key] = round(sum(vals) / len(vals), 4) if vals else 0
+            avg_scores[key] = _average_metric(results, key)
 
     # C5 截断影响率
     trunc_records = [r for r in scorable if r.get("truncation", {}).get("truncated_count", 0) > 0]
@@ -398,7 +421,14 @@ def generate_html(results: list[dict], output_file: Path):
         "hallucination": "Hallucination\n幻觉检测",
     }
     for key, label in score_labels.items():
-        v = avg_scores.get(key, 0)
+        v = avg_scores.get(key)
+        if v is None:
+            score_cards += f"""
+    <div class="sc" style="text-align:center;padding:16px">
+      <div style="font-size:28px;font-weight:700;color:#6e6e73">未评分</div>
+      <div style="font-size:11px;color:#6e6e73;white-space:pre-line;margin-top:4px">{label}</div>
+    </div>"""
+            continue
         score_cards += f"""
     <div class="sc" style="text-align:center;padding:16px">
       <div style="font-size:28px;font-weight:700;color:{_score_color(v)}">{v:.3f}</div>
@@ -420,11 +450,13 @@ def generate_html(results: list[dict], output_file: Path):
         scores = r.get("scores", {})
         cells = ""
         for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
-            if key in scores and scores[key]:
-                v = scores[key]["score"]
+            metric = scores.get(key)
+            v = metric_score_value(metric)
+            if v is not None:
                 cells += f'<td style="text-align:center;color:{_score_color(v)};font-weight:600">{v:.3f}</td>'
             else:
-                cells += '<td style="text-align:center;color:#6e6e73">-</td>'
+                state = html_lib.escape(str(metric.get("status") or "未评分")) if isinstance(metric, dict) else "未评分"
+                cells += f'<td title="{state}" style="text-align:center;color:#6e6e73">-</td>'
 
         diff_class = {"困难": "h", "中等": "m", "基础": "e"}.get(diff, "e")
 
@@ -568,8 +600,7 @@ def _generate_compare_html(current_avg: dict, current_results: list = None) -> s
         prev_scorable = [r for r in prev_results if r.get("scores")]
         prev_avg = {}
         for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
-            vals = [r["scores"][key]["score"] for r in prev_scorable if key in r.get("scores", {})]
-            prev_avg[key] = round(sum(vals) / len(vals), 4) if vals else 0
+            prev_avg[key] = _average_metric(prev_results, key)
         # C5
         prev_trunc = [r for r in prev_scorable if r.get(
             "truncation", {}).get("truncated_count", 0) > 0]
@@ -592,8 +623,17 @@ def _generate_compare_html(current_avg: dict, current_results: list = None) -> s
 
     items_html = ""
     for key, label in labels.items():
-        curr = current_avg.get(key, 0)
-        prev_val = prev_avg.get(key, 0)
+        curr = current_avg.get(key)
+        prev_val = prev_avg.get(key)
+        if curr is None or prev_val is None:
+            curr_label = f"{curr:.3f}" if curr is not None else "未评分"
+            prev_label = f"{prev_val:.3f}" if prev_val is not None else "未评分"
+            items_html += f"""
+    <div class="compare-item">
+      <div class="label">{label}</div>
+      <div class="row"><span class="curr">{curr_label}</span><span class="prev">上次 {prev_label}</span></div>
+    </div>"""
+            continue
         diff = curr - prev_val
         diff_str = f"+{diff:.3f}" if diff > 0 else f"{diff:.3f}"
         diff_class = "diff-up" if diff > 0 else ("diff-down" if diff < 0 else "")
@@ -665,8 +705,7 @@ def _compute_stats(results: list) -> dict:
     scorable = [r for r in results if r.get("scores")]
     avg_scores = {}
     for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
-        vals = [r["scores"][key]["score"] for r in scorable if key in r.get("scores", {})]
-        avg_scores[key] = round(sum(vals) / len(vals), 4) if vals else 0
+        avg_scores[key] = _average_metric(results, key)
     # C5 截断影响
     trunc_records = [r for r in scorable if r.get("truncation", {}).get("truncated_count", 0) > 0]
     c5_rate = len(trunc_records) / len(scorable) * 100 if scorable else 0
@@ -683,8 +722,7 @@ def _compute_stats(results: list) -> dict:
     for profile, stats in profile_stats.items():
         profile_results = [r for r in results if (r.get("profile") or "general") == profile and r.get("scores")]
         for key in ["context_precision", "context_recall", "faithfulness", "relevancy", "hallucination"]:
-            vals = [r["scores"][key]["score"] for r in profile_results if key in r.get("scores", {})]
-            stats["avg_scores"][key] = round(sum(vals) / len(vals), 4) if vals else 0
+            stats["avg_scores"][key] = _average_metric(profile_results, key)
     return {
         "total": len(results),
         "errors": sum(1 for r in results if r.get("auto_status") == "运行错误"),
@@ -725,8 +763,13 @@ def show_comparison():
     logger.info(f"  {'指标':<22} {'当前':>8} {'上次':>8} {'变化':>8}")
     logger.info(f"  {'-'*50}")
     for key, label in labels.items():
-        curr_v = curr_avg.get(key, 0)
-        prev_v = prev_avg.get(key, 0)
+        curr_v = curr_avg.get(key)
+        prev_v = prev_avg.get(key)
+        if curr_v is None or prev_v is None:
+            curr_label = f"{curr_v:.3f}" if curr_v is not None else "未评分"
+            prev_label = f"{prev_v:.3f}" if prev_v is not None else "未评分"
+            logger.info(f"  {label:<22} {curr_label:>8} {prev_label:>8} {'—':>8}")
+            continue
         diff = curr_v - prev_v
         diff_str = f"+{diff:.3f}" if diff > 0 else str(diff)
         logger.info(f"  {label:<22} {curr_v:>8.3f} {prev_v:>8.3f} {diff_str:>8}")

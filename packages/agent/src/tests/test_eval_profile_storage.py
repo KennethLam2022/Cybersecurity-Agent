@@ -1,5 +1,7 @@
+import json
 import sqlite3
 
+import app_state
 import eval_e2e
 from memory import ConversationMemory
 
@@ -121,6 +123,179 @@ def test_e2e_evaluation_passes_question_profile_to_agent(tmp_path, monkeypatch):
     assert [item["profile"] for item in results] == ["general", "industry/finance"]
     assert all(item["profile_snapshot"]["status"] == "known" for item in results)
     assert all(item["profile_version"].startswith("2026.08.phase2:") for item in results)
+
+
+def test_e2e_precision_preserves_annotations_and_excludes_unscored_results(tmp_path, monkeypatch):
+    class FakeAgent:
+        llm = None
+
+        def ask(self, query, profiles=None):
+            return {
+                "answer": "answer",
+                "sources": [{"file_name": "doc.pdf", "content": "context"}],
+                "stats": {},
+            }
+
+    received = {}
+
+    def precision(query, docs, answer, **kwargs):
+        received.update(kwargs)
+        return {
+            "score": None,
+            "status": "unscored_missing_annotation",
+            "explanation": "labels unavailable",
+            "details": {"missing_inputs": ["relevance_annotations"]},
+            "evaluator": {
+                "method": "not_run", "model_id": None, "prompt_version": None,
+            },
+        }
+
+    def score(*_args, **_kwargs):
+        return {"score": 0.8, "explanation": "ok", "details": {}}
+
+    monkeypatch.setattr(eval_e2e, "eval_context_precision", precision)
+    monkeypatch.setattr(eval_e2e, "eval_context_recall", score)
+    monkeypatch.setattr(eval_e2e, "eval_faithfulness", score)
+    monkeypatch.setattr(eval_e2e, "eval_relevancy", score)
+    monkeypatch.setattr(eval_e2e, "eval_hallucination", score)
+
+    result = eval_e2e.run_evaluation(
+        FakeAgent(),
+        [{
+            "id": "E01", "domain": "test", "difficulty": "基础",
+            "query": "query", "relevance_annotations": [True],
+            "relevance_annotation_source": "gold-set-v1",
+        }],
+        use_llm=False,
+        output_file=tmp_path / "e2e.json",
+    )[0]
+
+    assert received["relevance_annotations"] == [True] and received["annotation_source"] == "gold-set-v1"
+    assert result["scores"]["context_precision"]["score"] is None
+    assert result["scores"]["context_precision"]["status"] == "unscored_missing_annotation"
+    persisted = json.loads((tmp_path / "e2e.json").read_text(encoding="utf-8"))
+    assert persisted[0]["scores"]["context_precision"] == result["scores"]["context_precision"]
+    scored_result = {
+        **result,
+        "scores": {
+            **result["scores"],
+            "context_precision": {"score": 0.6, "status": "scored"},
+        },
+    }
+    stats = eval_e2e._compute_stats([result, scored_result])
+    assert stats["avg_scores"]["context_precision"] == 0.6
+    assert stats["avg_scores"]["context_recall"] == 0.8
+
+    report = tmp_path / "report.html"
+    eval_e2e.generate_html([result], report)
+    html = report.read_text(encoding="utf-8")
+    assert "Precision" in html
+    assert "未评分" in html
+    assert ">0.000<" not in html
+
+
+def test_e2e_admin_analysis_omits_unscored_precision_from_low_items(monkeypatch):
+    class EvalLLM:
+        model = "test-judge"
+
+        def chat(self, messages):
+            self.prompt = messages[0]["content"]
+            return {"content": "analysis"}
+
+    llm = EvalLLM()
+    result = {
+        "total": 2,
+        "errors": 0,
+        "avg_scores": {
+            "context_precision": 0.2,
+            "context_recall": 0.8,
+            "faithfulness": 0.8,
+            "relevancy": 0.8,
+            "hallucination": 0.8,
+        },
+    }
+    items = [
+        {
+            "query": "unscored query",
+            "domain": "通用",
+            "scores": {"context_precision": {"score": None, "status": "judge_error"}},
+        },
+        {
+            "query": "scored low query",
+            "domain": "通用",
+            "scores": {"context_precision": {"score": 0.2, "status": "scored"}},
+        },
+    ]
+    monkeypatch.setattr(app_state, "_save_eval_summary", lambda *_args: None)
+
+    summary = app_state._generate_eval_summary(llm, "e2e_quality", result, items)
+
+    assert summary == "analysis"
+    assert "平均 Context Precision：20%" in llm.prompt
+    assert "「scored low query」" in llm.prompt
+    assert "「unscored query」" not in llm.prompt
+    assert "未评分" in llm.prompt
+
+
+def test_e2e_admin_analysis_formats_missing_average_as_unscored(monkeypatch):
+    class EvalLLM:
+        model = "test-judge"
+
+        def chat(self, messages):
+            self.prompt = messages[0]["content"]
+            return {"content": "analysis"}
+
+    llm = EvalLLM()
+    monkeypatch.setattr(app_state, "_save_eval_summary", lambda *_args: None)
+
+    app_state._generate_eval_summary(llm, "e2e_quality", {
+        "total": 1,
+        "errors": 0,
+        "avg_scores": {"context_precision": None},
+    }, [{
+        "query": "unscored query",
+        "domain": "通用",
+        "scores": {"context_precision": {"score": None, "status": "unscored_missing_annotation"}},
+    }])
+
+    assert "平均 Context Precision：未评分" in llm.prompt
+    assert "Context Precision未评分" in llm.prompt
+    assert "偏低（< 60%）" not in llm.prompt
+
+
+def test_e2e_compare_report_does_not_calculate_delta_for_unscored_metric(tmp_path, monkeypatch):
+    previous_file = tmp_path / "previous.json"
+    previous_file.write_text(
+        '[{"scores":{"context_precision":{"score":0.8,"status":"scored"}}}]',
+        encoding="utf-8",
+    )
+    versions_file = tmp_path / "versions.json"
+    versions_file.write_text(
+        '[{"version":"v1","results_file":"previous.json"},{"version":"v2"}]',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(eval_e2e, "_EVAL_DIR", tmp_path)
+    monkeypatch.setattr(eval_e2e, "_VERSION_FILE", versions_file)
+
+    report = eval_e2e._generate_compare_html({"context_precision": None}, [{
+        "scores": {"context_precision": {"score": None, "status": "judge_error"}},
+    }])
+
+    precision_section = report.split('<div class="label">Context Precision</div>')[1].split('</div>')[0]
+    assert '<span class="curr">未评分</span>' in precision_section
+    assert "上次 0.800" in report
+    assert "diff-up" not in precision_section and "diff-down" not in precision_section
+
+
+def test_e2e_averages_accept_legacy_scores_and_omit_missing_fields():
+    results = [
+        {"scores": {"context_precision": 0.8}},
+        {"scores": {"context_precision": {"score": 0.4}}},
+        {"scores": {}},
+        {"scores": {"context_precision": {"score": 0.9, "status": "judge_error"}}},
+    ]
+    assert eval_e2e._average_metric(results, "context_precision") == 0.6
+    assert eval_e2e._average_metric(results, "context_recall") is None
 
 
 def test_e2e_stats_and_html_report_keep_profile_breakdown(tmp_path):

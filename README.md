@@ -246,6 +246,7 @@ pnpm lint
 
 - 检索质量评测：对比 FAISS-only、BM25-only、Hybrid、Hybrid + Rerank 的召回与 MRR。
 - 端到端问答评测：观察上下文精确率、召回率、忠实度、相关性和幻觉风险。
+- Context Precision 的未评分/Judge 失败保留 `score: null` 与状态，排除在总体及 profile/domain 均值之外；HTML、历史对比和后台分析显示“未评分”，不折算成 0 分。历史数值格式仍可读取。
 - Prompt 测试：用固定测试集验证系统提示词调整是否带来实际收益。
 
 上线前至少应通过三类检查：服务能启动、知识库能召回、答案能给出可核验来源。任何一个环节失败，都不应该进入正式使用。
