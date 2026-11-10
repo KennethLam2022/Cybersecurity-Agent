@@ -57,6 +57,7 @@
 以上字段在适用状态下必填；不适用的字段必须省略，不以空字符串或任意 null 代替。额外诊断字段不得包含 Prompt、原文或敏感内容。
 
 - 只有 `scored` 结果可以进入校准分数平均值；报告同时显示已评分数、总样本数和未评分原因。
+- E2E 逐题 JSON 的 `scores.context_relevance` 保留标准结果；汇总和版本记录包含 `metric_coverage`（各指标的 `scored`、`total`、`unscored_reasons`）。旧五指标结果仍可读取，但完整性检查会明确发现缺失 Relevance，不自动补分或新增该指标分数阈值。
 - 所有 `unscored_*` 和 `judge_error` 结果的 `score` 必须为 `null`；`unverified_heuristic` 可以带数值分数，但默认不进入校准均值。
 - 未提供标签、参考证据或有效上下文，与“全部不相关”是不同状态；不得将其悄悄当作 0 分。
 - 输入不完整时先返回对应的 `unscored_*` 状态且不调用 Judge，`evaluator.method=not_run`。所有必需判断标签齐全且公式成功计算时为 `scored`；标签可来自评测集标注或成功的 Judge，`evaluator.method` 必须记录实际来源。

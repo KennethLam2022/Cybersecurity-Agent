@@ -5,7 +5,7 @@ import math
 from typing import Any
 
 
-REQUIRED_METRICS = ("context_precision", "context_recall", "faithfulness", "relevancy", "hallucination")
+REQUIRED_METRICS = ("context_precision", "context_recall", "context_relevance", "faithfulness", "relevancy", "hallucination")
 DEFAULT_THRESHOLDS = {"faithfulness_min": 0.5, "no_hallucination_min": 0.5}
 
 
@@ -47,6 +47,19 @@ def metric_score_value(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return score if math.isfinite(score) else None
+
+
+def metric_coverage(results: list[dict], key: str) -> dict:
+    """Count valid scores and missing/failed states without treating them as zero."""
+    scored, reasons = 0, {}
+    for result in results:
+        metric = result.get("scores", {}).get(key)
+        if metric_score_value(metric) is not None:
+            scored += 1
+        else:
+            status = (metric.get("status") or "unscored") if isinstance(metric, dict) else "missing"
+            reasons[status] = reasons.get(status, 0) + 1
+    return {"scored": scored, "total": len(results), "unscored_reasons": reasons}
 
 
 def _score(scores: dict[str, Any], name: str) -> float | None:
