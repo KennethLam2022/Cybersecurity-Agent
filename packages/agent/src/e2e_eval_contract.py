@@ -1,6 +1,7 @@
 """Deterministic hard-gate checks for E2E RAG evaluation results."""
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -12,30 +13,44 @@ def normalize_metric_result(value: Any, evaluator: str) -> dict[str, Any]:
     """Normalize LLM and heuristic judge outputs for report/storage consumers."""
     if not isinstance(value, dict):
         value = {"score": value}
-    try:
-        score = max(0.0, min(1.0, float(value.get("score", 0))))
-    except (TypeError, ValueError):
-        score = 0.0
+    raw_score = value.get("score")
+    if raw_score is None:
+        score = None
+    else:
+        try:
+            score = max(0.0, min(1.0, float(raw_score)))
+        except (TypeError, ValueError):
+            score = 0.0
     reason = value.get("reason") or value.get("explanation") or ""
     details = value.get("details") if isinstance(value.get("details"), dict) else {}
     method = value.get("evaluator") or details.get("method") or evaluator
     return {
-        "score": round(score, 4),
+        "score": round(score, 4) if score is not None else None,
+        "status": value.get("status") or ("scored" if score is not None else "unscored"),
         "reason": str(reason),
         "explanation": str(reason),
-        "evaluator": str(method),
+        "evaluator": method,
         "details": details,
     }
 
 
-def _score(scores: dict[str, Any], name: str) -> float | None:
-    value = scores.get(name)
+def metric_score_value(value: Any) -> float | None:
+    """Return a finite score only for metrics explicitly marked as scored."""
     if isinstance(value, dict):
+        if value.get("status") not in (None, "scored"):
+            return None
         value = value.get("score")
+    if isinstance(value, bool):
+        return None
     try:
-        return float(value) if value is not None else None
+        score = float(value)
     except (TypeError, ValueError):
         return None
+    return score if math.isfinite(score) else None
+
+
+def _score(scores: dict[str, Any], name: str) -> float | None:
+    return metric_score_value(scores.get(name))
 
 
 def evaluate_e2e_gates(result: dict[str, Any], thresholds: dict[str, float] | None = None) -> dict[str, Any]:

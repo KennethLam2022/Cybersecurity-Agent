@@ -50,6 +50,8 @@ _PREPROCESSOR_SRC = str(Path(_SRC).parent.parent.parent / "packages" / "preproce
 if _PREPROCESSOR_SRC not in sys.path:
     sys.path.insert(0, _PREPROCESSOR_SRC)
 
+from e2e_eval_contract import metric_score_value
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -348,7 +350,8 @@ def _generate_eval_summary(eval_llm, tab_type: str, result: dict, items: list, u
             threshold = 0.6
             low_items = [
                 it for it in scorable
-                if it.get("scores", {}).get(k, {}).get("score", 1) < threshold
+                if (score := metric_score_value(it.get("scores", {}).get(k))) is not None
+                and score < threshold
             ]
             if low_items:
                 low_items_by_key[k] = low_items
@@ -357,37 +360,60 @@ def _generate_eval_summary(eval_llm, tab_type: str, result: dict, items: list, u
         for it in scorable:
             dom = it.get("domain", "通用")
             if dom not in domain_scores:
-                domain_scores[dom] = {"total": 0, "sum": {k: 0.0 for k in keys}}
+                domain_scores[dom] = {
+                    "total": 0,
+                    "sum": {k: 0.0 for k in keys},
+                    "count": {k: 0 for k in keys},
+                }
             domain_scores[dom]["total"] += 1
             for k in keys:
-                domain_scores[dom]["sum"][k] += it.get("scores", {}).get(k, {}).get("score", 0)
+                score = metric_score_value(it.get("scores", {}).get(k))
+                if score is not None:
+                    domain_scores[dom]["sum"][k] += score
+                    domain_scores[dom]["count"][k] += 1
 
         domain_detail = ""
         for dom, ds in sorted(domain_scores.items(), key=lambda x: x[1]["total"], reverse=True):
-            avgs = {k: ds["sum"][k] / ds["total"] for k in keys}
-            worst = min(keys, key=lambda k: avgs[k])
+            avgs = {
+                k: ds["sum"][k] / ds["count"][k] if ds["count"][k] else None
+                for k in keys
+            }
+            scored_avgs = {k: value for k, value in avgs.items() if value is not None}
+            worst = min(scored_avgs, key=scored_avgs.get) if scored_avgs else None
             domain_detail += f"\n- **{dom}**（{ds['total']}题）："
-            domain_detail += " ".join(f"{labels[k].split('（')[0]}{avgs[k]*100:.0f}%" for k in keys)
-            domain_detail += f"，最弱项：{labels[worst].split('（')[0]} {avgs[worst]*100:.0f}%"
+            domain_detail += " ".join(
+                f"{labels[k].split('（')[0]}{avgs[k]*100:.0f}%" if avgs[k] is not None
+                else f"{labels[k].split('（')[0]}未评分"
+                for k in keys
+            )
+            weakest = (
+                f"，最弱项：{labels[worst].split('（')[0]} {avgs[worst]*100:.0f}%"
+                if worst is not None else "，暂无已评分指标"
+            )
+            domain_detail += weakest
 
         low_detail = ""
         for k, litems in low_items_by_key.items():
             low_detail += f"\n#### {labels[k]} 偏低（< 60%）：共 {len(litems)} 题\n"
             for it in litems[:5]:
-                sc = it.get("scores", {}).get(k, {}).get("score", 0)
+                sc = metric_score_value(it.get("scores", {}).get(k))
                 trunc = it.get("truncation", {})
                 trunc_str = f"，上下文被截断" if trunc.get("truncated_count", 0) > 0 else ""
                 low_detail += f"- 「{it['query']}」[{it.get('difficulty', '')}] 得分 {sc*100:.0f}%{trunc_str}\n"
 
+        def format_percent(value):
+            score = metric_score_value(value)
+            return f"{score * 100:.0f}%" if score is not None else "未评分"
+
         prompt = f"""你是一位网络安全 Agent 综合质量评测分析师。分析以下综合质量评测结果。
 
 ## 总体数据
-- 总题数：{total} | 已评分：{total - errors} | 错误：{errors}
-- 平均 Context Precision：{avg_scores.get('context_precision', 0)*100:.0f}%
-- 平均 Context Recall：{avg_scores.get('context_recall', 0)*100:.0f}%
-- 平均 Faithfulness：{avg_scores.get('faithfulness', 0)*100:.0f}%
-- 平均 Relevancy：{avg_scores.get('relevancy', 0)*100:.0f}%
-- 平均无幻觉率：{avg_scores.get('hallucination', 0)*100:.0f}%
+- 总题数：{total} | 无运行错误：{total - errors} | 错误：{errors}
+- 平均 Context Precision：{format_percent(avg_scores.get('context_precision'))}
+- 平均 Context Recall：{format_percent(avg_scores.get('context_recall'))}
+- 平均 Faithfulness：{format_percent(avg_scores.get('faithfulness'))}
+- 平均 Relevancy：{format_percent(avg_scores.get('relevancy'))}
+- 平均无幻觉率：{format_percent(avg_scores.get('hallucination'))}
 
 ## 各域表现{domain_detail}
 {low_detail}

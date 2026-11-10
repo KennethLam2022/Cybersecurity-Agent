@@ -1,4 +1,9 @@
-from e2e_eval_contract import evaluate_e2e_gates, normalize_metric_result, summarize_e2e_gates
+from e2e_eval_contract import (
+    evaluate_e2e_gates,
+    metric_score_value,
+    normalize_metric_result,
+    summarize_e2e_gates,
+)
 
 
 def _result(**overrides):
@@ -37,3 +42,23 @@ def test_metric_result_has_stable_reason_and_evaluator_fields():
     assert result["score"] == 0.7
     assert result["reason"] == "有依据"
     assert result["evaluator"] == "heuristic"
+
+
+def test_metric_result_preserves_unscored_state_and_evaluator_metadata():
+    evaluator = {"method": "llm_judge", "model_id": "judge-v1"}
+    result = normalize_metric_result({
+        "score": None,
+        "status": "judge_error",
+        "explanation": "Judge unavailable",
+        "details": {"failure_category": "call_failed"},
+        "evaluator": evaluator,
+    }, "fallback")
+
+    assert result["score"] is None
+    assert result["status"] == "judge_error"
+    assert result["evaluator"] == evaluator
+    assert result["details"] == {"failure_category": "call_failed"}
+
+
+def test_non_scored_metric_status_takes_precedence_over_stale_score():
+    assert metric_score_value({"score": 0.9, "status": "judge_error"}) is None
