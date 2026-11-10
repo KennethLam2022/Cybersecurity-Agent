@@ -15,6 +15,7 @@ import json
 import logging
 import re
 from typing import Optional
+from _eval_recall import eval_context_recall
 
 logger = logging.getLogger(__name__)
 _EVAL_DOC_CHAR_LIMIT = 800
@@ -245,113 +246,6 @@ def _precision_evaluator(method, llm=None) -> dict:
 
 
 # ──────────────────────────────────────────────
-#  Context Recall — 检索文档关键信息被引用的比例
-# ──────────────────────────────────────────────
-
-_CONTEXT_RECALL_PROMPT = """你是一位严格的 RAG 评估专家。你的任务：评估"回答"覆盖了多少"检索文档"中的关键信息。
-
-评分标准（0-1 分）：
-1. 阅读检索文档，提取其中与用户问题相关的关键信息点
-2. 判断回答覆盖了其中多少个关键信息点
-3. 计算覆盖率：covered_key_points / total_key_points
-
-规则：
-- 如果回答覆盖了文档中所有关键信息 → 高分（0.9-1.0）
-- 如果回答只覆盖了部分关键信息 → 中分（0.3-0.8）
-- 如果回答几乎没用到文档中的信息 → 低分（0.0-0.2）
-- 如果回答完全没有引用文档内容 → 0分
-- 注意：只计文档中有的、与问题相关的信息；超出文档的内容不计入
-
-输出必须是 JSON 格式（不要多余文字）：
-{{"score": 0.0-1.0, "total_key_points": N, "covered_key_points": N, "explanation": "简要分析理由"}}
-
---- 用户问题 ---
-{query}
-
---- 检索文档 ---
-{context}
-
---- 回答 ---
-{answer}
-"""
-
-
-def eval_context_recall(
-    query: str,
-    retrieved_docs: list[dict],
-    answer: str,
-    llm=None,
-    usage_sink=None,
-) -> dict:
-    """评估检索文档关键信息被回答引用的比例
-
-    Args:
-        query: 用户问题
-        retrieved_docs: 检索到的文档列表
-        answer: 模型回答
-        llm: LLMProvider 实例（可选）
-
-    Returns:
-        {"score": float (0-1), "explanation": str, "details": {...}}
-    """
-    if not answer or not answer.strip():
-        return {"score": 0.0, "explanation": "回答为空", "details": {}}
-
-    # 清洗引用标记，避免 [来源N: ...] 干扰评分
-    answer_clean = _clean_answer(answer)
-
-    context_text = _format_docs(retrieved_docs)
-    if not context_text.strip():
-        return {"score": 0.0, "explanation": "没有检索到文档", "details": {}}
-
-    if llm is not None:
-        try:
-            prompt = _CONTEXT_RECALL_PROMPT.format(
-                query=query, context=context_text, answer=answer_clean
-            )
-            result = _llm_judge(llm, prompt, usage_sink=usage_sink)
-            score = max(0.0, min(1.0, float(result.get("score", 0))))
-            return {
-                "score": round(score, 4),
-                "explanation": result.get("explanation", ""),
-                "details": {
-                    "total_key_points": result.get("total_key_points", 0),
-                    "covered_key_points": result.get("covered_key_points", 0),
-                },
-            }
-        except Exception as e:
-            logger.warning(f"LLM context_recall 评估失败: {e}")
-
-    # ── 启发式回退 ──
-    return _heuristic_context_recall(answer, context_text)
-
-
-def _heuristic_context_recall(answer: str, context_text: str) -> dict:
-    """基于字符覆盖的启发式 context recall 评估"""
-    answer_lower = answer.lower()
-    answer_chars = set(re.findall(r'[\u4e00-\u9fff]', answer_lower))
-
-    context_chars = set(re.findall(r'[\u4e00-\u9fff]', context_text.lower()))
-
-    if len(context_chars) == 0:
-        return {"score": 0.0, "explanation": "文档中无可提取的关键词", "details": {}}
-
-    overlap = len(answer_chars & context_chars)
-    # 使用 sqrt 归一化，避免文档过长导致的稀疏问题
-    score = min(1.0, overlap / max(len(context_chars) ** 0.5, 1) * 0.15)
-
-    return {
-        "score": round(score, 4),
-        "explanation": f"启发式评估：回答含 {len(answer_chars)} 个不同中文字符，文档含 {len(context_chars)} 个，重叠 {overlap} 个",
-        "details": {
-            "total_key_points": len(context_chars),
-            "covered_key_points": overlap,
-            "method": "heuristic",
-        },
-    }
-
-
-# ──────────────────────────────────────────────
 #  辅助函数
 # ──────────────────────────────────────────────
 
@@ -526,14 +420,15 @@ def main():
 
     # Context Recall
     result_r = eval_context_recall(query, docs, answer, llm=None)
-    logger.info(f"[Context Recall]     {result_r['score']:.4f}")
+    recall_label = f"{result_r['score']:.4f}" if result_r["score"] is not None else "未评分"
+    logger.info(f"[Context Recall]     {recall_label}")
     logger.info(f"  说明: {result_r['explanation'][:80]}")
     logger.info(f"  详情: {result_r['details']}\n")
 
     # 汇总
     logger.info(f"\n[OK] 域B评估完成")
     logger.info(f"  Context Precision: {precision_label}")
-    logger.info(f"  Context Recall:    {result_r['score']:.4f}")
+    logger.info(f"  Context Recall:    {recall_label}")
 
 
 if __name__ == "__main__":
