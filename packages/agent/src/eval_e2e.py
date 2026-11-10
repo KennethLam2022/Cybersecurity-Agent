@@ -255,7 +255,12 @@ def run_evaluation(
                 relevance_annotations=q.get("relevance_annotations"),
                 annotation_source=q.get("relevance_annotation_source"),
             )
-            score_cr = eval_context_recall(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)
+            score_cr = eval_context_recall(
+                query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink,
+                reference_evidence=q.get("reference_evidence"),
+                coverage_annotations=q.get("coverage_annotations"),
+                annotation_source=q.get("coverage_annotation_source"),
+            )
             score_ft = eval_faithfulness(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)
             score_rl = eval_relevancy(query, answer, retrieved_docs, llm=llm, usage_sink=usage_sink)
             score_hc = eval_hallucination(query, retrieved_docs, answer, llm=llm, usage_sink=usage_sink)

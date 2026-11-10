@@ -101,6 +101,8 @@
 
 ## Context Recall
 
+运行时输入：`reference_evidence=[{"evidence_id":"e1","text":"原子事实"}]`；ID 与去除首尾空白的事实文本均不得重复。可提供与参考顺序一致的 `coverage_annotations: boolean[]` 和非空 `coverage_annotation_source`，否则由 Judge 判断。E2E JSON 题目直接使用这些字段；旧题目无参考项时保留未评分，不自动编造参考答案。
+
 **评测问题：** 检索上下文覆盖了多少回答问题所需的参考证据？
 
 **单位与标签：** 将 `reference_evidence` 表示为互不重复、可独立判断的原子事实/要求。对每项判断至少一个检索片段是否直接支持它，得到 `c_j ∈ {0,1}`。判断基于检索上下文，不基于模型最终回答。
