@@ -1,44 +1,60 @@
-"""会话认证路由辅助 + SSRF 域名白名单 + 管理路由检查
+"""会话认证路由辅助 + LLM 公网地址校验 + 管理路由检查
 
 用法：
   from auth import is_admin_route, validate_llm_url
 """
-import os
-
-# ---- SSRF 防护：LLM API 域名白名单 ----
-_ALLOWED_LLM_DOMAINS = {
-    "api.siliconflow.cn",
-    "api.deepseek.com",
-    "dashscope.aliyuncs.com",
-    "open.bigmodel.cn",
-    "api.moonshot.cn",
-    "qianfan.baidubce.com",
-    "openrouter.ai",
-    "api.openai.com",
-    "api.anthropic.com",
-    "api.googleapis.com",
-    "generativelanguage.googleapis.com",
-    "token.sensenova.cn",
-    "api.sensenova.com.cn",
-}
+import ipaddress
+import socket
+from urllib.parse import urlparse
 
 
-def validate_llm_url(url: str) -> bool:
-    """校验 LLM API URL 是否在白名单内，防止 SSRF"""
-    from urllib.parse import urlparse
+def validate_llm_url(url: str, *, allow_local: bool = False) -> bool:
+    """Check a public HTTPS endpoint; return False on malformed or unsafe input.
+
+    Args:
+        url: Provider base URL without credentials, query or fragment.
+        allow_local: Also permit explicit loopback Ollama on port 11434.
+    Returns:
+        Whether every resolved address is public, or the Ollama exception applies.
+    Raises:
+        No URL/DNS parsing errors escape this function.
+    Example:
+        validate_llm_url("https://provider.example/v1")
+    """
     try:
-        parsed = urlparse(url)
-        hostname = parsed.hostname
-        if parsed.scheme.lower() != "https" or not hostname:
+        if not isinstance(url, str) or any(c.isspace() for c in url) or "\\" in url:
             return False
-        if hostname in _ALLOWED_LLM_DOMAINS:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+        if not hostname or parsed.username is not None or parsed.password is not None:
+            return False
+        if parsed.query or parsed.fragment or port == 0:
+            return False
+        if (allow_local and hostname in {"localhost", "127.0.0.1", "::1"}
+                and port == 11434 and parsed.scheme in {"http", "https"}):
             return True
-        for allowed in _ALLOWED_LLM_DOMAINS:
-            if hostname.endswith("." + allowed):
-                return True
+        if parsed.scheme != "https" or hostname in {"localhost", "localhost.localdomain"}:
+            return False
+        if hostname.endswith((".localhost", ".local", ".internal")):
+            return False
+        addresses = socket.getaddrinfo(hostname, port or 443, type=socket.SOCK_STREAM)
+        # shortcut: DNS is rechecked, not pinned; hostile DNS needs egress isolation.
+        return bool(addresses) and all(
+            ipaddress.ip_address(item[4][0]).is_global
+            and not ipaddress.ip_address(item[4][0]).is_multicast
+            for item in addresses
+        ) and _is_public_literal(hostname)
+    except (OSError, ValueError, TypeError):
         return False
-    except Exception:
-        return False
+
+
+def _is_public_literal(hostname: str) -> bool:
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return True
+    return address.is_global and not address.is_multicast
 
 
 # ---- 管理路由检查 ----
