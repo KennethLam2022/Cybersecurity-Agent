@@ -522,7 +522,7 @@
       if (csrf) { init.headers = init.headers || {}; if (init.headers instanceof Headers) init.headers.set('X-CSRF-Token', decodeURIComponent(csrf)); else init.headers['X-CSRF-Token'] = decodeURIComponent(csrf); }
       init.credentials = 'same-origin';
       return originalFetch(input, init).then(function(resp) {
-        if (resp.status === 401) window.location.href = '/';
+        if (resp.status === 401) window.location.href = '/admin/login?next=/admin';
         return resp;
       });
     };

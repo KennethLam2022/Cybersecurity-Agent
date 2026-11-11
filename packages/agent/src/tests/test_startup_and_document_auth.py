@@ -6,7 +6,7 @@ def test_document_page_uses_logged_in_user_session_for_management_requests():
 
     assert "credentials = 'same-origin'" in content
     assert "Authorization" not in content
-    assert "if (resp.status === 401) window.location.href = '/';" in content
+    assert "if (resp.status === 401) window.location.href = '/admin/login?next=/admin';" in content
     assert "documentToken" not in content
 
 

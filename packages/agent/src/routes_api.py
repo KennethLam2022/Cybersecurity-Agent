@@ -3606,9 +3606,8 @@ def documents_scan(files: list[UploadFile] = File(...)):
 def documents_profile_registry(request: Request):
     """Expose only the profiles enabled for the active workspace.
 
-    The registry remains readable without a management session for the document
-    UI, but an anonymous local deployment receives only its default general
-    Profile until an administrator enables an industry extension.
+    The profile list is tenant-scoped and therefore requires a management
+    session even though it contains taxonomy metadata rather than documents.
     """
     principal = principal_from_request(request, agent.memory)
     allowed = _governance_store_for_current_memory().enabled_profiles(principal.tenant_id)
