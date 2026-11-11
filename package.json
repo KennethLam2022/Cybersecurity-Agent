@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "python packages/agent/src/main.py",
     "build": "python -m compileall -q packages/agent/src packages/preprocessor/src",
-    "test": "python scripts/run_tests.py",
+    "test": "python scripts/run_tests.py && node --test packages/agent/src/tests/test_prompt_workspace_load.js",
     "smoke": "python scripts/eval_smoke.py",
     "release:check": "python scripts/release_check.py",
     "release:p5": "python scripts/p5_release_check.py",
