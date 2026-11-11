@@ -376,8 +376,8 @@
       </div>
       <div class="config-body">
         <div class="saved-config-row">
-          <label>📋 已保存方案</label>
-          <select class="saved-select" data-card="${c.id}">
+          <label for="${c.id}-saved">📋 已保存方案</label>
+          <select id="${c.id}-saved" class="saved-select" data-card="${c.id}">
             <option value="" data-type="" data-provider="" data-model="" data-key="" data-base-url="">— 新建方案 —</option>
             ${opts.map(o => {
               const sel = (o.id === st.savedId && st.savedId) ? 'selected' : '';
@@ -388,23 +388,23 @@
         </div>
         <div class="model-selector">
           <div class="field">
-            <label>平台提供商</label>
-            <select class="provider-select" data-card="${c.id}" onchange="onProviderChange('${c.id}')">
+            <label for="${c.id}-provider">平台提供商</label>
+            <select id="${c.id}-provider" class="provider-select" data-card="${c.id}" onchange="onProviderChange('${c.id}')">
               ${Object.keys(PROVIDER_MODELS).map(p => `<option value="${p}" ${p === st.provider ? 'selected' : ''}>${p}</option>`).join('')}
             </select>
           </div>
           <div class="field">
-            <label>模型名称</label>
-            <input type="text" class="model-input" data-card="${c.id}" value="${st.model}" placeholder="输入模型名称，如 deepseek-v4-flash" style="width:100%;padding:7px 10px;border:1px solid var(--b);border-radius:6px;font-size:13px;font-family:var(--f);background:var(--card);color:var(--t);outline:none;">
+            <label for="${c.id}-model">模型名称</label>
+            <input id="${c.id}-model" type="text" class="model-input" data-card="${c.id}" value="${st.model}" placeholder="输入模型名称，如 deepseek-v4-flash" style="width:100%;padding:7px 10px;border:1px solid var(--b);border-radius:6px;font-size:13px;font-family:var(--f);background:var(--card);color:var(--t);outline:none;">
             <div class="hint">${c.hint}</div>
           </div>
           <div class="field">
-            <label>Base URL</label>
-            <input type="text" class="baseurl-input" data-card="${c.id}" value="${st.baseUrl || ''}" placeholder="https://api.example.com/v1" ${st.provider === '自定义' ? '' : 'readonly'}>
+            <label for="${c.id}-baseUrl">Base URL</label>
+            <input id="${c.id}-baseUrl" type="text" class="baseurl-input" data-card="${c.id}" value="${st.baseUrl || ''}" placeholder="https://api.example.com/v1" ${st.provider === '自定义' ? '' : 'readonly'}>
           </div>
           <div class="field api-key-wrap">
-            <label>API Key</label>
-            <input type="password" class="key-input" data-card="${c.id}" value="${st.key}" placeholder="请输入 API Key">
+            <label for="${c.id}-apiKey">API Key</label>
+            <input id="${c.id}-apiKey" type="password" class="key-input" data-card="${c.id}" value="${st.key}" placeholder="请输入 API Key">
             <button class="toggle-vis" onclick="toggleKeyVis('${c.id}')">👁</button>
           </div>
         </div>

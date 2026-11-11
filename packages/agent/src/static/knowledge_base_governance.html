@@ -13,7 +13,7 @@
     .grid{display:grid;grid-template-columns:minmax(360px,0.9fr) minmax(540px,1.6fr);gap:16px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:16px}.panel h2{font-size:16px;margin:0 0 12px;color:#163a5f}
     table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #edf0f4;text-align:left;padding:9px 7px;vertical-align:top}th{font-size:12px;color:var(--muted);font-weight:600}td{font-size:13px}.row{cursor:pointer}.row:hover{background:#f7fafc}.row.active{background:#eef6fd}
     .pill{display:inline-block;padding:2px 7px;border-radius:12px;background:#eef2f6;color:#526071;font-size:11px}.pill.active,.pill.published{color:var(--green);background:#e8f6ef}.pill.review{color:#8a5a00;background:#fff5d8}.pill.archived{color:#7b2d2d;background:#fcebea}
-    .form{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}.form input,.form select{width:100%}.form .wide{grid-column:1/-1}.empty{color:var(--muted);padding:22px 4px;text-align:center}.muted{color:var(--muted);font-size:12px}.actions{display:flex;gap:6px;flex-wrap:wrap}.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.detail-head h3{margin:0;font-size:18px}.section{margin-top:18px}.section h3{font-size:14px;color:#344054;margin:0 0 8px}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.msg{min-height:22px;color:var(--muted);margin:8px 0}.msg.error{color:var(--red)}
+    .form{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}.form>label{display:grid;gap:3px;color:var(--muted);font-size:12px}.form>label>input,.form>label>select{width:100%}.form>.wide{grid-column:1/-1}.form>label.wide{grid-column:1/-1}.empty{color:var(--muted);padding:22px 4px;text-align:center}.muted{color:var(--muted);font-size:12px}.actions{display:flex;gap:6px;flex-wrap:wrap}.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.detail-head h3{margin:0;font-size:18px}.section{margin-top:18px}.section h3{font-size:14px;color:#344054;margin:0 0 8px}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.msg{min-height:22px;color:var(--muted);margin:8px 0}.msg.error{color:var(--red)}
     @media(max-width:860px){.grid{grid-template-columns:1fr}.split{grid-template-columns:1fr}.head{display:block}.head .toolbar{margin-top:12px}.form{grid-template-columns:1fr}}
   </style>
 </head>
@@ -22,17 +22,17 @@
   <select data-page-language aria-label="Language" style="float:right"><option value="zh-CN">中文</option><option value="en-US">English</option></select>
   <header class="head">
     <div><h1 data-i18n="知识库治理">知识库治理</h1><p class="sub" data-i18n="管理知识库归属、文档生命周期、版本和入库结果。权限与审核状态独立于向量索引。">管理知识库归属、文档生命周期、版本和入库结果。权限与审核状态独立于向量索引。</p></div>
-    <div class="toolbar"><input id="tenant" placeholder="工作区 ID（可选）"><button onclick="loadKbs()">刷新</button><button onclick="scanExpiredDocuments()">检查过期</button></div>
+    <div class="toolbar"><label for="tenant">工作区 ID（可选）</label><input id="tenant" placeholder="工作区 ID（可选）"><button onclick="loadKbs()">刷新</button><button onclick="scanExpiredDocuments()">检查过期</button></div>
   </header>
   <div class="grid">
     <section class="panel">
       <h2 data-i18n="知识库">知识库</h2>
       <form class="form" onsubmit="createKb(event)">
-        <input id="kbName" placeholder="知识库名称" required>
-        <select id="kbVisibility"><option value="tenant">工作区共享</option><option value="public">公共</option><option value="private">私有</option></select>
-        <input id="kbProfile" placeholder="Profile，例如 general" value="general">
-        <input id="kbOwner" placeholder="所有者用户 ID（可选）">
-        <input class="wide" id="kbDescription" placeholder="用途说明（可选）">
+        <label><span>知识库名称</span><input id="kbName" placeholder="知识库名称" required></label>
+        <label><span>可见范围</span><select id="kbVisibility"><option value="tenant">工作区共享</option><option value="public">公共</option><option value="private">私有</option></select></label>
+        <label><span>Profile</span><input id="kbProfile" placeholder="Profile，例如 general" value="general"></label>
+        <label><span>所有者用户 ID（可选）</span><input id="kbOwner" placeholder="所有者用户 ID（可选）"></label>
+        <label class="wide"><span>用途说明（可选）</span><input id="kbDescription" placeholder="用途说明（可选）"></label>
         <button class="primary wide" type="submit">创建知识库</button>
       </form>
       <div id="kbMsg" class="msg"></div>
@@ -46,13 +46,13 @@
     <h2 data-i18n="数据源登记">数据源登记</h2>
     <p class="muted">数据源只登记来源和同步策略；抓取内容必须经过解析、审核后才进入知识库。</p>
     <form class="form" onsubmit="createSource(event)">
-      <input id="sourceName" placeholder="数据源名称" required>
-      <select id="sourceType" onchange="sourceTypeChanged()"><option value="url">URL</option><option value="web_directory">网页目录</option><option value="database_readonly">只读数据库</option><option value="local_upload">本地上传目录</option><option value="excel_csv">Excel/CSV</option></select>
-      <input class="wide" id="sourceEndpoint" placeholder="地址、目录或连接标识" required>
-      <input id="sourceKb" placeholder="知识库 ID（可选）">
-      <select id="sourceMode"><option value="manual">手动同步</option><option value="scheduled">定时同步</option></select>
-      <input id="sourceSchedule" placeholder="Cron，例如 0 3 * * *">
-      <input id="sourceConfig" class="wide" placeholder='高级配置 JSON，例如 {"timeout_seconds":15}'>
+      <label><span>数据源名称</span><input id="sourceName" placeholder="数据源名称" required></label>
+      <label><span>数据源类型</span><select id="sourceType" onchange="sourceTypeChanged()"><option value="url">URL</option><option value="web_directory">网页目录</option><option value="database_readonly">只读数据库</option><option value="local_upload">本地上传目录</option><option value="excel_csv">Excel/CSV</option></select></label>
+      <label class="wide"><span>地址、目录或连接标识</span><input id="sourceEndpoint" placeholder="地址、目录或连接标识" required></label>
+      <label><span>知识库 ID（可选）</span><input id="sourceKb" placeholder="知识库 ID（可选）"></label>
+      <label><span>同步方式</span><select id="sourceMode"><option value="manual">手动同步</option><option value="scheduled">定时同步</option></select></label>
+      <label><span>Cron 计划</span><input id="sourceSchedule" placeholder="Cron，例如 0 3 * * *"></label>
+      <label class="wide"><span>高级配置 JSON</span><input id="sourceConfig" placeholder='高级配置 JSON，例如 {"timeout_seconds":15}'></label>
       <button class="primary wide" type="submit">登记数据源</button>
     </form>
     <div id="sourceMsg" class="msg"></div>
