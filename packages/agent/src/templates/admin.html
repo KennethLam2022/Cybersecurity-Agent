@@ -665,6 +665,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
                 <span style="font-size:10px"></span>
               </div>
               <textarea id="workspacePromptEditor" style="width:100%;min-height:160px;padding:14px;border:none;background:#f5f5f7;color:var(--t);font-size:13px;line-height:1.6;font-family:monospace;outline:none;resize:vertical;display:block;box-sizing:border-box"></textarea>
+              <div id="workspacePromptLoadStatus" role="status" aria-live="polite" style="display:none;padding:8px 14px;color:var(--r);font-size:12px"></div>
               <div style="display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--b)">
                 <button onclick="saveWorkspacePrompt()" style="background:var(--a);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:12px;cursor:pointer;font-family:var(--f)">💾 保存为新版本</button>
                 <button onclick="restoreFromActive()" style="background:var(--b);color:var(--t);border:none;padding:6px 16px;border-radius:6px;font-size:12px;cursor:pointer;font-family:var(--f)">↩ 从 active_prompt.txt 还原</button>
@@ -1990,7 +1991,7 @@ function switchTab(name) {
     loadDefaultSet();
     renderChangelog();
     // 工作台自动加载当前 System Prompt
-    fetch('/api/prompt/system-prompt').then(r=>r.json()).then(d=>{if(d.system_prompt||d.prompt)document.getElementById('workspacePromptEditor').value=(d.system_prompt||d.prompt).trim()}).catch(()=>{});
+    loadWorkspacePrompt();
     // 版本管理
     setTimeout(() => loadVersions(), 500);
   }
@@ -5078,6 +5079,23 @@ async function runPromptAbTest() {
 }
 
 // ---- 工作台编辑器操作 ----
+async function loadWorkspacePrompt() {
+  const editor = document.getElementById('workspacePromptEditor');
+  const status = document.getElementById('workspacePromptLoadStatus');
+  status.style.display = 'none';
+  try {
+    const response = await fetch('/api/prompt/system-prompt');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const prompt = (data.system_prompt || data.prompt || '').trim();
+    if (prompt && !editor.value.trim()) editor.value = prompt;
+    if (!prompt) throw new Error('响应中没有可用的 System Prompt');
+  } catch (error) {
+    status.textContent = `System Prompt 加载失败：${error.message || '请检查网络或权限后重试'}`;
+    status.style.display = 'block';
+  }
+}
+
 async function restoreFromActive() {
   try {
     const r=await fetch('/api/prompt/system-prompt');

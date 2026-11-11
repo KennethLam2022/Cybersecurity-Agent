@@ -271,6 +271,15 @@ def test_admin_conversation_exposes_ai_revision_draft_review_flow():
         assert fragment in html
 
 
+def test_prompt_workspace_reports_load_failures_without_overwriting_editor():
+    html = ADMIN_HTML.read_text(encoding="utf-8")
+    assert 'id="workspacePromptLoadStatus"' in html
+    assert "async function loadWorkspacePrompt()" in html
+    assert "if (!response.ok) throw new Error" in html
+    assert "if (prompt && !editor.value.trim()) editor.value = prompt;" in html
+    assert "catch (error)" in html
+
+
 def test_langfuse_configuration_page_is_reachable_from_configuration_group():
     html = ADMIN_HTML.read_text(encoding="utf-8")
     page = (STATIC_DIR / "langfuse_config.html").read_text(encoding="utf-8")
