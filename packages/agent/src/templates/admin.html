@@ -339,6 +339,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <button class="tab-item" data-group="knowledge" data-tab="indexing" role="tab" aria-selected="false" aria-controls="tabIndexing" onclick="switchTab('indexing')" style="display:none">入库质量</button>
       <button class="tab-item" data-group="knowledge" data-tab="gaps" role="tab" aria-selected="false" aria-controls="tabGaps" onclick="switchTab('gaps')" style="display:none">知识缺口</button>
       <button class="tab-item" data-group="knowledge" data-tab="graph" role="tab" aria-selected="false" aria-controls="tabGraph" onclick="switchTab('graph')" style="display:none">知识图谱</button>
+      <button class="tab-item" data-group="knowledge" data-tab="knowledgeBases" role="link" onclick="location.href='/admin/knowledge-bases'" style="display:none">知识库治理</button>
       <button class="tab-item" data-group="configuration" data-tab="modelconfig" role="tab" aria-selected="false" aria-controls="tabModelconfig" onclick="switchTab('modelconfig')" style="display:none">后端模型</button>
       <button class="tab-item" data-group="configuration" data-tab="costrouting" role="tab" aria-selected="false" aria-controls="tabCostrouting" onclick="switchTab('costrouting')" style="display:none">成本与路由</button>
       <button class="tab-item" data-group="configuration" data-tab="reflection" role="tab" aria-selected="false" aria-controls="tabReflection" onclick="switchTab('reflection')" style="display:none">反思规则</button>
@@ -1841,7 +1842,7 @@ function escapeHtml(value) {
 }
 const primaryGroupTabs = {
   operations: ['detail', 'overview', 'performance', 'workspaces', 'notifications', 'monitoring'],
-  knowledge: ['documents', 'indexing', 'gaps', 'graph'],
+  knowledge: ['documents', 'indexing', 'gaps', 'graph', 'knowledgeBases'],
   configuration: ['modelconfig', 'costrouting', 'reflection', 'prompt', 'langfuseconfig', 'externalretrieval', 'externalapi', 'webhooks', 'sso', 'emailnotifications'],
   capabilities: ['skills', 'mcp', 'workflows'],
   quality: ['retrieval', 'e2e', 'agentEval'],
@@ -1849,13 +1850,13 @@ const primaryGroupTabs = {
 let adminLanguage = localStorage.getItem('securenexus_language') === 'en-US' ? 'en-US' : 'zh-CN';
 const adminTabLabelsEn = {
   detail:'Conversation Detail', overview:'Operations Overview', performance:'Performance', workspaces:'Users & Workspaces', notifications:'Notifications', monitoring:'System Monitoring',
-  documents:'Document Ingestion', indexing:'Ingestion Quality', gaps:'Knowledge Gaps', graph:'Knowledge Graph',
+  documents:'Document Ingestion', indexing:'Ingestion Quality', gaps:'Knowledge Gaps', graph:'Knowledge Graph', knowledgeBases:'Knowledge Base Governance',
   modelconfig:'Backend Models', costrouting:'Cost & Routing', reflection:'Reflection Rules', prompt:'Prompts & Versions', langfuseconfig:'Langfuse Observability', externalretrieval:'External Retrieval', externalapi:'Open API', webhooks:'Webhooks', sso:'SSO / Enterprise Identity', emailnotifications:'Email Notifications',
   skills:'Skills', mcp:'MCP', workflows:'Workflows', retrieval:'Retrieval Quality', e2e:'End-to-End Quality', agentEval:'Agent Evaluation',
 };
 const tabLabelsZh = {
   detail:'对话详情', overview:'概览看板', performance:'性能看板', workspaces:'用户与工作区', notifications:'通知中心', monitoring:'系统监控',
-  documents:'文档入库', indexing:'入库质量', gaps:'知识缺口', graph:'知识图谱', modelconfig:'后端模型', costrouting:'成本与路由', reflection:'反思规则', prompt:'Prompt 与版本', langfuseconfig:'Langfuse 观测', externalretrieval:'联网检索', externalapi:'开放 API', webhooks:'Webhook', sso:'SSO / 企业身份', emailnotifications:'邮件通知', skills:'Skill', mcp:'MCP', workflows:'工作流', retrieval:'检索质量', e2e:'综合质量', agentEval:'Agent 评测',
+  documents:'文档入库', indexing:'入库质量', gaps:'知识缺口', graph:'知识图谱', knowledgeBases:'知识库治理', modelconfig:'后端模型', costrouting:'成本与路由', reflection:'反思规则', prompt:'Prompt 与版本', langfuseconfig:'Langfuse 观测', externalretrieval:'联网检索', externalapi:'开放 API', webhooks:'Webhook', sso:'SSO / 企业身份', emailnotifications:'邮件通知', skills:'Skill', mcp:'MCP', workflows:'工作流', retrieval:'检索质量', e2e:'综合质量', agentEval:'Agent 评测',
 };
 const adminTabContextEn = {
   detail:['Conversation Detail','Review a user conversation, cited sources, and security handling records.'],
@@ -1868,6 +1869,7 @@ const adminTabContextEn = {
   indexing:['Ingestion Quality','Inspect pipeline success, vector growth, and failure records.'],
   gaps:['Knowledge Gaps','Cluster unanswered questions from low scores, refreshes, corrections, and missing sources.'],
   graph:['Knowledge Graph','Review extracted relationships between laws, standards, clauses, and documents.'],
+  knowledgeBases:['Knowledge Base Governance','Manage knowledge-base ownership, document lifecycle, versions, and access grants.'],
   modelconfig:['Backend Models','Configure backend models used for chat, retrieval, and evaluation.'],
   costrouting:['Cost & Routing','Maintain model pricing and quality scores, then review token costs and routing suggestions.'],
   reflection:['Reflection Rules','Maintain final review rules and inspect revision, blocking, and degradation traces.'],
@@ -1930,6 +1932,7 @@ function switchTab(name) {
     indexing: ['入库质量', '检查处理管道成功率、向量库增长与失败记录。'],
     gaps: ['知识缺口', '从低分、刷新、纠错与无来源回答中聚类高频未答好问题，并生成待补资料任务。'],
     graph: ['知识图谱', '抽取并人工审核法规、标准、条款和文档关联，用于补充关联分析，不替代知识库检索。'],
+    knowledgeBases: ['知识库治理', '管理知识库归属、文档生命周期、版本与访问授权。'],
     modelconfig: ['后端模型', '集中配置聊天、检索与评测所使用的后端模型。'],
     costrouting: ['成本与路由', '维护模型价格和质量分，查看 Token 费用并获得模型路由建议。'],
     reflection: ['反思规则', '集中维护最终审查规则、查看修改、拦截和降级记录。'],
