@@ -66,6 +66,7 @@ def _login_redirect(path: str) -> RedirectResponse:
 # like an unrelated conversation, so return an explicit embedded permission notice.
 _EMBEDDED_PLATFORM_ADMIN_PAGES = {
     "/admin/model-config",
+    "/admin/backups",
     "/admin/langfuse-config",
     "/admin/sso-config",
     "/admin/email-notifications",

@@ -101,6 +101,7 @@ _PLATFORM_ONLY_ADMIN_PREFIXES = (
     "/api/stats",
     "/api/prompt/",
     "/admin/model-config",
+    "/admin/backups",
     "/admin/langfuse-config",
     "/admin/sso-config",
     "/admin/email-notifications",

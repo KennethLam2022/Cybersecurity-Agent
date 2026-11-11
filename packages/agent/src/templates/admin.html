@@ -335,6 +335,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <button class="tab-item" data-group="operations" data-tab="workspaces" role="tab" aria-selected="false" aria-controls="tabWorkspaces" onclick="switchTab('workspaces')">组织工作区</button>
       <button class="tab-item" data-group="operations" data-tab="notifications" role="tab" aria-selected="false" aria-controls="tabNotifications" onclick="switchTab('notifications')">通知中心</button>
       <button class="tab-item" data-group="operations" data-tab="monitoring" role="tab" aria-selected="false" aria-controls="tabMonitoring" onclick="switchTab('monitoring')">系统监控</button>
+      <button class="tab-item" data-group="operations" data-tab="backups" role="tab" aria-selected="false" aria-controls="tabBackups" onclick="switchTab('backups')" style="display:none">备份管理</button>
       <button class="tab-item" data-group="knowledge" data-tab="documents" role="tab" aria-selected="false" aria-controls="tabDocuments" onclick="switchTab('documents')" style="display:none">文档入库</button>
       <button class="tab-item" data-group="knowledge" data-tab="indexing" role="tab" aria-selected="false" aria-controls="tabIndexing" onclick="switchTab('indexing')" style="display:none">入库质量</button>
       <button class="tab-item" data-group="knowledge" data-tab="gaps" role="tab" aria-selected="false" aria-controls="tabGaps" onclick="switchTab('gaps')" style="display:none">知识缺口</button>
@@ -469,6 +470,9 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <div id="monitoringEvents" class="extension-list"></div>
       <div class="extension-toolbar" style="margin-top:18px"><strong>问题报告与审阅预案</strong><select id="monitoringReportState" class="workflow-run-input" onchange="loadMonitoringReports()"><option value="">全部</option><option value="pending_review">待审阅</option><option value="review_plan">审阅预案</option><option value="pending_approval">待评审</option><option value="approved">已通过</option><option value="rejected">已拒绝</option></select></div>
       <div id="monitoringReports" class="extension-list"></div>
+    </div>
+    <div class="tab-content" id="tabBackups" style="padding:0;background:transparent;overflow:hidden;height:calc(100vh - 180px)">
+      <iframe id="backupFrame" src="/admin/backups" style="width:100%;height:100%;border:none;display:block;background:transparent" loading="lazy"></iframe>
     </div>
     <div class="tab-content" id="tabSkills">
       <div class="test-purpose"><strong>本页面的目的：</strong>登记、审核并按工作区与 Agent 授权受控 Skill。登记本身不会安装软件或执行代码；只有审核通过且显式授权的能力才可由后续受控执行器使用。</div>
@@ -1300,7 +1304,7 @@ async function logoutAdmin(button) {
 }
 const platformOnlyTabs = new Set(['detail','overview','performance','indexing','gaps',
   'modelconfig','costrouting','reflection','prompt','langfuseconfig','externalretrieval','sso',
-  'emailnotifications','retrieval','e2e','agentEval']);
+  'emailnotifications','retrieval','e2e','agentEval','backups']);
 
 async function loadAdminPrincipal() {
   const response = await fetch('/api/auth/me');
@@ -1841,7 +1845,7 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch]));
 }
 const primaryGroupTabs = {
-  operations: ['detail', 'overview', 'performance', 'workspaces', 'notifications', 'monitoring'],
+  operations: ['detail', 'overview', 'performance', 'workspaces', 'notifications', 'monitoring', 'backups'],
   knowledge: ['documents', 'indexing', 'gaps', 'graph', 'knowledgeBases'],
   configuration: ['modelconfig', 'costrouting', 'reflection', 'prompt', 'langfuseconfig', 'externalretrieval', 'externalapi', 'webhooks', 'sso', 'emailnotifications'],
   capabilities: ['skills', 'mcp', 'workflows'],
@@ -1849,13 +1853,13 @@ const primaryGroupTabs = {
 };
 let adminLanguage = localStorage.getItem('securenexus_language') === 'en-US' ? 'en-US' : 'zh-CN';
 const adminTabLabelsEn = {
-  detail:'Conversation Detail', overview:'Operations Overview', performance:'Performance', workspaces:'Users & Workspaces', notifications:'Notifications', monitoring:'System Monitoring',
+  detail:'Conversation Detail', overview:'Operations Overview', performance:'Performance', workspaces:'Users & Workspaces', notifications:'Notifications', monitoring:'System Monitoring', backups:'Backup Management',
   documents:'Document Ingestion', indexing:'Ingestion Quality', gaps:'Knowledge Gaps', graph:'Knowledge Graph', knowledgeBases:'Knowledge Base Governance',
   modelconfig:'Backend Models', costrouting:'Cost & Routing', reflection:'Reflection Rules', prompt:'Prompts & Versions', langfuseconfig:'Langfuse Observability', externalretrieval:'External Retrieval', externalapi:'Open API', webhooks:'Webhooks', sso:'SSO / Enterprise Identity', emailnotifications:'Email Notifications',
   skills:'Skills', mcp:'MCP', workflows:'Workflows', retrieval:'Retrieval Quality', e2e:'End-to-End Quality', agentEval:'Agent Evaluation',
 };
 const tabLabelsZh = {
-  detail:'对话详情', overview:'概览看板', performance:'性能看板', workspaces:'用户与工作区', notifications:'通知中心', monitoring:'系统监控',
+  detail:'对话详情', overview:'概览看板', performance:'性能看板', workspaces:'用户与工作区', notifications:'通知中心', monitoring:'系统监控', backups:'备份管理',
   documents:'文档入库', indexing:'入库质量', gaps:'知识缺口', graph:'知识图谱', knowledgeBases:'知识库治理', modelconfig:'后端模型', costrouting:'成本与路由', reflection:'反思规则', prompt:'Prompt 与版本', langfuseconfig:'Langfuse 观测', externalretrieval:'联网检索', externalapi:'开放 API', webhooks:'Webhook', sso:'SSO / 企业身份', emailnotifications:'邮件通知', skills:'Skill', mcp:'MCP', workflows:'工作流', retrieval:'检索质量', e2e:'综合质量', agentEval:'Agent 评测',
 };
 const adminTabContextEn = {
@@ -1865,6 +1869,7 @@ const adminTabContextEn = {
   workspaces:['Users & Workspaces','Manage organizations, users, and Agents while preserving authorization boundaries.'],
   notifications:['Notifications','Handle workspace events, approvals, evaluations, ingestion jobs, and security alerts.'],
   monitoring:['System Monitoring','Review metadata-only events, issue reports, and administrator-approved change plans.'],
+  backups:['Backup Management','Create and verify backups; restoration overwrites current application and RAG data.'],
   documents:['Document Ingestion','Upload documents, confirm Profiles, and manage knowledge-base contents.'],
   indexing:['Ingestion Quality','Inspect pipeline success, vector growth, and failure records.'],
   gaps:['Knowledge Gaps','Cluster unanswered questions from low scores, refreshes, corrections, and missing sources.'],
@@ -1928,6 +1933,7 @@ function switchTab(name) {
     workspaces: ['用户与工作区', '统一管理组织、用户与 Agent，并为数据隔离和后续能力授权提供边界。'],
     notifications: ['通知中心', '集中处理工作区事件、审批、评测、入库和安全告警。'],
     monitoring: ['系统监控', '查看元数据监控事件、问题报告和人工审阅预案；本页不自动执行变更。'],
+    backups: ['备份管理', '创建并校验备份；恢复会覆盖当前应用数据库与 RAG 数据。'],
     documents: ['文档入库', '上传、确认 Profile，并管理已进入知识库的文档。'],
     indexing: ['入库质量', '检查处理管道成功率、向量库增长与失败记录。'],
     gaps: ['知识缺口', '从低分、刷新、纠错与无来源回答中聚类高频未答好问题，并生成待补资料任务。'],

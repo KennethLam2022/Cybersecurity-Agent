@@ -95,6 +95,15 @@ def test_admin_has_a_dedicated_login_entry_and_admin_only_api():
     assert "/api/auth/admin-login" in page
 
 
+def test_backup_page_is_platform_admin_only_and_has_a_dedicated_route():
+    auth = (ROOT / "packages" / "agent" / "src" / "auth.py").read_text(encoding="utf-8")
+    main = (ROOT / "packages" / "agent" / "src" / "main.py").read_text(encoding="utf-8")
+    routes = (ROOT / "packages" / "agent" / "src" / "routes_admin_pages.py").read_text(encoding="utf-8")
+    assert '"/admin/backups"' in auth
+    assert '"/admin/backups"' in main
+    assert '@router.get("/admin/backups"' in routes
+
+
 def test_chat_client_redirects_when_the_browser_session_is_missing():
     page = (ROOT / "packages" / "agent" / "src" / "templates" / "index.html").read_text(encoding="utf-8")
     assert "const authenticated = await refreshAccount()" in page
