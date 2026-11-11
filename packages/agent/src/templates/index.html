@@ -77,7 +77,8 @@
             </div>
         </div>
 
-        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-messages" id="chatMessages" role="log" aria-label="对话消息" aria-live="off" aria-relevant="additions"></div>
+        <div id="chatResponseStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
         <div class="chat-input-area">
             <div id="warningBanner" class="warning-banner" style="display:none;">
@@ -927,6 +928,7 @@ async function sendMessage() {
     let assistantMessageId = null;
     let answerCompleted = false;
     let newConvId = currentConvId;
+    document.getElementById('chatResponseStatus').textContent = '助手正在生成回答';
 
     function renderCurrentBubble() {
         const reasoningHtml = reasoningContent ? renderReasoning(reasoningContent) : '';
@@ -1065,6 +1067,7 @@ async function sendMessage() {
     isLoading = false;
     document.getElementById('sendBtn').disabled = false;
     document.getElementById('statusText').textContent = '就绪';
+    document.getElementById('chatResponseStatus').textContent = answerCompleted ? '助手回答完成' : '助手回答未能完成';
     scrollToBottom();
 }
 
