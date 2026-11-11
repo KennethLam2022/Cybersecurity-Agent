@@ -80,3 +80,14 @@ def test_admin_knowledge_navigation_links_to_governance_page():
 
     assert 'data-tab="knowledgeBases" role="link" onclick="location.href=\'/admin/knowledge-bases\'"' in content
     assert "'knowledgeBases']" in content
+
+
+def test_knowledge_base_risky_actions_require_targeted_confirmation():
+    content = (Path(__file__).parents[1] / "static" / "knowledge_base_governance.html").read_text(encoding="utf-8")
+    set_status = content[content.index("async function setKbStatus"):content.index("async function setDocStatus")]
+    revoke = next(line for line in content.splitlines() if "async function revokeAccess" in line)
+
+    assert "if(!confirm(`确认${action}知识库 ${id}" in set_status
+    assert "此操作会改变该知识库的可用性" in set_status
+    assert "if(!confirm(`确认撤销知识库 ${id}" in revoke
+    assert "将失去该知识库访问权" in revoke
