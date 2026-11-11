@@ -73,3 +73,10 @@ def test_knowledge_base_governance_page_exposes_sources_and_lifecycle_controls()
     assert "rollbackDocVersion" in content
     assert "/api/admin/documents/expire" in content
     assert "/grants" in content
+
+
+def test_admin_knowledge_navigation_links_to_governance_page():
+    content = (Path(__file__).parents[1] / "templates" / "admin.html").read_text(encoding="utf-8")
+
+    assert 'data-tab="knowledgeBases" role="link" onclick="location.href=\'/admin/knowledge-bases\'"' in content
+    assert "'knowledgeBases']" in content
