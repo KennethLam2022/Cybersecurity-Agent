@@ -20,6 +20,32 @@ def test_document_profile_ui_supports_reclassification_and_history():
     assert "/api/documents/profile-migration/history" in content
 
 
+def test_document_preview_escapes_untrusted_metadata_in_html_contexts():
+    content = (Path(__file__).parents[1] / "static" / "data_preview.html").read_text(encoding="utf-8")
+    render = content[content.index("function render() {"):content.index("function filterFiles() {")]
+
+    for expression in (
+        "escHtml(f.id)",
+        "escHtml(f.ext.toUpperCase())",
+        "escHtml(f.name)",
+        "escHtml(f.path || '')",
+        "escHtml(statusLabel(f.state, f.isDup))",
+        "escHtml(f.dedupReason || '')",
+        "escHtml(f.dedupLayer)",
+    ):
+        assert expression in render, expression
+
+    for unsafe_expression in (
+        "data-id=\"${f.id}\"",
+        "data-id=\"${f.id}",
+        "<div class=\"fname\">${f.name}</div>",
+        "<div class=\"fpath\" style=\"font-size:11px;color:#6e6e73;\">${f.path || ''}</div>",
+        "title=\"${f.dedupReason || ''}\"",
+        "${statusLabel(f.state, f.isDup)}",
+    ):
+        assert unsafe_expression not in render, unsafe_expression
+
+
 def test_frontend_generation_flow_requires_outline_confirmation():
     content = (Path(__file__).parents[1] / "templates" / "index.html").read_text(encoding="utf-8")
 
