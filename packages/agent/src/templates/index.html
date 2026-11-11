@@ -225,10 +225,22 @@ async function refreshAccount() {
         document.getElementById('languageSelect').value = responseLanguage;
         label.textContent = data.display_name || data.email || '已登录工作区';
         const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
-        workspaceSelect.innerHTML = workspaces.map(workspace => `<option value="${escHtml(workspace.id)}" ${workspace.id === data.tenant_id ? 'selected' : ''}>${escHtml(workspace.name)}</option>`).join('');
+        workspaceSelect.replaceChildren(...workspaces.map(workspace => {
+            const option = document.createElement('option');
+            option.value = workspace.id;
+            option.textContent = workspace.name;
+            option.selected = workspace.id === data.tenant_id;
+            return option;
+        }));
         workspaceSelect.style.display = workspaces.length > 1 ? '' : 'none';
         const agents = Array.isArray(data.agents) ? data.agents : [];
-        agentSelect.innerHTML = agents.map(agent => `<option value="${escHtml(agent.id)}" ${agent.id === data.agent_id ? 'selected' : ''}>${escHtml(agent.name)}</option>`).join('');
+        agentSelect.replaceChildren(...agents.map(agent => {
+            const option = document.createElement('option');
+            option.value = agent.id;
+            option.textContent = agent.name;
+            option.selected = agent.id === data.agent_id;
+            return option;
+        }));
         agentSelect.style.display = agents.length > 1 ? '' : 'none';
         document.getElementById('memorySettings').style.display = '';
         const memoryResp = await fetch('/api/memories');

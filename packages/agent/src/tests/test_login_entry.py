@@ -119,3 +119,22 @@ def test_password_policy_is_enforced_server_side_and_shown_in_forms():
     assert "包含大写字母、小写字母和数字" in memory
     assert "passwordConfirm" in login
     assert "passwordConfirm" in setup
+
+
+def test_account_initialization_escapes_workspace_and_agent_options():
+    page = (ROOT / "packages" / "agent" / "src" / "templates" / "index.html").read_text(encoding="utf-8")
+    refresh_account = page.split("async function refreshAccount() {", 1)[1].split(
+        "\nfunction notificationSeverityText", 1
+    )[0]
+
+    assert "workspaceSelect.replaceChildren(...workspaces.map(workspace => {" in refresh_account
+    assert "option.value = workspace.id" in refresh_account
+    assert "option.textContent = workspace.name" in refresh_account
+    assert "option.selected = workspace.id === data.tenant_id" in refresh_account
+    assert "agentSelect.replaceChildren(...agents.map(agent => {" in refresh_account
+    assert "option.value = agent.id" in refresh_account
+    assert "option.textContent = agent.name" in refresh_account
+    assert "option.selected = agent.id === data.agent_id" in refresh_account
+    assert "fetch('/api/memories')" in refresh_account
+    assert "await refreshNotificationBadge()" in refresh_account
+    assert "escHtml(" not in refresh_account
