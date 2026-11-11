@@ -100,6 +100,18 @@ async def admin_knowledge_bases():
     return HTMLResponse("<h1>页面未找到</h1>")
 
 
+@router.get("/admin/backups", response_class=HTMLResponse, include_in_schema=False)
+async def admin_backups():
+    """Platform administrator backup lifecycle page."""
+    html_path = _STATIC / "admin_backups.html"
+    if html_path.exists():
+        return HTMLResponse(
+            html_path.read_text(encoding="utf-8"),
+            headers={"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"},
+        )
+    return HTMLResponse("<h1>页面未找到</h1>", status_code=500)
+
+
 @router.get("/embed", response_class=HTMLResponse, include_in_schema=False)
 async def embedded_chat():
     """受控嵌入式聊天页面；只接受短期 Embed Token，不接收管理凭证。"""

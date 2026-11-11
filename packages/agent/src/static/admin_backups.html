@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>安枢 · 备份管理</title>
+  <style>
+    :root{font-family:system-ui,"Microsoft YaHei",sans-serif;color:#202124;background:#f5f5f7}
+    *{box-sizing:border-box}body{margin:0;padding:20px}.wrap{max-width:1100px;margin:auto}
+    h1{font-size:20px;margin:0 0 6px}.hint{color:#5f6368;font-size:13px;line-height:1.5}
+    .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:16px 0}
+    button{padding:7px 11px;border:1px solid #c8cbd0;border-radius:5px;background:#fff;cursor:pointer}
+    button.primary{background:#1769aa;color:#fff;border-color:#1769aa}button.danger{color:#a12622}
+    button:disabled{opacity:.55;cursor:wait}.status{min-height:20px;color:#495057;font-size:12px}
+    .table-wrap{overflow:auto;background:#fff;border:1px solid #d9dce1;border-radius:6px}
+    table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;padding:10px;border-bottom:1px solid #eceef0;font-size:12px}
+    th{background:#f7f8fa;color:#4e5661}td code{overflow-wrap:anywhere}.valid{color:#157347}.invalid{color:#b42318}
+    .empty{padding:24px;text-align:center;color:#5f6368}.overlay{position:fixed;inset:0;background:#0007;display:grid;place-items:center;padding:16px;z-index:2}
+    .dialog{width:min(540px,100%);background:#fff;border-radius:7px;padding:20px;box-shadow:0 12px 36px #0003}
+    .dialog h2{font-size:17px;margin:0 0 10px}.dialog p{font-size:13px;line-height:1.55;color:#444}.dialog label{display:block;font-size:12px;margin:14px 0 5px}
+    .dialog input{width:100%;padding:8px;border:1px solid #c8cbd0;border-radius:5px;font:inherit}
+    .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+    [hidden]{display:none!important}
+    @media(max-width:600px){body{padding:12px}.toolbar{align-items:stretch}.toolbar button{flex:1}}
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <h1>备份管理</h1>
+  <p class="hint">备份包含应用数据库、清洗后文档和向量索引。恢复会覆盖这些当前数据，并在恢复前自动创建保护性备份。</p>
+  <div class="toolbar"><button id="refreshButton" onclick="loadBackups()">刷新清单</button><button id="createButton" class="primary" onclick="createBackup()">创建备份</button><span id="status" class="status" role="status" aria-live="polite"></span></div>
+  <div id="backupList" class="table-wrap"><div class="empty">正在加载备份清单...</div></div>
+</main>
+<div id="restoreDialog" class="overlay" hidden>
+  <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="restoreTitle">
+    <h2 id="restoreTitle">确认恢复备份</h2>
+    <p id="restoreImpact"></p>
+    <p>取消不会执行恢复。确认前请确保已了解数据覆盖范围。</p>
+    <label for="restoreConfirmation">输入备份 ID 以确认</label>
+    <input id="restoreConfirmation" autocomplete="off">
+    <div class="actions"><button onclick="closeRestoreDialog()">取消</button><button id="confirmRestoreButton" class="danger" onclick="confirmRestore()">确认恢复</button></div>
+  </section>
+</div>
+<script>
+let selectedBackup = null;
+let busy = false;
+const api = async (url, options = {}) => {
+  const csrf = (document.cookie.match(/(?:^|; )securenexus_admin_csrf=([^;]+)/) || [])[1];
+  const headers = {...(options.headers || {})};
+  if (csrf) headers['X-CSRF-Token'] = decodeURIComponent(csrf);
+  const response = await fetch(url, {...options, headers});
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || `请求失败 (${response.status})`);
+  return data;
+};
+function setBusy(value) {
+  busy = value;
+  document.querySelectorAll('.toolbar button').forEach(button => { button.disabled = value; });
+  document.getElementById('confirmRestoreButton').disabled = value || !selectedBackup || document.getElementById('restoreConfirmation').value !== selectedBackup;
+}
+async function loadBackups() {
+  const list = document.getElementById('backupList');
+  list.innerHTML = '<div class="empty">正在加载备份清单...</div>';
+  try {
+    const data = await api('/api/admin/backups');
+    const items = data.items || [];
+    list.innerHTML = items.length ? `<table><thead><tr><th>备份 ID</th><th>完整性</th><th>文件数</th><th>已校验</th><th>操作</th></tr></thead><tbody>${items.map(item => `<tr><td><code>${escapeHtml(item.id)}</code></td><td class="${item.valid ? 'valid' : 'invalid'}">${item.valid ? '有效' : '校验失败'}</td><td>${Number(item.file_count) || 0}</td><td>${Number(item.checked_files) || 0}</td><td><button data-action="verify" data-backup-id="${escapeHtml(item.id)}">重新校验</button> <button class="danger" data-action="restore" data-backup-id="${escapeHtml(item.id)}" ${item.valid ? '' : 'disabled'}>恢复</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">暂无备份</div>';
+    document.getElementById('status').textContent = `共 ${items.length} 个备份`;
+  } catch (error) {
+    list.innerHTML = '<div class="empty">备份清单加载失败</div>';
+    document.getElementById('status').textContent = error.message;
+  }
+}
+function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])); }
+async function createBackup() {
+  if (busy) return;
+  setBusy(true);
+  document.getElementById('status').textContent = '正在创建备份...';
+  try {
+    const result = await api('/api/admin/backups', {method:'POST'});
+    document.getElementById('status').textContent = `备份已创建：${result.id}，共 ${result.file_count} 个文件`;
+    await loadBackups();
+  } catch (error) { document.getElementById('status').textContent = `创建失败：${error.message}`; }
+  finally { setBusy(false); }
+}
+async function verifyBackup(id) {
+  if (busy) return;
+  setBusy(true);
+  document.getElementById('status').textContent = `正在校验 ${id}...`;
+  try {
+    const result = await api('/api/admin/backups/verify', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({backup_id:id})});
+    document.getElementById('status').textContent = result.valid ? `${id} 校验通过，共检查 ${result.checked_files} 个文件` : `${id} 校验失败：${(result.errors || []).join('；')}`;
+    await loadBackups();
+  } catch (error) { document.getElementById('status').textContent = `校验失败：${error.message}`; }
+  finally { setBusy(false); }
+}
+function openRestoreDialog(id) {
+  selectedBackup = id;
+  document.getElementById('restoreImpact').textContent = `来源备份：${id}。将覆盖当前应用数据库、RAG_DATA/03_cleaned 和 RAG_DATA/04_vector_store。服务会先创建保护性备份。`;
+  document.getElementById('restoreConfirmation').value = '';
+  document.getElementById('restoreDialog').hidden = false;
+  document.getElementById('restoreConfirmation').focus();
+}
+function closeRestoreDialog() {
+  if (busy) return;
+  document.getElementById('restoreDialog').hidden = true;
+  selectedBackup = null;
+}
+async function confirmRestore() {
+  if (busy || !selectedBackup || document.getElementById('restoreConfirmation').value !== selectedBackup) return;
+  setBusy(true);
+  document.getElementById('status').textContent = `正在恢复 ${selectedBackup}，请勿关闭页面...`;
+  try {
+    const result = await api('/api/admin/backups/restore', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({backup_id:selectedBackup})});
+    document.getElementById('restoreDialog').hidden = true;
+    selectedBackup = null;
+    await loadBackups();
+    document.getElementById('status').textContent = `恢复完成；保护性备份：${result.protection_backup || '已创建'}`;
+  } catch (error) { document.getElementById('status').textContent = `恢复失败：${error.message}`; }
+  finally { setBusy(false); }
+}
+document.getElementById('restoreConfirmation').addEventListener('input', event => {
+  document.getElementById('confirmRestoreButton').disabled = busy || event.target.value !== selectedBackup;
+});
+document.getElementById('backupList').addEventListener('click', event => {
+  const button = event.target.closest('button[data-action]');
+  if (!button) return;
+  if (button.dataset.action === 'verify') verifyBackup(button.dataset.backupId);
+  if (button.dataset.action === 'restore') openRestoreDialog(button.dataset.backupId);
+});
+loadBackups();
+</script>
+</body>
+</html>
