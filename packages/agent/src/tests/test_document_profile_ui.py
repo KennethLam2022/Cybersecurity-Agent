@@ -1,4 +1,5 @@
 from pathlib import Path
+from html.parser import HTMLParser
 
 
 def test_document_profile_registry_loads_after_admin_fetch_authentication():
@@ -91,3 +92,48 @@ def test_knowledge_base_risky_actions_require_targeted_confirmation():
     assert "此操作会改变该知识库的可用性" in set_status
     assert "if(!confirm(`确认撤销知识库 ${id}" in revoke
     assert "将失去该知识库访问权" in revoke
+
+
+class _AccessibleControlParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.controls = []
+        self.labels = []
+        self.current_label = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "label":
+            self.current_label = {"for": attrs.get("for"), "controls": []}
+            self.labels.append(self.current_label)
+        if tag in {"input", "select", "textarea"}:
+            control = {"id": attrs.get("id"), "aria": attrs.get("aria-label")}
+            self.controls.append(control)
+            if self.current_label is not None:
+                self.current_label["controls"].append(control)
+
+    def handle_endtag(self, tag):
+        if tag == "label":
+            self.current_label = None
+
+
+def test_knowledge_base_form_controls_have_accessible_names():
+    page = (Path(__file__).parents[1] / "static" / "knowledge_base_governance.html").read_text(encoding="utf-8")
+    parser = _AccessibleControlParser()
+    parser.feed(page)
+    unlabelled = [
+        control for control in parser.controls
+        if not control["aria"] and not any(
+            control in label["controls"] or label["for"] == control["id"]
+            for label in parser.labels
+        )
+    ]
+    assert not unlabelled, unlabelled
+
+
+def test_model_configuration_template_associates_labels_with_controls():
+    page = (Path(__file__).parents[1] / "static" / "admin_model_preview.html").read_text(encoding="utf-8")
+    template = page[page.index("function buildCard(c)"):page.index("// ─── Events")]
+    for field in ("provider", "model", "baseUrl", "apiKey"):
+        assert f'<label for="${{c.id}}-{field}">' in template
+        assert f'id="${{c.id}}-{field}"' in template
