@@ -88,9 +88,6 @@ _ADMIN_ROUTES = [
 PUBLIC_ROUTES = {
     "/", "/login", "/admin/login", "/setup", "/chat",
     "/api/rating",
-    # Profile registry only exposes taxonomy metadata; document content and
-    # all write/migration endpoints remain protected by /api/documents/.
-    "/api/documents/profile-registry",
     "/api/auth/sso/providers",
 }
 

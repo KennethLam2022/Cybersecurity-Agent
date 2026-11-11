@@ -1,18 +1,79 @@
 from auth import is_admin_route
+import asyncio
 from types import SimpleNamespace
 import json
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from governance_store import GovernanceStore
+from identity import ADMIN_SESSION_COOKIE, FRONT_SESSION_COOKIE, session_token_from_request
 from profile_classifier import profile_options
 import routes_api
+import main
 from memory import ConversationMemory
 
 
-def test_profile_registry_metadata_is_readable_without_management_session():
-    assert is_admin_route("/api/documents/profile-registry") is False
+def test_profile_registry_requires_management_session():
+    assert is_admin_route("/api/documents/profile-registry") is True
+
+
+def test_profile_registry_uses_admin_cookie_not_frontend_cookie():
+    request = Request({
+        "type": "http", "method": "GET", "path": "/api/documents/profile-registry",
+        "headers": [(b"cookie", b"securenexus_admin_session=admin-session; securenexus_session=front-session")],
+        "query_string": b"", "server": ("test", 80),
+        "client": ("127.0.0.1", 1),
+    })
+
+    assert session_token_from_request(request) == "admin-session"
+
+
+def test_profile_registry_rejects_frontend_cookie_as_admin_session(monkeypatch):
+    monkeypatch.setenv("ALLOW_LEGACY_LOCAL_WORKSPACE", "0")
+    request = Request({
+        "type": "http", "method": "GET", "path": "/api/documents/profile-registry",
+        "headers": [(b"cookie", b"securenexus_session=front-session")],
+        "query_string": b"", "server": ("test", 80), "client": ("127.0.0.1", 1),
+    })
+
+    assert session_token_from_request(request) == ""
+    with pytest.raises(HTTPException) as exc:
+        from identity import principal_from_request
+        principal_from_request(request, object())
+    assert exc.value.status_code == 401
+
+
+def test_profile_registry_middleware_accepts_admin_session_and_rejects_frontend_session(tmp_path, monkeypatch):
+    memory = ConversationMemory(str(tmp_path / "document-admin-session.db"))
+    user = memory.bootstrap_platform_admin("admin@example.com", "Correct-Horse-30", "Admin")
+    admin_token = memory.create_auth_session(user)
+    monkeypatch.setattr(main.agent, "memory", memory)
+
+    async def check_request(cookie):
+        headers = [(b"accept", b"application/json")]
+        if cookie:
+            headers.append((b"cookie", cookie.encode("ascii")))
+        request = Request({
+            "type": "http", "method": "GET", "path": "/api/documents/profile-registry",
+            "headers": headers, "query_string": b"", "server": ("test", 80),
+            "client": ("127.0.0.1", 1),
+        })
+
+        async def accepted(_request):
+            from starlette.responses import Response
+            return Response(status_code=204)
+
+        return await main.auth_middleware(request, accepted)
+
+    admin_response = asyncio.run(check_request(f"{ADMIN_SESSION_COOKIE}={admin_token}"))
+    frontend_response = asyncio.run(check_request(f"{FRONT_SESSION_COOKIE}={admin_token}"))
+    anonymous_response = asyncio.run(check_request(""))
+
+    assert admin_response.status_code == 204
+    assert frontend_response.status_code == 401
+    assert anonymous_response.status_code == 401
 
 
 def test_document_write_endpoints_remain_protected():
