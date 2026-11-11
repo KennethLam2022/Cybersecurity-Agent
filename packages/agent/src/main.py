@@ -59,7 +59,7 @@ def _wants_html(request: Request) -> bool:
 
 def _login_redirect(path: str) -> RedirectResponse:
     login_path = "/admin/login" if path.startswith("/admin") else "/login"
-    return RedirectResponse(url=login_path + "?next=" + urllib.parse.quote(path, safe="/?=&"), status_code=303)
+    return _with_html_csp(RedirectResponse(url=login_path + "?next=" + urllib.parse.quote(path, safe="/?=&"), status_code=303))
 
 
 # These pages load inside admin tabs. Redirecting them to chat makes the frame look
@@ -71,6 +71,26 @@ _EMBEDDED_PLATFORM_ADMIN_PAGES = {
     "/admin/sso-config",
     "/admin/email-notifications",
 }
+
+
+_HTML_CSP = "; ".join((
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+))
+
+
+def _with_html_csp(response, path=""):
+    if response.headers.get("content-type", "").lower().startswith("text/html"):
+        frame_policy = "" if path == "/embed" else "; frame-ancestors 'self'"
+        response.headers["Content-Security-Policy"] = _HTML_CSP + frame_policy
+    return response
 
 
 def _embedded_admin_forbidden(path: str) -> HTMLResponse | None:
@@ -102,6 +122,11 @@ app.include_router(api_agent_eval_router)
 
 # ---- 全局认证中间件 ----
 @app.middleware("http")
+async def csp_middleware(request: Request, call_next):
+    return _with_html_csp(await call_next(request), request.url.path)
+
+
+@app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """Authenticate administration through individual user sessions and RBAC."""
     unsafe = request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
@@ -130,8 +155,8 @@ async def auth_middleware(request: Request, call_next):
                 if _wants_html(request):
                     embedded_forbidden = _embedded_admin_forbidden(request.url.path)
                     if embedded_forbidden is not None:
-                        return embedded_forbidden
-                    return RedirectResponse(url="/chat?forbidden=admin", status_code=303)
+                        return _with_html_csp(embedded_forbidden)
+                    return _with_html_csp(RedirectResponse(url="/chat?forbidden=admin", status_code=303))
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "该平台级管理功能仅限平台管理员"},

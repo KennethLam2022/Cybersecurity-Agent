@@ -8,6 +8,72 @@ import routes_api
 import app_state
 
 
+def test_html_csp_is_applied_to_pages_and_auth_redirects():
+    from fastapi.testclient import TestClient
+    import main
+
+    with TestClient(main.app, follow_redirects=False) as client:
+        html_responses = [
+            client.get(path, headers={"accept": "text/html"})
+            for path in ("/login", "/register", "/setup", "/admin/login")
+        ]
+        protected = client.get("/admin", headers={"accept": "text/html"})
+
+    assert all(response.headers.get("content-security-policy") for response in html_responses)
+    assert protected.status_code == 303
+    assert protected.headers["location"].startswith("/admin/login?")
+
+
+def test_csp_limits_scripts_and_preserves_embed_iframe_support():
+    from fastapi.responses import HTMLResponse
+    from starlette.requests import Request
+    import asyncio
+    import main
+
+    async def html_response(_request):
+        return HTMLResponse("<h1>Page</h1>")
+
+    def request(path):
+        return Request({
+            "type": "http", "method": "GET", "path": path, "headers": [],
+            "query_string": b"", "server": ("test", 80), "client": ("127.0.0.1", 1),
+        })
+
+    policy = asyncio.run(main.csp_middleware(request("/admin"), html_response)).headers[
+        "content-security-policy"
+    ]
+    embed_policy = asyncio.run(main.csp_middleware(request("/embed"), html_response)).headers[
+        "content-security-policy"
+    ]
+    assert "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net" in policy
+    assert "object-src 'none'" in policy and "base-uri 'self'" in policy
+    assert "frame-ancestors 'self'" in policy
+    assert "frame-ancestors" not in embed_policy
+    assert "*" not in policy
+
+
+def test_csp_does_not_change_json_responses_or_allow_unapproved_chart_cdns():
+    from fastapi.responses import JSONResponse
+    from starlette.requests import Request
+    import asyncio
+    import main
+
+    request = Request({
+        "type": "http", "method": "GET", "path": "/api/status", "headers": [],
+        "query_string": b"", "server": ("test", 80), "client": ("127.0.0.1", 1),
+    })
+
+    async def json_response(_request):
+        return JSONResponse({"ok": True})
+
+    response = asyncio.run(main.csp_middleware(request, json_response))
+    html = (Path(__file__).parents[1] / "templates" / "admin.html").read_text(encoding="utf-8")
+    assert "content-security-policy" not in response.headers
+    assert "cdn.jsdelivr.net/npm/echarts@" in html
+    assert "cdn.jsdelivr.net/npm/echarts-wordcloud@" in html
+    assert "unpkg.com" not in html and "cdnjs.cloudflare.com" not in html
+
+
 def test_upload_filename_rejects_absolute_and_parent_paths():
     with pytest.raises(HTTPException):
         routes_api._safe_upload_filename("..\\..\\secrets.txt")

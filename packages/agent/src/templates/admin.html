@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>安枢 SecureNexus · 管理后台</title>
-<script>var _eChartLoaded=false;var _eChartLoading=false;function loadECharts(){if(_eChartLoading)return Promise.resolve();_eChartLoading=true;return new Promise(function(r){if(typeof echarts!=='undefined'&&_eChartLoaded)return r();var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js';s.onload=function(){_eChartLoaded=true;var s2=document.createElement('script');s2.src='https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js';s2.onload=r;s2.onerror=r;document.head.appendChild(s2)};s.onerror=function(){var s3=document.createElement('script');s3.src='https://unpkg.com/echarts@5/dist/echarts.min.js';s3.onload=function(){_eChartLoaded=true;var s4=document.createElement('script');s4.src='https://unpkg.com/echarts-wordcloud@2/dist/echarts-wordcloud.min.js';s4.onload=r;s4.onerror=r;document.head.appendChild(s4)};s3.onerror=function(){var s5=document.createElement('script');s5.src='https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js';s5.onload=function(){_eChartLoaded=true;r()};s5.onerror=function(){console.warn('ECharts CDN all failed, charts disabled');r()};document.head.appendChild(s5)};document.head.appendChild(s3)};document.head.appendChild(s)})}loadECharts();</script>
+<script>var _eChartLoaded=false;var _eChartLoading=false;function loadECharts(){if(_eChartLoading)return Promise.resolve();_eChartLoading=true;return new Promise(function(r){if(typeof echarts!=='undefined'&&_eChartLoaded)return r();var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js';s.onload=function(){_eChartLoaded=true;var s2=document.createElement('script');s2.src='https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js';s2.onload=r;s2.onerror=r;document.head.appendChild(s2)};s.onerror=function(){console.warn('ECharts CDN failed, charts disabled');r()};document.head.appendChild(s)})}loadECharts();</script>
 <style>
 :root{--bg:#f5f5f7;--card:#fff;--t:#1d1d1f;--t1:#1d1d1f;--t2:#6e6e73;--b:#e5e5ea;--b2:#d1d1d6;--bg1:#fff;--a:#0071e3;--accent:#0071e3;--g:#34c759;--y:#ff9500;--r:#ff3b30;--f:-apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -1328,6 +1328,8 @@ async function loadAdminPrincipal() {
     const next = Array.from(document.querySelectorAll('.tab-item')).find(tab => !tab.classList.contains('role-hidden'));
     if (next) switchTab(next.dataset.tab);
   }
+  const requestedTab = new URLSearchParams(location.search).get('tab');
+  if (requestedTab) switchTab(requestedTab);
 }
 function currentAdminActor() { return adminPrincipal.user_id || 'platform_admin'; }
 let currentConvId = null;
@@ -1920,6 +1922,8 @@ function switchTab(name) {
     showToast('该配置仅限平台管理员访问', 'error');
     return;
   }
+  const target = document.querySelector(`.tab-item[data-tab="${CSS.escape(name)}"]`);
+  if (!target || target.classList.contains('role-hidden')) name = 'detail';
   syncPrimaryGroup(groupForTab(name));
   document.querySelectorAll('.tab-item').forEach(t => {
     const active = t.dataset.tab === name;
@@ -1927,6 +1931,11 @@ function switchTab(name) {
     t.setAttribute('aria-selected', String(active));
   });
   document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab' + name.charAt(0).toUpperCase() + name.slice(1)));
+  if (new URLSearchParams(location.search).get('tab') !== name) {
+    const url = new URL(location.href);
+    url.searchParams.set('tab', name);
+    history.replaceState(null, '', url);
+  }
   const tabContext = {
     detail: ['对话详情', '查看单个用户对话、引用来源与安全处置记录。'],
     overview: ['运营概览', '先看服务健康、用户反馈与最近的整体质量变化。'],
