@@ -722,38 +722,38 @@
         const confirmCls = f.profileConfirmed ? 'ok' : 'need';
         const confirmText = f.profileConfirmed ? '已确认' : '确认归属';
 
-        html += `<div class="file-row" data-id="${f.id}">
+        html += `<div class="file-row" data-id="${escHtml(f.id)}">
           <div class="col-check">
-            <input type="checkbox" class="file-check" data-id="${f.id}" ${checked} ${disabled}>
+            <input type="checkbox" class="file-check" data-id="${escHtml(f.id)}" ${checked} ${disabled}>
           </div>
           <div class="col-file">
-            <div class="ext-badge ${getExtClass(f.ext)}">${f.ext.toUpperCase()}</div>
+            <div class="ext-badge ${getExtClass(f.ext)}">${escHtml(f.ext.toUpperCase())}</div>
             <div>
-              <div class="fname">${f.name}</div>
-              <div class="fpath" style="font-size:11px;color:#6e6e73;">${f.path || ''}</div>
+              <div class="fname">${escHtml(f.name)}</div>
+              <div class="fpath" style="font-size:11px;color:#6e6e73;">${escHtml(f.path || '')}</div>
             </div>
           </div>
           <div class="col-size">${f.size ? fmtSize(f.size) : '-'}</div>
           <div class="col-source">
             <div class="profile-box">
-              <select class="profile-select" data-id="${f.id}" ${profileDisabled}>${profileOptionsHtml}</select>
+              <select class="profile-select" data-id="${escHtml(f.id)}" ${profileDisabled}>${profileOptionsHtml}</select>
               <div class="profile-row">
-                <input class="category-input" data-id="${f.id}" value="${escHtml(selectedCategory)}" ${profileDisabled}>
-                ${!isPhase2 ? `<button class="profile-confirm ${confirmCls}" data-id="${f.id}" title="${escHtml(f.profileReason || '')}">${confirmText}</button>` : `<span class="profile-confirm ${confirmCls}">${confirmText}</span>`}
+                <input class="category-input" data-id="${escHtml(f.id)}" value="${escHtml(selectedCategory)}" ${profileDisabled}>
+                ${!isPhase2 ? `<button class="profile-confirm ${confirmCls}" data-id="${escHtml(f.id)}" title="${escHtml(f.profileReason || '')}">${confirmText}</button>` : `<span class="profile-confirm ${confirmCls}">${confirmText}</span>`}
               </div>
-              <select class="visibility-select" data-id="${f.id}" ${profileDisabled} style="margin-top:5px;width:100%;font-size:11px"><option value="public" ${visibility === 'public' ? 'selected' : ''}>公共网络安全知识库</option><option value="tenant" ${visibility === 'tenant' ? 'selected' : ''}>当前工作区共享</option><option value="private" ${visibility === 'private' ? 'selected' : ''}>仅当前用户与 Agent</option></select>
+              <select class="visibility-select" data-id="${escHtml(f.id)}" ${profileDisabled} style="margin-top:5px;width:100%;font-size:11px"><option value="public" ${visibility === 'public' ? 'selected' : ''}>公共网络安全知识库</option><option value="tenant" ${visibility === 'tenant' ? 'selected' : ''}>当前工作区共享</option><option value="private" ${visibility === 'private' ? 'selected' : ''}>仅当前用户与 Agent</option></select>
               <div class="profile-meta">${escHtml(getProfileLabel(selectedProfile))} · ${confidence}</div>
               ${f.profileReason ? `<div class="profile-meta" title="${escHtml(f.profileReason)}">${escHtml(f.profileReason).slice(0, 42)}</div>` : ''}
             </div>
           </div>
           <div class="col-status">
-            <span class="status-badge ${cls}" ${showConflict ? `title="${f.dedupReason || ''}"` : ''}>
+            <span class="status-badge ${cls}" ${showConflict ? `title="${escHtml(f.dedupReason || '')}"` : ''}>
               <span class="dot ${statusDot(f.state, f.isDup)} ${dotPulse}"></span>
-              ${statusLabel(f.state, f.isDup)}
-              ${showConflict && f.dedupLayer ? `<span style="font-size:9px;opacity:0.6;margin-left:2px;">L${f.dedupLayer}</span>` : ''}
+              ${escHtml(statusLabel(f.state, f.isDup))}
+              ${showConflict && f.dedupLayer ? `<span style="font-size:9px;opacity:0.6;margin-left:2px;">L${escHtml(f.dedupLayer)}</span>` : ''}
             </span>
             ${showConflict ? `
-              <select class="conflict-select" data-id="${f.id}" style="margin-left:6px;">
+              <select class="conflict-select" data-id="${escHtml(f.id)}" style="margin-left:6px;">
                 <option value="overwrite" ${f.conflictAction === 'overwrite' ? 'selected' : ''}>覆盖旧版</option>
                 <option value="skip" ${f.conflictAction === 'skip' ? 'selected' : ''}>跳过此文件</option>
                 <option value="rename" ${f.conflictAction === 'rename' ? 'selected' : ''}>自动重命名</option>
@@ -761,7 +761,7 @@
             ` : ''}
           </div>
           <div class="col-action">
-            ${!isProcessing ? `<button class="del-btn" data-id="${f.id}" title="移出列表">✕</button>` : ''}
+            ${!isProcessing ? `<button class="del-btn" data-id="${escHtml(f.id)}" title="移出列表">✕</button>` : ''}
           </div>
         </div>`;
       }
