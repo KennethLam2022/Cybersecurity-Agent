@@ -20,6 +20,14 @@
     --danger: #c0392b;
     --radius: 10px;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    --a: var(--accent);
+    --b: var(--border);
+    --f: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, -apple-system, sans-serif;
+    --g: #217a36;
+    --r: var(--danger);
+    --t: var(--text-primary);
+    --t2: var(--text-secondary);
+    --t3: #888;
 }
 
 *, *::before, *::after {
