@@ -58,6 +58,11 @@ RAG_DATA/
 upload_staging/
 MD_Cleaned/
 deploy/
+!deploy/
+deploy/*
+!deploy/linux/
+deploy/linux/*
+!deploy/linux/securenexus.service
 docs/
 .trae/
 .githooks/

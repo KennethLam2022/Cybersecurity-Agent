@@ -136,6 +136,22 @@ cd packages\agent\src
 python main.py
 ```
 
+### Linux（WSL）测试
+
+```bash
+python3 -m venv /tmp/securenexus-test-venv
+/tmp/securenexus-test-venv/bin/python -m pip install pytest -r requirements-docker.txt
+/tmp/securenexus-test-venv/bin/python -m pytest -q
+sed 's/\r$//' scripts/validate-linux-deployment.sh | ROOT_DIR="$PWD" bash
+cp deploy/linux/securenexus.service /tmp/securenexus.service
+chmod 0644 /tmp/securenexus.service
+systemd-analyze verify /tmp/securenexus.service
+```
+
+该流程仅在本机 Linux/WSL 中运行测试，不创建系统账号、不安装或启用后台服务。
+临时复制服务单元是为了避开 Windows 挂载目录的权限映射告警；不会注册或启动服务。
+Nginx、公网入口和 TLS 不属于本项目当前验证范围。
+
 ### 依赖安装
 
 仓库中预处理模块声明了独立依赖：

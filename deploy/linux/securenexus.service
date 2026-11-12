@@ -1,0 +1,28 @@
+[Unit]
+Description=SecureNexus Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=securenexus
+Group=securenexus
+WorkingDirectory=/opt/securenexus
+EnvironmentFile=-/etc/securenexus/securenexus.env
+Environment=PATH=/opt/securenexus/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=APP_ENV=production
+Environment=APP_HOST=127.0.0.1
+Environment=APP_PORT=8000
+Environment=UVICORN_WORKERS=1
+Environment=ALLOW_LEGACY_LOCAL_WORKSPACE=0
+ExecStart=/usr/bin/env bash /opt/securenexus/scripts/start-linux.sh
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
