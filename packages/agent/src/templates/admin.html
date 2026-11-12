@@ -1323,13 +1323,16 @@ async function loadAdminPrincipal() {
   document.querySelectorAll('[data-platform-only]').forEach(element => {
     element.classList.toggle('role-hidden', !isPlatform);
   });
-  const active = document.querySelector('.tab-item.active');
-  if (active && active.classList.contains('role-hidden')) {
-    const next = Array.from(document.querySelectorAll('.tab-item')).find(tab => !tab.classList.contains('role-hidden'));
-    if (next) switchTab(next.dataset.tab);
-  }
   const requestedTab = new URLSearchParams(location.search).get('tab');
-  if (requestedTab) switchTab(requestedTab);
+  if (requestedTab) {
+    switchTab(requestedTab);
+  } else {
+    const active = document.querySelector('.tab-item.active');
+    if (active && active.classList.contains('role-hidden')) {
+      const next = Array.from(document.querySelectorAll('.tab-item')).find(tab => !tab.classList.contains('role-hidden'));
+      if (next) switchTab(next.dataset.tab);
+    }
+  }
 }
 function currentAdminActor() { return adminPrincipal.user_id || 'platform_admin'; }
 let currentConvId = null;
@@ -1920,10 +1923,12 @@ function switchPrimaryGroup(group) {
 function switchTab(name) {
   if (adminPrincipal.authenticated && adminPrincipal.role !== 'platform_admin' && platformOnlyTabs.has(name)) {
     showToast('该配置仅限平台管理员访问', 'error');
-    return;
+    name = document.querySelector('.tab-item:not(.role-hidden)')?.dataset.tab || 'detail';
   }
   const target = document.querySelector(`.tab-item[data-tab="${CSS.escape(name)}"]`);
-  if (!target || target.classList.contains('role-hidden')) name = 'detail';
+  if (!target || target.classList.contains('role-hidden')) {
+    name = document.querySelector('.tab-item:not(.role-hidden)')?.dataset.tab || 'detail';
+  }
   syncPrimaryGroup(groupForTab(name));
   document.querySelectorAll('.tab-item').forEach(t => {
     const active = t.dataset.tab === name;
