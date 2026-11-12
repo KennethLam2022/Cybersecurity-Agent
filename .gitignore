@@ -63,7 +63,6 @@ deploy/*
 !deploy/linux/
 deploy/linux/*
 !deploy/linux/securenexus.service
-!deploy/linux/nginx-securenexus.conf
 docs/
 .trae/
 .githooks/
