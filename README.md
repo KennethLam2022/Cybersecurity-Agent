@@ -136,36 +136,21 @@ cd packages\agent\src
 python main.py
 ```
 
-### Linux systemd 部署配置
-
-本项目当前按本机使用场景验证 Linux 启动配置，不包含公网入口或反向代理配置。
-systemd 单元位于 `deploy/linux/securenexus.service`，默认将服务绑定到
-`127.0.0.1:8000`，并以 `securenexus` 系统账号运行。部署前准备权限为 `0600`
-的 `/etc/securenexus/securenexus.env`。应用账号需要对 `agent_data/`、
-`packages/agent/agent_data/`、`RAG_DATA/` 和 `upload_staging/` 有写权限。
+### Linux（WSL）测试
 
 ```bash
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin securenexus
-sudo install -d -o root -g root /opt/securenexus
-sudo git clone https://github.com/KennethLam2022/Cybersecurity-Agent.git /opt/securenexus
-sudo python3.12 -m venv /opt/securenexus/.venv
-sudo /opt/securenexus/.venv/bin/pip install -r /opt/securenexus/requirements-docker.txt
-sudo install -d -o securenexus -g securenexus \
-  /opt/securenexus/agent_data \
-  /opt/securenexus/packages/agent/agent_data \
-  /opt/securenexus/RAG_DATA \
-  /opt/securenexus/upload_staging
-sudo install -d -m 0750 /etc/securenexus
-sudo install -m 0600 /dev/null /etc/securenexus/securenexus.env
-sudoedit /etc/securenexus/securenexus.env
-sudo install -m 0644 /opt/securenexus/deploy/linux/securenexus.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now securenexus
+python3 -m venv /tmp/securenexus-test-venv
+/tmp/securenexus-test-venv/bin/python -m pip install pytest -r requirements-docker.txt
+/tmp/securenexus-test-venv/bin/python -m pytest -q
+sed 's/\r$//' scripts/validate-linux-deployment.sh | ROOT_DIR="$PWD" bash
+cp deploy/linux/securenexus.service /tmp/securenexus.service
+chmod 0644 /tmp/securenexus.service
+systemd-analyze verify /tmp/securenexus.service
 ```
 
-本地 WSL 验证覆盖 Linux 测试与 systemd 单元语法，不代表配置已部署为开机服务。
-此单元仅监听回环地址，不应作为公网访问配置。若部署目标改变，再单独评估入口与 TLS。
-若把已有 RAG 资料复制到部署目录，需将这些资料的所有者设为 `securenexus`。
+该流程仅在本机 Linux/WSL 中运行测试，不创建系统账号、不安装或启用后台服务。
+临时复制服务单元是为了避开 Windows 挂载目录的权限映射告警；不会注册或启动服务。
+Nginx、公网入口和 TLS 不属于本项目当前验证范围。
 
 ### 依赖安装
 

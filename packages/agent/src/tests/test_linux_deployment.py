@@ -16,3 +16,8 @@ def test_linux_service_is_production_safe_and_single_worker():
     assert "ExecStart=/usr/bin/env bash /opt/securenexus/scripts/start-linux.sh" in service
     assert "NoNewPrivileges=true" in service
     assert "ProtectSystem=full" in service
+
+
+def test_runtime_requirements_include_fastapi_form_parser():
+    requirements = (ROOT / "requirements-docker.txt").read_text(encoding="utf-8")
+    assert "python-multipart" in requirements
