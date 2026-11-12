@@ -87,6 +87,19 @@ def test_upload_filename_accepts_supported_basename():
     assert routes_api._safe_upload_filename("policy-2026.pdf") == "policy-2026.pdf"
 
 
+def test_admin_chart_scripts_pin_versions_and_integrity():
+    html = (Path(__file__).parents[1] / "templates" / "admin.html").read_text(encoding="utf-8")
+    assert "echarts@5.6.0/dist/echarts.min.js" in html
+    assert "echarts-wordcloud@2.1.0/dist/echarts-wordcloud.min.js" in html
+    assert "sha384-pPi0zxBAoDu6+JXW/C68UZLvBUUtU+7zonhif43rqj7pxsGyqyqzcian2Rj37Rss" in html
+    assert "sha384-U1KEY0DDCF4Dq6Yx1J+EZ5Hnj8X5bMn52OAcJB8C4OiAWeU4iJhJ/Tv5KhTqu8zZ" in html
+    assert "script.crossOrigin='anonymous'" in html
+    assert "script.integrity=integrity" in html
+    assert "script.onerror=function(){reject(" in html
+    assert "_eChartLoaded=false" in html
+    assert "_eChartPromise=null" in html
+
+
 def test_upload_batch_size_is_enforced():
     with pytest.raises(HTTPException):
         routes_api._validate_upload_batch_size(routes_api._MAX_BATCH_UPLOAD_SIZE, 1)
