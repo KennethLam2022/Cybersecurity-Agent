@@ -136,6 +136,42 @@ cd packages\agent\src
 python main.py
 ```
 
+### Linux systemd 与 Nginx 部署
+
+非容器 Linux 部署配置位于 `deploy/linux/`。配置默认要求将仓库安装到
+`/opt/securenexus`，使用 `securenexus` 系统账号运行；systemd 服务只监听
+`127.0.0.1:8000`，外部访问经 Nginx HTTPS 转发。先将 Nginx 配置中的域名及证书路径
+替换为实际值，并准备权限为 `0600` 的 `/etc/securenexus/securenexus.env`，
+再安装服务配置。应用账号需要对 `agent_data/`、`packages/agent/agent_data/`、
+`RAG_DATA/` 和 `upload_staging/` 有写权限。
+
+```bash
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin securenexus
+sudo install -d -o root -g root /opt/securenexus
+sudo git clone https://github.com/KennethLam2022/Cybersecurity-Agent.git /opt/securenexus
+sudo python3.12 -m venv /opt/securenexus/.venv
+sudo /opt/securenexus/.venv/bin/pip install -r /opt/securenexus/requirements-docker.txt
+sudo install -d -o securenexus -g securenexus \
+  /opt/securenexus/agent_data \
+  /opt/securenexus/packages/agent/agent_data \
+  /opt/securenexus/RAG_DATA \
+  /opt/securenexus/upload_staging
+sudo install -d -m 0750 /etc/securenexus
+sudo install -m 0600 /dev/null /etc/securenexus/securenexus.env
+sudoedit /etc/securenexus/securenexus.env
+sudo install -m 0644 /opt/securenexus/deploy/linux/securenexus.service /etc/systemd/system/
+sudo install -m 0644 /opt/securenexus/deploy/linux/nginx-securenexus.conf /etc/nginx/sites-available/securenexus
+sudo ln -s /etc/nginx/sites-available/securenexus /etc/nginx/sites-enabled/securenexus
+sudo systemctl daemon-reload
+sudo systemctl enable --now securenexus
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Nginx 示例将文档上传上限设为 512 MiB，以覆盖应用当前单批最多 10 个、每个最多
+50 MiB 的限制。此配置要求已配置 HTTPS 证书；不要通过明文 HTTP 直接暴露生产登录页。
+若把已有 RAG 资料复制到部署目录，需将这些资料的所有者设为 `securenexus`。
+
 ### 依赖安装
 
 仓库中预处理模块声明了独立依赖：
