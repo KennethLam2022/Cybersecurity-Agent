@@ -118,14 +118,14 @@ function loadReflectionRuleLabel(language) {
   return sandbox.reflectionRuleLabel;
 }
 
-function loadOperationsTaskDisplay() {
+function loadAgentEvalErrorSummary() {
   const html = fs.readFileSync(templatePath, 'utf8');
-  const start = html.indexOf('function operationsTaskDisplay(item) {');
-  const end = html.indexOf('async function loadOperationsTasks()', start);
+  const start = html.indexOf('function agentEvalErrorSummary(error) {');
+  const end = html.indexOf('function renderAgentEval(run, results)', start);
   assert.ok(start >= 0 && end > start);
   const sandbox = {};
   vm.runInNewContext(html.slice(start, end), sandbox);
-  return sandbox.operationsTaskDisplay;
+  return sandbox.agentEvalErrorSummary;
 }
 
 test('refresh restores only after role filtering and redirects restricted tabs', async () => {
@@ -170,36 +170,12 @@ test('reflection rule enum labels follow the selected language and preserve unkn
   assert.match(html, /map\(mode => reflectionRuleLabel\(mode, 'capability'\)\)/);
 });
 
-test('monitoring task machine id is secondary to a readable title', () => {
-  const display = loadOperationsTaskDisplay();
+test('Agent Eval errors use a readable summary without exposing raw exceptions', () => {
+  const summarize = loadAgentEvalErrorSummary();
   const html = fs.readFileSync(templatePath, 'utf8');
-  const id = 'mir-d5c7e9bcca2a4270';
 
-  assert.match(html, /const display = operationsTaskDisplay\(item\)/);
-  assert.match(html, /escHtml\(display\.title\)/);
-  assert.match(html, /escHtml\(display\.sourceId\)/);
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(display({
-      source_type: 'monitoring_report',
-      source_id: id,
-      title: `审阅监控预案：${id}`,
-    }))),
-    {title: '审阅监控预案', sourceId: id},
-  );
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(display({
-      source_type: 'monitoring_report',
-      source_id: id,
-      title: '审阅监控预案：客户风险评估',
-    }))),
-    {title: '审阅监控预案：客户风险评估', sourceId: id},
-  );
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(display({
-      source_type: 'knowledge_gap',
-      source_id: 'doc-123',
-      title: '补充资料',
-    }))),
-    {title: '补充资料', sourceId: ''},
-  );
+  assert.equal(summarize('judge response did not contain JSON'), 'Judge 返回格式异常');
+  assert.equal(summarize('unrecognized private endpoint token-123'), '评测执行失败，请检查配置后重试');
+  assert.match(html, /agentEvalErrorSummary\(item\.error\)/);
+  assert.doesNotMatch(html, /escHtml\(item\.error \|\| ''\)/);
 });

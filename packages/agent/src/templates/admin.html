@@ -2306,23 +2306,13 @@ async function loadOperationsOverview() {
   } catch (e) { box.innerHTML = `<div style="color:var(--r);font-size:12px">待办加载失败：${escHtml(e.message)}</div>`; }
 }
 
-function operationsTaskDisplay(item) {
-  const sourceId = item.source_type === 'monitoring_report' ? String(item.source_id || '') : '';
-  const legacyTitle = `审阅监控预案：${sourceId}`;
-  const title = sourceId && item.title === legacyTitle ? '审阅监控预案' : item.title || '';
-  return {title, sourceId};
-}
-
 async function loadOperationsTasks() {
   const box = document.getElementById('operationsTasks'); if (!box) return;
   try {
     const response = await fetch('/api/admin/governance/tasks'); const data = await response.json();
     if (!response.ok) throw new Error(data.detail || '运营待办加载失败');
     const items = data.items || [];
-    box.innerHTML = items.slice(0, 12).map(item => {
-      const display = operationsTaskDisplay(item);
-      return `<article style="padding:9px 0;border-bottom:1px solid var(--b2);display:flex;justify-content:space-between;gap:10px;align-items:center"><div><strong>${escHtml(display.title)}</strong><div style="margin-top:3px;color:var(--t2)">${escHtml(item.source_type || '')} · ${escHtml(item.priority || '')} · ${escHtml(item.assignee_user_id || '未分派')}${display.sourceId ? ` · ${escHtml(display.sourceId)}` : ''}</div></div><div style="display:flex;gap:6px"><button class="extension-btn" onclick="commentOperationsTask('${escHtml(item.id)}')">评论</button><select class="workflow-run-input" style="width:120px" onchange="updateOperationsTask('${escHtml(item.id)}',this.value)"><option value="open" ${item.status==='open'?'selected':''}>待处理</option><option value="in_progress" ${item.status==='in_progress'?'selected':''}>处理中</option><option value="blocked" ${item.status==='blocked'?'selected':''}>受阻</option><option value="done" ${item.status==='done'?'selected':''}>完成</option><option value="cancelled" ${item.status==='cancelled'?'selected':''}>取消</option></select></div></article>`;
-    }).join('') || '当前没有待办。';
+    box.innerHTML = items.slice(0, 12).map(item => `<article style="padding:9px 0;border-bottom:1px solid var(--b2);display:flex;justify-content:space-between;gap:10px;align-items:center"><div><strong>${escHtml(item.title || '')}</strong><div style="margin-top:3px;color:var(--t2)">${escHtml(item.source_type || '')} · ${escHtml(item.priority || '')} · ${escHtml(item.assignee_user_id || '未分派')}</div></div><div style="display:flex;gap:6px"><button class="extension-btn" onclick="commentOperationsTask('${escHtml(item.id)}')">评论</button><select class="workflow-run-input" style="width:120px" onchange="updateOperationsTask('${escHtml(item.id)}',this.value)"><option value="open" ${item.status==='open'?'selected':''}>待处理</option><option value="in_progress" ${item.status==='in_progress'?'selected':''}>处理中</option><option value="blocked" ${item.status==='blocked'?'selected':''}>受阻</option><option value="done" ${item.status==='done'?'selected':''}>完成</option><option value="cancelled" ${item.status==='cancelled'?'selected':''}>取消</option></select></div></article>`).join('') || '当前没有待办。';
   } catch (e) { box.textContent = '运营待办加载失败：' + e.message; }
 }
 
@@ -6745,6 +6735,12 @@ let currentAgentEvalRun = null;
 let currentAgentEvalReview = null;
 // ============================================================
 
+function agentEvalErrorSummary(error) {
+  if (!error) return '';
+  if (/judge response did not contain json/i.test(String(error))) return 'Judge 返回格式异常';
+  return '评测执行失败，请检查配置后重试';
+}
+
 function renderAgentEval(run, results) {
   window.agentEvalResults = results;
   currentAgentEvalRunId = run.run_id || currentAgentEvalRunId;
@@ -6782,7 +6778,7 @@ function renderAgentEval(run, results) {
       <td>${m.trajectory_pass === undefined ? '--' : (m.trajectory_pass ? '通过' : '失败')} · ${(trace.steps || []).map(s => s.step).join(' → ')}</td>
       <td>${m.safety_pass === undefined ? '--' : (m.safety_pass ? '通过' : '失败')}</td>
       <td>${m.source_hit === undefined ? '--' : (m.source_hit ? '命中' : '未命中')}</td>
-      <td>${item.elapsed_ms || 0}ms</td><td style="color:var(--r)">${escHtml(item.error || '')}</td>
+      <td>${item.elapsed_ms || 0}ms</td><td style="color:var(--r)">${escHtml(agentEvalErrorSummary(item.error))}</td>
       <td><button onclick="showAgentEvalDetail(${results.indexOf(item)})" style="padding:2px 8px;background:var(--b2);color:var(--t1);border:none;border-radius:3px;cursor:pointer;font-size:11px">详情</button></td>
     </tr>`;
   }).join('');
