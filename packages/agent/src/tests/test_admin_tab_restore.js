@@ -206,6 +206,16 @@ function loadE2eMetricNames(language) {
   return sandbox.e2eMetricNames(language);
 }
 
+function loadOperationsTaskDisplay() {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  const start = html.indexOf('function operationsTaskDisplay(item) {');
+  const end = html.indexOf('async function loadOperationsTasks()', start);
+  assert.ok(start >= 0 && end > start);
+  const sandbox = {};
+  vm.runInNewContext(html.slice(start, end), sandbox);
+  return sandbox.operationsTaskDisplay;
+}
+
 test('refresh restores only after role filtering and redirects restricted tabs', async () => {
   const {tabs, url, selected, messages} = await runNavigation('overview');
   assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'workspaces');
@@ -289,4 +299,38 @@ test('E2E quality metric names follow language and clarify hallucination directi
   assert.equal(enNames.hallucination, 'No-Hallucination Rate (higher is better)');
   assert.match(html, /hallucination: 'e2eHCLabel'/);
   assert.match(html, /data:keys\.map\(k=>metricNames\[k\]\)/);
+});
+
+test('monitoring task machine id is secondary to a readable title', () => {
+  const display = loadOperationsTaskDisplay();
+  const html = fs.readFileSync(templatePath, 'utf8');
+  const id = 'mir-d5c7e9bcca2a4270';
+
+  assert.match(html, /const display = operationsTaskDisplay\(item\)/);
+  assert.match(html, /escHtml\(display\.title\)/);
+  assert.match(html, /escHtml\(display\.sourceId\)/);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(display({
+      source_type: 'monitoring_report',
+      source_id: id,
+      title: `审阅监控预案：${id}`,
+    }))),
+    {title: '审阅监控预案', sourceId: id},
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(display({
+      source_type: 'monitoring_report',
+      source_id: id,
+      title: '审阅监控预案：客户风险评估',
+    }))),
+    {title: '审阅监控预案：客户风险评估', sourceId: id},
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(display({
+      source_type: 'knowledge_gap',
+      source_id: 'doc-123',
+      title: '补充资料',
+    }))),
+    {title: '补充资料', sourceId: ''},
+  );
 });
