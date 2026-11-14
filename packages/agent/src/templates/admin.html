@@ -331,7 +331,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
   </div>
 </div>
 <div class="layout">
-  <div class="sidebar">
+  <div class="sidebar" data-platform-only>
     <div class="sidebar-header">
       <input id="searchInput" type="text" placeholder="搜索对话..." oninput="filterConversations()">
       <div class="cat-filter-bar" style="display:flex;gap:4px;margin:6px 0;flex-wrap:wrap;align-items:center">
@@ -1302,8 +1302,10 @@ document.addEventListener('keydown', closeAccessibleModal);
 document.addEventListener('DOMContentLoaded', function() {
   // 管理端以用户登录会话为准；本地兼容模式由后端决定是否允许默认工作区。
   loadAdminPrincipal().then(function() {
-    if (adminPrincipal.role === 'platform_admin') connectSSE();
-    fetchConversations();
+    if (adminPrincipal.role === 'platform_admin') {
+      connectSSE();
+      fetchConversations();
+    }
   });
 });
 

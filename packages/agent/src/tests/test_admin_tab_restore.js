@@ -32,6 +32,7 @@ function loadAdminStartup() {
     source: html.slice(loaderStart, loaderEnd)
       + html.slice(connectionStart, connectionEnd)
       + html.slice(startupStart, startupEnd),
+    sidebarIsPlatformOnly: /<div class="sidebar"[^>]*data-platform-only/.test(html),
     platformOnlyStatus: ['connDot', 'connStatus'].map((id) => {
       const element = html.match(new RegExp(`<[^>]+id="${id}"[^>]*>`))?.[0] || '';
       return element.includes('data-platform-only');
@@ -40,9 +41,10 @@ function loadAdminStartup() {
 }
 
 async function runAdminStartup(role) {
-  const {source, platformOnlyStatus} = loadAdminStartup();
+  const {source, sidebarIsPlatformOnly, platformOnlyStatus} = loadAdminStartup();
   const dotHidden = new Set();
   const statusHidden = new Set();
+  const sidebarHidden = new Set();
   const dot = {className: '', classList: {toggle(name, value) {
     if (value) dotHidden.add(name);
     else dotHidden.delete(name);
@@ -51,7 +53,12 @@ async function runAdminStartup(role) {
     if (value) statusHidden.add(name);
     else statusHidden.delete(name);
   }}};
-  const statusElements = [dot, status].filter((_, index) => platformOnlyStatus[index]);
+  const sidebar = {classList: {toggle(name, value) {
+    if (value) sidebarHidden.add(name);
+    else sidebarHidden.delete(name);
+  }}};
+  const platformOnlyElements = [dot, status].filter((_, index) => platformOnlyStatus[index]);
+  if (sidebarIsPlatformOnly) platformOnlyElements.push(sidebar);
   const eventSources = [];
   let onReady;
   let conversationLoads = 0;
@@ -63,7 +70,7 @@ async function runAdminStartup(role) {
       getElementById(id) { return id === 'connDot' ? dot : status; },
       querySelector() { return null; },
       querySelectorAll(selector) {
-        if (selector === '[data-platform-only]') return statusElements;
+        if (selector === '[data-platform-only]') return platformOnlyElements;
         return [];
       },
     },
@@ -82,7 +89,7 @@ async function runAdminStartup(role) {
   vm.runInNewContext(source, sandbox);
   onReady();
   await new Promise(setImmediate);
-  return {eventSources, dotHidden, statusHidden, conversationLoads};
+  return {eventSources, dotHidden, statusHidden, sidebarHidden, conversationLoads};
 }
 
 async function runNavigation(requestedTab, principal = {authenticated: true, role: 'org_admin'}) {
@@ -248,20 +255,42 @@ test('valid tab selection is restored without a permission warning', async () =>
 });
 
 test('does not connect org admins to the platform event stream', async () => {
-  const {eventSources, dotHidden, statusHidden, conversationLoads} = await runAdminStartup('org_admin');
+  const {eventSources, dotHidden, statusHidden} = await runAdminStartup('org_admin');
 
   assert.deepEqual(eventSources, []);
   assert.equal(dotHidden.has('role-hidden'), true);
   assert.equal(statusHidden.has('role-hidden'), true);
-  assert.equal(conversationLoads, 1);
 });
 
 test('keeps the platform admin event stream connected', async () => {
-  const {eventSources, dotHidden, statusHidden, conversationLoads} = await runAdminStartup('platform_admin');
+  const {eventSources, dotHidden, statusHidden} = await runAdminStartup('platform_admin');
 
   assert.deepEqual(eventSources, ['/api/admin/stream']);
   assert.equal(dotHidden.has('role-hidden'), false);
   assert.equal(statusHidden.has('role-hidden'), false);
+});
+
+test('hides the conversation sidebar from org admins', async () => {
+  const {sidebarHidden} = await runAdminStartup('org_admin');
+
+  assert.equal(sidebarHidden.has('role-hidden'), true);
+});
+
+test('keeps the conversation sidebar available to platform admins', async () => {
+  const {sidebarHidden} = await runAdminStartup('platform_admin');
+
+  assert.equal(sidebarHidden.has('role-hidden'), false);
+});
+
+test('does not load conversations for org admins', async () => {
+  const {conversationLoads} = await runAdminStartup('org_admin');
+
+  assert.equal(conversationLoads, 0);
+});
+
+test('continues loading conversations for platform admins', async () => {
+  const {conversationLoads} = await runAdminStartup('platform_admin');
+
   assert.equal(conversationLoads, 1);
 });
 
