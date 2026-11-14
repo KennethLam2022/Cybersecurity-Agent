@@ -186,6 +186,16 @@ function loadReflectionRuleLabel(language) {
   return sandbox.reflectionRuleLabel;
 }
 
+function loadAgentEvalErrorSummary() {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  const start = html.indexOf('function agentEvalErrorSummary(error) {');
+  const end = html.indexOf('function renderAgentEval(run, results)', start);
+  assert.ok(start >= 0 && end > start);
+  const sandbox = {};
+  vm.runInNewContext(html.slice(start, end), sandbox);
+  return sandbox.agentEvalErrorSummary;
+}
+
 test('refresh restores only after role filtering and redirects restricted tabs', async () => {
   const {tabs, url, selected, messages} = await runNavigation('overview');
   assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'workspaces');
@@ -244,4 +254,14 @@ test('reflection rule enum labels follow the selected language and preserve unkn
   assert.match(html, /reflectionRuleLabel\(item\.category, 'category'\)/);
   assert.match(html, /reflectionRuleLabel\(item\.severity, 'severity'\)/);
   assert.match(html, /map\(mode => reflectionRuleLabel\(mode, 'capability'\)\)/);
+});
+
+test('Agent Eval errors use a readable summary without exposing raw exceptions', () => {
+  const summarize = loadAgentEvalErrorSummary();
+  const html = fs.readFileSync(templatePath, 'utf8');
+
+  assert.equal(summarize('judge response did not contain JSON'), 'Judge 返回格式异常');
+  assert.equal(summarize('unrecognized private endpoint token-123'), '评测执行失败，请检查配置后重试');
+  assert.match(html, /agentEvalErrorSummary\(item\.error\)/);
+  assert.doesNotMatch(html, /escHtml\(item\.error \|\| ''\)/);
 });

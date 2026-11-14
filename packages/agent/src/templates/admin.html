@@ -6735,6 +6735,12 @@ let currentAgentEvalRun = null;
 let currentAgentEvalReview = null;
 // ============================================================
 
+function agentEvalErrorSummary(error) {
+  if (!error) return '';
+  if (/judge response did not contain json/i.test(String(error))) return 'Judge 返回格式异常';
+  return '评测执行失败，请检查配置后重试';
+}
+
 function renderAgentEval(run, results) {
   window.agentEvalResults = results;
   currentAgentEvalRunId = run.run_id || currentAgentEvalRunId;
@@ -6772,7 +6778,7 @@ function renderAgentEval(run, results) {
       <td>${m.trajectory_pass === undefined ? '--' : (m.trajectory_pass ? '通过' : '失败')} · ${(trace.steps || []).map(s => s.step).join(' → ')}</td>
       <td>${m.safety_pass === undefined ? '--' : (m.safety_pass ? '通过' : '失败')}</td>
       <td>${m.source_hit === undefined ? '--' : (m.source_hit ? '命中' : '未命中')}</td>
-      <td>${item.elapsed_ms || 0}ms</td><td style="color:var(--r)">${escHtml(item.error || '')}</td>
+      <td>${item.elapsed_ms || 0}ms</td><td style="color:var(--r)">${escHtml(agentEvalErrorSummary(item.error))}</td>
       <td><button onclick="showAgentEvalDetail(${results.indexOf(item)})" style="padding:2px 8px;background:var(--b2);color:var(--t1);border:none;border-radius:3px;cursor:pointer;font-size:11px">详情</button></td>
     </tr>`;
   }).join('');
