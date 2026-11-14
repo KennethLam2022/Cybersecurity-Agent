@@ -21,6 +21,13 @@ def test_document_profile_ui_supports_reclassification_and_history():
     assert "/api/documents/profile-migration/history" in content
 
 
+def test_document_stat_cards_keep_readable_columns_on_desktop_and_mobile():
+    content = (Path(__file__).parents[1] / "static" / "data_preview.html").read_text(encoding="utf-8")
+
+    assert "grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr))" in content
+    assert ".stat-item .info { min-width: 0; }" in content
+
+
 def test_document_preview_escapes_untrusted_metadata_in_html_contexts():
     content = (Path(__file__).parents[1] / "static" / "data_preview.html").read_text(encoding="utf-8")
     render = content[content.index("function render() {"):content.index("function filterFiles() {")]
