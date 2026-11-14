@@ -17,7 +17,7 @@ function loadNavigationFunctions() {
   return html.slice(loaderStart, loaderEnd) + html.slice(switchStart, switchEnd);
 }
 
-async function runNavigation(requestedTab) {
+async function runNavigation(requestedTab, principal = {authenticated: true, role: 'org_admin'}) {
   const tabs = ['detail', 'overview', 'workspaces', 'notifications'].map((name) => ({
     dataset: {tab: name, group: 'operations'},
     hidden: ['detail', 'overview'].includes(name),
@@ -46,6 +46,8 @@ async function runNavigation(requestedTab) {
     ['tabContextTitle', {textContent: ''}],
     ['tabContextDescription', {textContent: ''}],
     ['tabContext', {style: {}}],
+    ['notificationTenant', {value: 'local-default'}],
+    ['monitoringTenant', {value: 'local-default'}],
   ]);
   const url = new URL(`http://localhost/admin?tab=${requestedTab}`);
   const selected = [];
@@ -93,7 +95,7 @@ async function runNavigation(requestedTab) {
     showToast(message) { messages.push(message); },
     fetch: async () => ({
       ok: true,
-      json: async () => ({authenticated: true, role: 'org_admin'}),
+      json: async () => principal,
     }),
     syncPrimaryGroup() {},
     groupForTab: () => 'operations',
@@ -105,7 +107,7 @@ async function runNavigation(requestedTab) {
     `${loadNavigationFunctions()}; loadAdminPrincipal();`,
     sandbox,
   );
-  return {tabs, url, selected, messages};
+  return {tabs, url, selected, messages, contextElements};
 }
 
 function loadReflectionRuleLabel(language) {
@@ -138,6 +140,28 @@ test('valid tab selection is restored without a permission warning', async () =>
   assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'workspaces');
   assert.equal(url.searchParams.get('tab'), 'workspaces');
   assert.deepEqual(messages, []);
+});
+
+test('org admin scope defaults to the tenant from the authenticated session', async () => {
+  const {contextElements} = await runNavigation('workspaces', {
+    authenticated: true,
+    role: 'org_admin',
+    tenant_id: 'tenant-org-42',
+  });
+
+  assert.equal(contextElements.get('notificationTenant').value, 'tenant-org-42');
+  assert.equal(contextElements.get('monitoringTenant').value, 'tenant-org-42');
+});
+
+test('platform admin scope selection is not overwritten during session loading', async () => {
+  const {contextElements} = await runNavigation('workspaces', {
+    authenticated: true,
+    role: 'platform_admin',
+    tenant_id: 'tenant-session',
+  });
+
+  assert.equal(contextElements.get('notificationTenant').value, 'local-default');
+  assert.equal(contextElements.get('monitoringTenant').value, 'local-default');
 });
 
 test('reflection rule enum labels follow the selected language and preserve unknown values', () => {
