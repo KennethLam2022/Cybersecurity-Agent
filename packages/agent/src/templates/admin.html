@@ -1348,6 +1348,10 @@ async function loadAdminPrincipal() {
   if (!response.ok) throw new Error('需要管理员登录');
   adminPrincipal = await response.json();
   const isPlatform = adminPrincipal.role === 'platform_admin';
+  if (adminPrincipal.role === 'org_admin' && adminPrincipal.tenant_id) {
+    document.getElementById('notificationTenant').value = adminPrincipal.tenant_id;
+    document.getElementById('monitoringTenant').value = adminPrincipal.tenant_id;
+  }
   document.querySelectorAll('.tab-item').forEach(tab => {
     tab.classList.toggle('role-hidden', !isPlatform && platformOnlyTabs.has(tab.dataset.tab));
   });
