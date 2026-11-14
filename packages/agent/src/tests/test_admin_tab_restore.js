@@ -120,6 +120,12 @@ async function runNavigation(requestedTab, principal = {authenticated: true, rol
   const url = new URL(`http://localhost/admin?tab=${requestedTab}`);
   const selected = [];
   const messages = [];
+  const qualityAccessNotice = {
+    hidden: true,
+    classList: {toggle(className, value) {
+      if (className === 'role-hidden') qualityAccessNotice.hidden = value;
+    }},
+  };
   const primaryGroup = {dataset: {group: 'operations'}, classList: {toggle() {}}};
   const sandbox = {
     URL,
@@ -151,6 +157,7 @@ async function runNavigation(requestedTab, principal = {authenticated: true, rol
         if (selector === '.tab-item') return tabs;
         if (selector === '.tab-content') return contents;
         if (selector === '.primary-nav-item') return [primaryGroup];
+        if (selector === '[data-org-admin-only]') return [qualityAccessNotice];
         if (selector === '[data-platform-only]') return [];
         const groupMatch = selector.match(/^\.tab-item\[data-group="(.+)"\]$/);
         if (groupMatch) return tabs.filter((tab) => tab.dataset.group === groupMatch[1]);
@@ -175,7 +182,7 @@ async function runNavigation(requestedTab, principal = {authenticated: true, rol
     `${loadNavigationFunctions()}; loadAdminPrincipal();`,
     sandbox,
   );
-  return {tabs, url, selected, messages, contextElements};
+  return {tabs, url, selected, messages, contextElements, qualityAccessNotice};
 }
 
 function loadReflectionRuleLabel(language) {
@@ -278,6 +285,17 @@ test('platform admin scope selection is not overwritten during session loading',
 
   assert.equal(contextElements.get('notificationTenant').value, 'local-default');
   assert.equal(contextElements.get('monitoringTenant').value, 'local-default');
+});
+
+test('quality access notice is visible only to org admins without exposing quality tabs', async () => {
+  const orgResult = await runNavigation('workspaces', {authenticated: true, role: 'org_admin'});
+  const platformResult = await runNavigation('workspaces', {authenticated: true, role: 'platform_admin'});
+  const html = fs.readFileSync(templatePath, 'utf8');
+
+  assert.equal(orgResult.qualityAccessNotice.hidden, false);
+  assert.equal(platformResult.qualityAccessNotice.hidden, true);
+  assert.match(html, /data-org-admin-only[^>]*>[^<]*质量评测仅限平台管理员访问/);
+  assert.match(html, /const platformOnlyTabs = new Set\([^;]*'retrieval','e2e','agentEval'/s);
 });
 
 test('reflection rule enum labels follow the selected language and preserve unknown values', () => {

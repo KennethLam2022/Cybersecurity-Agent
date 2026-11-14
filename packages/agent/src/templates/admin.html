@@ -131,6 +131,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
 .primary-nav-item{appearance:none;min-height:44px;background:var(--card);border:1px solid var(--b);border-radius:8px;padding:10px 14px;font:600 14px var(--f);cursor:pointer;color:var(--t2);transition:all .15s}
 .primary-nav-item:hover{border-color:var(--a);color:var(--a)}
 .primary-nav-item.active{background:var(--a);border-color:var(--a);color:#fff}
+.role-access-note{margin:0 0 10px;color:var(--t2);font-size:12px}
 .tab-bar{display:flex;gap:4px;border-bottom:1px solid var(--b);margin-bottom:12px;overflow-x:auto;flex-shrink:0}
 .tab-item{appearance:none;background:transparent;border:0;border-bottom:2px solid transparent;padding:8px 14px;font:500 12px var(--f);cursor:pointer;color:var(--t2);transition:all .15s;white-space:nowrap}
 .tab-item:hover{color:var(--t);background:#f8f8fa}
@@ -364,6 +365,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <button class="primary-nav-item" data-group="capabilities" onclick="switchPrimaryGroup('capabilities')">技能</button>
       <button class="primary-nav-item" data-group="quality" onclick="switchPrimaryGroup('quality')">质量评测</button>
     </div>
+    <p id="qualityAccessNotice" class="role-hidden role-access-note" data-org-admin-only role="note">质量评测仅限平台管理员访问</p>
     <div class="tab-bar" id="tabBar" role="tablist" aria-label="当前工作区子页面">
       <button class="tab-item active" data-group="operations" data-tab="detail" role="tab" aria-selected="true" aria-controls="tabDetail" onclick="switchTab('detail')">对话详情</button>
       <button class="tab-item" data-group="operations" data-tab="overview" role="tab" aria-selected="false" aria-controls="tabOverview" onclick="switchTab('overview')">概览看板</button>
@@ -1362,6 +1364,9 @@ async function loadAdminPrincipal() {
   });
   document.querySelectorAll('[data-platform-only]').forEach(element => {
     element.classList.toggle('role-hidden', !isPlatform);
+  });
+  document.querySelectorAll('[data-org-admin-only]').forEach(element => {
+    element.classList.toggle('role-hidden', adminPrincipal.role !== 'org_admin');
   });
   const requestedTab = new URLSearchParams(location.search).get('tab');
   if (requestedTab) {
@@ -5976,6 +5981,10 @@ function changeAdminLanguage(language) {
   localStorage.setItem('securenexus_language', value);
   const labels = value === 'en-US' ? {operations:'Operations', knowledge:'Knowledge', configuration:'Configuration', capabilities:'Capabilities', quality:'Quality'} : {operations:'运营', knowledge:'知识', configuration:'配置', capabilities:'技能', quality:'质量评测'};
   document.querySelectorAll('.primary-nav-item').forEach(button => { if (labels[button.dataset.group]) button.textContent = labels[button.dataset.group]; });
+  const qualityNotice = document.getElementById('qualityAccessNotice');
+  if (qualityNotice) qualityNotice.textContent = value === 'en-US'
+    ? 'Quality evaluation is available to platform admins only'
+    : '质量评测仅限平台管理员访问';
   document.querySelectorAll('.tab-item').forEach(button => {
     const name = button.dataset.tab;
     if (value === 'en-US' && adminTabLabelsEn[name]) button.textContent = adminTabLabelsEn[name];
