@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "python packages/agent/src/main.py",
     "build": "python -m compileall -q packages/agent/src packages/preprocessor/src",
-    "test": "python scripts/run_tests.py && node --test packages/agent/src/tests/test_prompt_workspace_load.js packages/agent/src/tests/test_admin_tab_restore.js packages/agent/src/tests/test_admin_chart_loader.js packages/agent/src/tests/test_chat_empty_state.js",
+    "test": "python scripts/run_tests.py && node --test packages/agent/src/tests/test_prompt_workspace_load.js packages/agent/src/tests/test_admin_tab_restore.js packages/agent/src/tests/test_admin_chart_loader.js packages/agent/src/tests/test_chat_empty_state.js packages/agent/src/tests/test_page_i18n.js",
     "smoke": "python scripts/eval_smoke.py",
     "release:check": "python scripts/release_check.py",
     "release:p5": "python scripts/p5_release_check.py",

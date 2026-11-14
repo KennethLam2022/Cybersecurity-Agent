@@ -10,6 +10,19 @@
     }
   };
   function dictionary(language) { return dictionaries[language] || {}; }
+  function translateElementText(el, dict) {
+    const source = el.dataset.i18n;
+    const english = dictionary('en-US')[source];
+    const target = dict[source] || source;
+    el.childNodes.forEach((node) => {
+      if (node.nodeType !== 3) return;
+      const raw = node.nodeValue || '';
+      const current = raw.includes(source) ? source : english;
+      if (current && raw.includes(current)) {
+        node.nodeValue = raw.replace(current, target);
+      }
+    });
+  }
   function translateTextNodes(root, language) {
     const dict = dictionary(language);
     const reverse = language === 'zh-CN'
@@ -34,7 +47,7 @@
     document.querySelectorAll('[data-i18n]').forEach((el) => {
       const value = dict[el.dataset.i18n] || el.dataset.i18n;
       if (el.dataset.i18nAttr) el.setAttribute(el.dataset.i18nAttr, value);
-      else el.textContent = value;
+      else translateElementText(el, dict);
     });
     document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
       el.placeholder = dict[el.dataset.i18nPlaceholder] || el.dataset.i18nPlaceholder;
