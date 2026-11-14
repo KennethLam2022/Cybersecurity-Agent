@@ -1140,11 +1140,11 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
         <div class="stat-grid">
           <div class="stat-card"><span class="num" id="e2eTotal">--</span><span class="lbl">总题数</span></div>
           <div class="stat-card"><span class="num" id="e2eHasSrc">--</span><span class="lbl">有来源</span></div>
-          <div class="stat-card"><span class="num" id="e2eCP">--</span><span class="lbl">Context Precision</span></div>
-          <div class="stat-card"><span class="num" id="e2eCR">--</span><span class="lbl">Context Recall</span></div>
-          <div class="stat-card"><span class="num" id="e2eFT">--</span><span class="lbl">Faithfulness</span></div>
-          <div class="stat-card"><span class="num" id="e2eRL">--</span><span class="lbl">Relevancy</span></div>
-          <div class="stat-card"><span class="num" id="e2eHC">--</span><span class="lbl">Hallucination</span></div>
+          <div class="stat-card"><span class="num" id="e2eCP">--</span><span class="lbl" id="e2eCPLabel">上下文精确度</span></div>
+          <div class="stat-card"><span class="num" id="e2eCR">--</span><span class="lbl" id="e2eCRLabel">上下文召回率</span></div>
+          <div class="stat-card"><span class="num" id="e2eFT">--</span><span class="lbl" id="e2eFTLabel">忠实度</span></div>
+          <div class="stat-card"><span class="num" id="e2eRL">--</span><span class="lbl" id="e2eRLLabel">相关性</span></div>
+          <div class="stat-card"><span class="num" id="e2eHC">--</span><span class="lbl" id="e2eHCLabel">无幻觉率（越高越好）</span></div>
         </div>
         <div id="e2eProfileSummary" style="margin-top:10px;font-size:12px;color:var(--t2)"></div>
         <div id="e2eHardGate" style="margin-top:10px;padding:10px 12px;border:1px solid var(--b);border-radius:6px;font-size:12px"></div>
@@ -6449,6 +6449,24 @@ function hideItemForm() {
 // 综合质量评测
 // ============================================================
 
+function e2eMetricNames(language) {
+  return language === 'en-US'
+    ? {
+        context_precision: 'Context Precision',
+        context_recall: 'Context Recall',
+        faithfulness: 'Faithfulness',
+        relevancy: 'Relevancy',
+        hallucination: 'No-Hallucination Rate (higher is better)',
+      }
+    : {
+        context_precision: '上下文精确度',
+        context_recall: '上下文召回率',
+        faithfulness: '忠实度',
+        relevancy: '相关性',
+        hallucination: '无幻觉率（越高越好）',
+      };
+}
+
 async function loadE2eEval() {
   try {
     // 加载最新报告 JSON
@@ -6509,7 +6527,16 @@ function renderE2eResults(results) {
   const scorable = results.filter(r => r.scores && Object.keys(r.scores).length > 0);
   const keys = ['context_precision','context_recall','faithfulness','relevancy','hallucination'];
   const labels = {context_precision:'CP',context_recall:'CR',faithfulness:'FT',relevancy:'RL',hallucination:'HC'};
-  const names = {context_precision:'Context Precision',context_recall:'Context Recall',faithfulness:'Faithfulness',relevancy:'Relevancy',hallucination:'No-Hallucination Rate'};
+  const metricNames = e2eMetricNames(adminLanguage);
+  Object.entries({
+    context_precision: 'e2eCPLabel',
+    context_recall: 'e2eCRLabel',
+    faithfulness: 'e2eFTLabel',
+    relevancy: 'e2eRLLabel',
+    hallucination: 'e2eHCLabel',
+  }).forEach(([key, id]) => {
+    document.getElementById(id).textContent = metricNames[key];
+  });
 
   const avgScores = {};
   keys.forEach(k => {
@@ -6542,7 +6569,7 @@ function renderE2eResults(results) {
   // 评分柱状图
   makeChart('chartE2eScores', {
     title:{text:'综合质量各项指标',textStyle:{fontSize:13,fontWeight:600}},
-    xAxis:{type:'category',data:keys.map(k=>names[k]),axisLabel:{fontSize:11,interval:0}},
+    xAxis:{type:'category',data:keys.map(k=>metricNames[k]),axisLabel:{fontSize:11,interval:0}},
     yAxis:{type:'value',min:0,max:1,axisLabel:{formatter:v=>(v*100).toFixed(0)+'%'}},
     series:[{type:'bar',data:keys.map(k=>({
       value:+avgScores[k].toFixed(3),

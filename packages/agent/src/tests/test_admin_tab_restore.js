@@ -118,6 +118,16 @@ function loadReflectionRuleLabel(language) {
   return sandbox.reflectionRuleLabel;
 }
 
+function loadE2eMetricNames(language) {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  const start = html.indexOf('function e2eMetricNames(language) {');
+  const end = html.indexOf('async function loadE2eEval()', start);
+  assert.ok(start >= 0 && end > start);
+  const sandbox = {};
+  vm.runInNewContext(html.slice(start, end), sandbox);
+  return sandbox.e2eMetricNames(language);
+}
+
 test('refresh restores only after role filtering and redirects restricted tabs', async () => {
   const {tabs, url, selected, messages} = await runNavigation('overview');
   assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'workspaces');
@@ -158,4 +168,19 @@ test('reflection rule enum labels follow the selected language and preserve unkn
   assert.match(html, /reflectionRuleLabel\(item\.category, 'category'\)/);
   assert.match(html, /reflectionRuleLabel\(item\.severity, 'severity'\)/);
   assert.match(html, /map\(mode => reflectionRuleLabel\(mode, 'capability'\)\)/);
+});
+
+test('E2E quality metric names follow language and clarify hallucination direction', () => {
+  const zhNames = loadE2eMetricNames('zh-CN');
+  const enNames = loadE2eMetricNames('en-US');
+  const html = fs.readFileSync(templatePath, 'utf8');
+
+  assert.equal(zhNames.context_precision, '上下文精确度');
+  assert.equal(zhNames.context_recall, '上下文召回率');
+  assert.equal(zhNames.faithfulness, '忠实度');
+  assert.equal(zhNames.relevancy, '相关性');
+  assert.equal(zhNames.hallucination, '无幻觉率（越高越好）');
+  assert.equal(enNames.hallucination, 'No-Hallucination Rate (higher is better)');
+  assert.match(html, /hallucination: 'e2eHCLabel'/);
+  assert.match(html, /data:keys\.map\(k=>metricNames\[k\]\)/);
 });
