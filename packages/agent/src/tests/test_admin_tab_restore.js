@@ -108,6 +108,16 @@ async function runNavigation(requestedTab) {
   return {tabs, url, selected, messages};
 }
 
+function loadReflectionRuleLabel(language) {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  const start = html.indexOf('const reflectionRuleLabels = {');
+  const end = html.indexOf('function clearReflectionRuleForm()', start);
+  assert.ok(start >= 0 && end > start);
+  const sandbox = {adminLanguage: language};
+  vm.runInNewContext(html.slice(start, end), sandbox);
+  return sandbox.reflectionRuleLabel;
+}
+
 test('refresh restores only after role filtering and redirects restricted tabs', async () => {
   const {tabs, url, selected, messages} = await runNavigation('overview');
   assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'workspaces');
@@ -128,4 +138,24 @@ test('valid tab selection is restored without a permission warning', async () =>
   assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'workspaces');
   assert.equal(url.searchParams.get('tab'), 'workspaces');
   assert.deepEqual(messages, []);
+});
+
+test('reflection rule enum labels follow the selected language and preserve unknown values', () => {
+  const zhLabel = loadReflectionRuleLabel('zh-CN');
+  const enLabel = loadReflectionRuleLabel('en-US');
+  const html = fs.readFileSync(templatePath, 'utf8');
+
+  assert.equal(zhLabel('safety', 'category'), '安全与越权');
+  assert.equal(zhLabel('critical', 'severity'), '严重');
+  assert.equal(zhLabel('chat', 'capability'), '问答');
+  assert.equal(zhLabel('writing', 'capability'), '写作');
+  assert.equal(zhLabel('presentation', 'capability'), 'PPT');
+  assert.equal(enLabel('evidence', 'category'), 'Evidence & Sources');
+  assert.equal(enLabel('high', 'severity'), 'High');
+  assert.equal(enLabel('chat', 'capability'), 'Chat');
+  assert.equal(zhLabel('custom-boundary', 'category'), 'custom-boundary');
+  assert.equal(zhLabel('', 'category'), '-');
+  assert.match(html, /reflectionRuleLabel\(item\.category, 'category'\)/);
+  assert.match(html, /reflectionRuleLabel\(item\.severity, 'severity'\)/);
+  assert.match(html, /map\(mode => reflectionRuleLabel\(mode, 'capability'\)\)/);
 });

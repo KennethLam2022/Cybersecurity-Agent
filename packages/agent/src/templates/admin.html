@@ -3338,6 +3338,31 @@ async function loadRoutingRecommendation() {
   try { const response=await fetch(`/api/admin/model-routing/recommend?${params.toString()}`); const data=await response.json(); if(!response.ok) throw new Error(data.detail||'路由建议加载失败'); const target=data.recommended; const projected=target ? ` · 预计费用 ¥${Number(target.projected_cost || 0).toFixed(6)}${target.projected_budget_after == null ? '' : ` · 预算后 ¥${Number(data.budget_limit - target.projected_budget_after).toFixed(6)}`}` : ''; document.getElementById('routingRecommendation').innerHTML=target ? `<strong>建议模型：</strong>${escHtml(target.provider ? target.provider + '/' : '')}${escHtml(target.model)} · 质量分 ${escHtml(String(target.quality_score))}${projected}<br><span style="color:var(--t2)">${escHtml(data.reason || '')}</span>` : `<strong>路由被阻断：</strong>${escHtml(data.reason || '暂无建议')}<br><span style="color:var(--t2)">${escHtml(data.fallback || '')}</span>`; } catch(error) { document.getElementById('routingRecommendation').textContent=error.message||'路由建议加载失败'; }
 }
 
+const reflectionRuleLabels = {
+  category: {
+    general: ['通用', 'General'],
+    evidence: ['证据与来源', 'Evidence & Sources'],
+    scope: ['范围边界', 'Scope'],
+    safety: ['安全与越权', 'Safety & Authorization'],
+  },
+  severity: {
+    low: ['低', 'Low'],
+    medium: ['中', 'Medium'],
+    high: ['高', 'High'],
+    critical: ['严重', 'Critical'],
+  },
+  capability: {
+    chat: ['问答', 'Chat'],
+    writing: ['写作', 'Writing'],
+    presentation: ['PPT', 'Presentation'],
+  },
+};
+
+function reflectionRuleLabel(value, kind) {
+  const labels = reflectionRuleLabels[kind]?.[value];
+  return Array.isArray(labels) ? labels[adminLanguage === 'en-US' ? 1 : 0] : value || '-';
+}
+
 function clearReflectionRuleForm() {
   document.getElementById('reflectionRuleId').value = '';
   document.getElementById('reflectionRuleName').value = '';
@@ -3385,7 +3410,7 @@ async function loadReflectionRules() {
     const rules = await rulesResponse.json(); const summary = await summaryResponse.json();
     if (!rulesResponse.ok) throw new Error(rules.detail || '反思规则加载失败');
     const items = rules.items || [];
-    document.getElementById('reflectionRuleTable').innerHTML = items.length ? `<table class="data-table" style="width:100%"><thead><tr><th>名称</th><th>类别</th><th>级别</th><th>适用能力</th><th>版本</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${items.map(item => `<tr><td>${escHtml(item.name)}</td><td>${escHtml(item.category)}</td><td>${escHtml(item.severity)}</td><td>${escHtml((item.capability_modes || []).join('、'))}</td><td>v${escHtml(String(item.version))}</td><td>${escHtml(item.status)}</td><td>${escHtml(item.updated_at || '-')}</td><td><button class="extension-btn" data-reflection-rule="${encodeURIComponent(JSON.stringify(item))}" onclick="editReflectionRule(JSON.parse(decodeURIComponent(this.dataset.reflectionRule)))">编辑</button> <button class="extension-btn" onclick="showReflectionRuleVersions('${escHtml(item.id)}')">版本</button></td></tr>`).join('')}</tbody></table>` : '<div class="extension-empty">暂无规则。请先以草稿形式创建，再审核后发布。</div>';
+    document.getElementById('reflectionRuleTable').innerHTML = items.length ? `<table class="data-table" style="width:100%"><thead><tr><th>名称</th><th>类别</th><th>级别</th><th>适用能力</th><th>版本</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${items.map(item => `<tr><td>${escHtml(item.name)}</td><td>${escHtml(reflectionRuleLabel(item.category, 'category'))}</td><td>${escHtml(reflectionRuleLabel(item.severity, 'severity'))}</td><td>${escHtml((item.capability_modes || []).map(mode => reflectionRuleLabel(mode, 'capability')).join(adminLanguage === 'en-US' ? ', ' : '、'))}</td><td>v${escHtml(String(item.version))}</td><td>${escHtml(item.status)}</td><td>${escHtml(item.updated_at || '-')}</td><td><button class="extension-btn" data-reflection-rule="${encodeURIComponent(JSON.stringify(item))}" onclick="editReflectionRule(JSON.parse(decodeURIComponent(this.dataset.reflectionRule)))">编辑</button> <button class="extension-btn" onclick="showReflectionRuleVersions('${escHtml(item.id)}')">版本</button></td></tr>`).join('')}</tbody></table>` : '<div class="extension-empty">暂无规则。请先以草稿形式创建，再审核后发布。</div>';
     const d = summary.decisions || {}; const total = summary.total || 0;
     document.getElementById('reflectionSummary').innerHTML = `<div class="stat-card"><span class="num">${total}</span><span class="lbl">最近审查</span></div><div class="stat-card"><span class="num">${d.revise || 0}</span><span class="lbl">修改</span></div><div class="stat-card"><span class="num">${(d.block || 0) + (d.clarify || 0)}</span><span class="lbl">拦截/澄清</span></div><div class="stat-card"><span class="num">${d.degraded || 0}</span><span class="lbl">降级</span></div>`;
     const rows = (summary.recent || []).map(item => `<tr><td>${escHtml(item.created_at || '-')}</td><td>${escHtml(item.mode || '-')}</td><td>${escHtml(item.decision || '-')}</td><td>${escHtml(item.model || '-')}</td><td>v${escHtml(String(item.rule_version || 0))}</td><td>${escHtml(item.duration_ms || 0)} ms</td><td>${escHtml(item.output_summary || '-').slice(0, 120)}</td></tr>`).join('') || '<tr><td colspan="7" style="padding:18px;text-align:center;color:var(--t2)">暂无审查记录</td></tr>';
