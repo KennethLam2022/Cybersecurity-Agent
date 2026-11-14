@@ -17,6 +17,42 @@ function loadNavigationFunctions() {
   return html.slice(loaderStart, loaderEnd) + html.slice(switchStart, switchEnd);
 }
 
+async function renderWorkspaceList() {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  const start = html.indexOf('async function loadWorkspaces() {');
+  const end = html.indexOf('async function loadCustomRoles()', start);
+  assert.ok(start >= 0 && end > start);
+  const status = {textContent: ''};
+  const container = {innerHTML: ''};
+  const workspace = {
+    id: 'org-test',
+    name: 'Test workspace',
+    owner_name: 'Owner',
+    user_count: 1,
+    agent_count: 1,
+    knowledge_base_count: 0,
+    status: 'active',
+    users: [],
+    agents: [],
+  };
+  const sandbox = {
+    document: {getElementById(id) {
+      return id === 'workspaceStatus' ? status : id === 'workspaceList' ? container : null;
+    }},
+    fetch: async () => ({ok: true, json: async () => ({items: [workspace]})}),
+    escHtml: (value) => String(value ?? ''),
+    loadProfileProposals() {},
+    loadConflictProposals() {},
+    loadCustomRoles() {},
+    loadIndustryProfiles() {},
+    loadUserRegistrations() {},
+    loadLoginLocks() {},
+  };
+  vm.runInNewContext(html.slice(start, end), sandbox);
+  await sandbox.loadWorkspaces();
+  return container.innerHTML;
+}
+
 function loadAdminStartup() {
   const html = fs.readFileSync(templatePath, 'utf8');
   const loaderStart = html.indexOf('async function loadAdminPrincipal() {');
@@ -245,6 +281,16 @@ test('valid tab selection is restored without a permission warning', async () =>
   assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'workspaces');
   assert.equal(url.searchParams.get('tab'), 'workspaces');
   assert.deepEqual(messages, []);
+});
+
+test('workspace card actions remain available as secondary actions', async () => {
+  const rendered = await renderWorkspaceList();
+  const cardActions = rendered.slice(rendered.indexOf('<div class="workspace-card-actions">'));
+
+  assert.match(cardActions, /onclick="addWorkspaceUser\('org-test'\)"/);
+  assert.match(cardActions, /onclick="createWorkspaceAgent\('org-test'\)"/);
+  assert.match(cardActions, /class="workspace-card-actions"/);
+  assert.doesNotMatch(cardActions, /background:var\(--a\);color:#fff;border:0/);
 });
 
 test('does not connect org admins to the platform event stream', async () => {
