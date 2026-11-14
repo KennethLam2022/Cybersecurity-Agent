@@ -17,6 +17,74 @@ function loadNavigationFunctions() {
   return html.slice(loaderStart, loaderEnd) + html.slice(switchStart, switchEnd);
 }
 
+function loadAdminStartup() {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  const loaderStart = html.indexOf('async function loadAdminPrincipal() {');
+  const loaderEnd = html.indexOf('function currentAdminActor()', loaderStart);
+  const connectionStart = html.indexOf('function connectSSE() {');
+  const connectionEnd = html.indexOf('\nlet _convCatFilter', connectionStart);
+  const startupStart = html.indexOf("document.addEventListener('DOMContentLoaded', function() {");
+  const startupEnd = html.indexOf('\n});', startupStart) + 4;
+  assert.ok(loaderStart >= 0 && loaderEnd > loaderStart);
+  assert.ok(connectionStart >= 0 && connectionEnd > connectionStart);
+  assert.ok(startupStart >= 0 && startupEnd > startupStart);
+  return {
+    source: html.slice(loaderStart, loaderEnd)
+      + html.slice(connectionStart, connectionEnd)
+      + html.slice(startupStart, startupEnd),
+    platformOnlyStatus: ['connDot', 'connStatus'].map((id) => {
+      const element = html.match(new RegExp(`<[^>]+id="${id}"[^>]*>`))?.[0] || '';
+      return element.includes('data-platform-only');
+    }),
+  };
+}
+
+async function runAdminStartup(role) {
+  const {source, platformOnlyStatus} = loadAdminStartup();
+  const dotHidden = new Set();
+  const statusHidden = new Set();
+  const dot = {className: '', classList: {toggle(name, value) {
+    if (value) dotHidden.add(name);
+    else dotHidden.delete(name);
+  }}};
+  const status = {textContent: '连接中...', classList: {toggle(name, value) {
+    if (value) statusHidden.add(name);
+    else statusHidden.delete(name);
+  }}};
+  const statusElements = [dot, status].filter((_, index) => platformOnlyStatus[index]);
+  const eventSources = [];
+  let onReady;
+  let conversationLoads = 0;
+  const sandbox = {
+    URLSearchParams,
+    location: {search: ''},
+    document: {
+      addEventListener(_event, callback) { onReady = callback; },
+      getElementById(id) { return id === 'connDot' ? dot : status; },
+      querySelector() { return null; },
+      querySelectorAll(selector) {
+        if (selector === '[data-platform-only]') return statusElements;
+        return [];
+      },
+    },
+    fetch: async () => ({ok: true, json: async () => ({authenticated: true, role})}),
+    EventSource: class {
+      constructor(url) {
+        eventSources.push(url);
+      }
+      addEventListener() {}
+      close() {}
+    },
+    fetchConversations() { conversationLoads += 1; },
+    setTimeout,
+    clearTimeout,
+  };
+  vm.runInNewContext(source, sandbox);
+  onReady();
+  await new Promise(setImmediate);
+  return {eventSources, dotHidden, statusHidden, conversationLoads};
+}
+
 async function runNavigation(requestedTab) {
   const tabs = ['detail', 'overview', 'workspaces', 'notifications'].map((name) => ({
     dataset: {tab: name, group: 'operations'},
@@ -138,6 +206,24 @@ test('valid tab selection is restored without a permission warning', async () =>
   assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'workspaces');
   assert.equal(url.searchParams.get('tab'), 'workspaces');
   assert.deepEqual(messages, []);
+});
+
+test('does not connect org admins to the platform event stream', async () => {
+  const {eventSources, dotHidden, statusHidden, conversationLoads} = await runAdminStartup('org_admin');
+
+  assert.deepEqual(eventSources, []);
+  assert.equal(dotHidden.has('role-hidden'), true);
+  assert.equal(statusHidden.has('role-hidden'), true);
+  assert.equal(conversationLoads, 1);
+});
+
+test('keeps the platform admin event stream connected', async () => {
+  const {eventSources, dotHidden, statusHidden, conversationLoads} = await runAdminStartup('platform_admin');
+
+  assert.deepEqual(eventSources, ['/api/admin/stream']);
+  assert.equal(dotHidden.has('role-hidden'), false);
+  assert.equal(statusHidden.has('role-hidden'), false);
+  assert.equal(conversationLoads, 1);
 });
 
 test('reflection rule enum labels follow the selected language and preserve unknown values', () => {

@@ -319,8 +319,8 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
 <div class="header">
   <h1>安枢 SecureNexus · 管理后台</h1>
   <div class="header-actions">
-    <span class="status-dot" id="connDot"></span>
-    <span id="connStatus" style="font-size:12px;color:var(--t2);margin-right:12px;">连接中...</span>
+    <span class="status-dot" id="connDot" data-platform-only></span>
+    <span id="connStatus" data-platform-only style="font-size:12px;color:var(--t2);margin-right:12px;">连接中...</span>
     <span class="badge">实时看板</span>
     <select id="adminLanguageSelect" class="header-language" aria-label="语言" onchange="changeAdminLanguage(this.value)">
       <option value="zh-CN">中文</option>
@@ -1300,7 +1300,7 @@ document.addEventListener('keydown', closeAccessibleModal);
 document.addEventListener('DOMContentLoaded', function() {
   // 管理端以用户登录会话为准；本地兼容模式由后端决定是否允许默认工作区。
   loadAdminPrincipal().then(function() {
-    connectSSE();
+    if (adminPrincipal.role === 'platform_admin') connectSSE();
     fetchConversations();
   });
 });
