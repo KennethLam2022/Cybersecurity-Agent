@@ -285,10 +285,11 @@ test('valid tab selection is restored without a permission warning', async () =>
 
 test('workspace card actions remain available as secondary actions', async () => {
   const rendered = await renderWorkspaceList();
-  const cardActions = rendered.slice(rendered.indexOf('<div style="display:flex;gap:6px">'));
+  const cardActions = rendered.slice(rendered.indexOf('<div class="workspace-card-actions">'));
 
   assert.match(cardActions, /onclick="addWorkspaceUser\('org-test'\)"/);
   assert.match(cardActions, /onclick="createWorkspaceAgent\('org-test'\)"/);
+  assert.match(cardActions, /class="workspace-card-actions"/);
   assert.doesNotMatch(cardActions, /background:var\(--a\);color:#fff;border:0/);
 });
 
