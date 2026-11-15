@@ -527,3 +527,35 @@ test('webhook deliveries use readable event and error labels', async () => {
   assert.doesNotMatch(deliveries, /HTTPConnectionPool|internal|Read timed out/);
   assert.match(deliveries, /evt-fail · 第2次 · 失败/);
 });
+
+test('knowledge gap rows keep one primary action and keyboard-accessible secondary actions', () => {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  const start = html.indexOf('const _gapReasonLabels =');
+  const end = html.indexOf('\nasync function rebuildKnowledgeGaps()', start);
+  assert.ok(start >= 0 && end > start);
+
+  const box = {innerHTML: ''};
+  const sandbox = {
+    document: {getElementById: () => box},
+    escHtml: value => String(value),
+  };
+  vm.runInNewContext(html.slice(start, end), sandbox);
+  sandbox.renderGapTable([{
+    id: 42,
+    canonical_question: 'How do I review an alert?',
+    profile: 'security',
+    knowledge_base_id: 'kb-risk',
+    occurrence_count: 7,
+    reason_tags: [],
+    related_queries: [],
+    status: 'open',
+  }], 'open');
+
+  assert.match(box.innerHTML, /class="gap-primary"[^>]*onclick="createGapSupplyTask\(42\)"/);
+  assert.match(box.innerHTML, /<details>[\s\S]*<summary[^>]*>其他操作<\/summary>/);
+  assert.match(box.innerHTML, /onclick="promoteGapToPromptTest\(42\)"/);
+  assert.match(box.innerHTML, /onclick="updateGapStatus\(42,'resolved'\)"/);
+  assert.match(box.innerHTML, /onclick="updateGapStatus\(42,'dismissed'\)"/);
+  assert.match(box.innerHTML, /<table class="data-table" style="[^"]*min-width:900px/);
+  assert.match(box.innerHTML, /display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px/);
+});

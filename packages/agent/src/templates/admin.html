@@ -5912,15 +5912,22 @@ function renderGapTable(items, status) {
       <td>${tags}</td>
       <td><span style="font-size:11px;color:var(--t2)">${escHtml(g.last_seen_at||'')}</span></td>
       <td><span style="font-size:11px;color:${g.status==='open'?'var(--r)':'var(--g)'};font-weight:600">${_gapStatusLabels[g.status]||g.status}</span></td>
-      <td style="white-space:nowrap">
-        <button onclick="createGapSupplyTask(${g.id})" style="padding:4px 8px;border:1px solid var(--a);border-radius:6px;background:var(--a);color:#fff;cursor:pointer;font-size:11px">生成补资料任务</button>
-        <button onclick="promoteGapToPromptTest(${g.id})" style="padding:4px 8px;border:1px solid #7c3aed;border-radius:6px;background:#fff;color:#7c3aed;cursor:pointer;font-size:11px">转为 Prompt 测试</button>
-        <button onclick="updateGapStatus(${g.id},'resolved')" style="padding:4px 8px;border:1px solid var(--g);border-radius:6px;background:#fff;color:var(--g);cursor:pointer;font-size:11px">标记已解决</button>
-        <button onclick="updateGapStatus(${g.id},'dismissed')" style="padding:4px 8px;border:1px solid var(--b2);border-radius:6px;background:#fff;color:var(--t2);cursor:pointer;font-size:11px">忽略</button>
+      <td style="min-width:150px">
+        <div style="display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px">
+          <button class="gap-primary" onclick="createGapSupplyTask(${g.id})" style="padding:4px 8px;border:1px solid var(--a);border-radius:6px;background:var(--a);color:#fff;cursor:pointer;font-size:11px">生成补资料任务</button>
+          <details>
+            <summary style="cursor:pointer;padding:4px 8px;border:1px solid var(--b2);border-radius:6px;color:var(--t1);font-size:11px">其他操作</summary>
+            <div style="display:grid;gap:6px;padding:6px 0">
+              <button onclick="promoteGapToPromptTest(${g.id})" style="padding:4px 8px;border:1px solid var(--b2);border-radius:6px;background:var(--b);color:var(--t1);cursor:pointer;font-size:11px">转为 Prompt 测试</button>
+              <button onclick="updateGapStatus(${g.id},'resolved')" style="padding:4px 8px;border:1px solid var(--g);border-radius:6px;background:var(--b);color:var(--g);cursor:pointer;font-size:11px">标记已解决</button>
+              <button onclick="updateGapStatus(${g.id},'dismissed')" style="padding:4px 8px;border:1px solid var(--b2);border-radius:6px;background:var(--b);color:var(--t2);cursor:pointer;font-size:11px">忽略</button>
+            </div>
+          </details>
+        </div>
       </td>
     </tr>`;
   }).join('');
-  box.innerHTML = `<table class="data-table" style="width:100%;font-size:12px;border-collapse:collapse">
+  box.innerHTML = `<table class="data-table" style="width:100%;min-width:900px;font-size:12px;border-collapse:collapse">
     <thead><tr><th>典型问题</th><th>Profile</th><th>知识库</th><th>次数</th><th>低分/刷新/纠错/无来源</th><th>原因</th><th>最近出现</th><th>状态</th><th>操作</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
 }
