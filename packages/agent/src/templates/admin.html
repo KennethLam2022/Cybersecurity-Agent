@@ -6006,6 +6006,27 @@ function changeAdminLanguage(language) {
 document.getElementById('adminLanguageSelect').value = localStorage.getItem('securenexus_language') || 'zh-CN';
 changeAdminLanguage(document.getElementById('adminLanguageSelect').value);
 
+function webhookEventLabel(eventType) {
+  return ({
+    'ingestion.completed': '入库完成',
+    'ingestion.failed': '入库失败',
+    'approval.pending': '待审批',
+    'eval.completed': '评测完成',
+    'quota.warning': '配额提醒',
+    'jailbreak.alert': '安全告警',
+    'knowledge_gap.created': '发现知识缺口',
+    'external_api.failed': '外部 API 调用失败',
+    'workflow.completed': '工作流完成',
+  })[eventType] || `未知事件（${eventType || '-'}）`;
+}
+
+function webhookDeliveryErrorSummary(error) {
+  if (!error) return '';
+  const httpStatus = String(error).match(/^HTTP (\d{3})$/);
+  if (httpStatus) return `目标服务器返回 HTTP ${httpStatus[1]}`;
+  return 'Webhook 请求失败，请检查目标地址和网络后重试';
+}
+
 async function loadWebhooks() {
   try {
     const [events, hooks, deliveries] = await Promise.all([
@@ -6014,7 +6035,7 @@ async function loadWebhooks() {
       fetch('/api/admin/webhooks/deliveries?tenant_id=local-default&limit=50').then(r => r.json()),
     ]);
     document.getElementById('webhookEventsChoices').innerHTML = (events.items || []).map((e, i) =>
-      `<label><input type="checkbox" class="webhook-event" value="${e}" ${i < 3 ? 'checked' : ''}> ${e}</label>`).join('');
+      `<label><input type="checkbox" class="webhook-event" value="${escapeHtml(e)}" ${i < 3 ? 'checked' : ''}> ${escapeHtml(webhookEventLabel(e))}</label>`).join('');
     const box = document.getElementById('webhooksList');
     box.innerHTML = (hooks.items || []).map(h => `<div style="padding:8px;border-bottom:1px solid var(--b2)">
       <strong>${escapeHtml(h.name)}</strong> <span style="color:var(--t2)">${escapeHtml(h.url)}</span>
@@ -6024,7 +6045,7 @@ async function loadWebhooks() {
       <button onclick="testWebhook('${h.tenant_id}')" style="float:right;padding:3px 8px;margin-right:6px">测试</button>
     </div>`).join('') || '<div class="empty-state">暂无 Webhook 订阅</div>';
     document.getElementById('webhookDeliveriesList').innerHTML = '<div class="chart-title">最近投递</div>' + ((deliveries.items || []).map(d =>
-      `<div style="padding:6px;border-bottom:1px solid var(--b2);font-size:12px"><strong>${d.event_type}</strong> · ${d.event_id} · 第${d.attempt}次 · ${d.delivered ? '成功' : '失败'}${d.status_code ? ' · HTTP ' + d.status_code : ''}${d.error ? ' · ' + escapeHtml(d.error) : ''}</div>`).join('') || '<div style="color:var(--t2);padding:8px">暂无记录</div>');
+      `<div style="padding:6px;border-bottom:1px solid var(--b2);font-size:12px"><strong>${escapeHtml(webhookEventLabel(d.event_type))}</strong> · ${escapeHtml(d.event_id)} · 第${d.attempt}次 · ${d.delivered ? '成功' : '失败'}${d.status_code ? ' · HTTP ' + d.status_code : ''}${d.error ? ' · ' + escapeHtml(webhookDeliveryErrorSummary(d.error)) : ''}</div>`).join('') || '<div style="color:var(--t2);padding:8px">暂无记录</div>');
   } catch (e) {
     document.getElementById('webhooksList').textContent = '加载失败：' + e.message;
   }
