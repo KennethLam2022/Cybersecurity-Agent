@@ -255,6 +255,11 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
 @media (max-width:820px){.ab-config{grid-template-columns:1fr 1fr}.ab-config button{grid-column:span 2}}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px;margin-bottom:16px}
+#agentEvalStats{grid-template-columns:repeat(3,minmax(0,1fr))}
+#agentEvalStats .stat-card .num{overflow-wrap:normal;word-break:normal}
+#agentEvalP95,#agentEvalTokens,#agentEvalModel{white-space:nowrap}
+#agentEvalStats .agent-eval-model{grid-column:span 2}
+#agentEvalModel{font-size:18px}
 .stat-card{background:var(--bg);border-radius:10px;padding:16px;text-align:center}
 .stat-card .num{font-size:32px;font-weight:700;color:var(--a);display:block;overflow-wrap:break-word;word-break:break-all;line-height:1.2}
 .stat-card .lbl{font-size:12px;color:var(--t2);margin-top:4px;display:block}
@@ -262,6 +267,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
 .stat-card.ws{padding:12px 8px}
 .stat-card.ws .num{font-size:24px}
 .stat-card.ws.elastic .num{color:#8e44ad}
+@media (max-width:820px){#agentEvalStats{grid-template-columns:repeat(2,minmax(0,1fr))}#agentEvalStats .agent-eval-model{grid-column:span 2}#agentEvalStats .stat-card .num{font-size:20px}#agentEvalModel{white-space:normal;overflow-wrap:anywhere}}
 .ws-panel{display:none}
 .ws-panel.active{display:block}
 .action-bar{display:flex;gap:8px;padding:10px 0;border-bottom:1px solid var(--b);margin-bottom:12px;flex-wrap:wrap;align-items:center}
@@ -1242,7 +1248,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
         <div class="stat-card"><span class="num" id="agentEvalP95">--</span><span class="lbl">P95耗时</span></div>
         <div class="stat-card"><span class="num" id="agentEvalFlaky">--</span><span class="lbl">Flaky率</span></div>
         <div class="stat-card"><span class="num" id="agentEvalTokens">--</span><span class="lbl">总Token</span></div>
-        <div class="stat-card"><span class="num" id="agentEvalModel">--</span><span class="lbl">模型</span></div>
+        <div class="stat-card agent-eval-model"><span class="num" id="agentEvalModel">--</span><span class="lbl">模型</span></div>
       </div>
       <div id="agentEvalProfileSummary" style="margin:10px 0;font-size:12px;color:var(--t2)"></div>
       <div class="chart-card" style="margin-top:12px">
