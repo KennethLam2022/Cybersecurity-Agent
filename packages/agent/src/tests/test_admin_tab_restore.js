@@ -454,3 +454,47 @@ test('notification statuses follow the admin language without changing filter va
   assert.match(container.innerHTML, /<td>Read<\/td>/);
   assert.match(container.innerHTML, /<td>Unknown \(future_state\)<\/td>/);
 });
+
+test('webhook deliveries use readable event and error labels', async () => {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  const labelsStart = html.indexOf('function webhookEventLabel(eventType) {');
+  const loadStart = html.indexOf('async function loadWebhooks() {');
+  const loadEnd = html.indexOf('\nasync function createWebhook()', loadStart);
+  assert.ok(labelsStart >= 0 && loadStart > labelsStart && loadEnd > loadStart);
+
+  const containers = {
+    webhookEventsChoices: {innerHTML: ''},
+    webhooksList: {innerHTML: ''},
+    webhookDeliveriesList: {innerHTML: ''},
+  };
+  const sandbox = {
+    escapeHtml: value => String(value).replace(/[&<>"']/g, char => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[char]),
+    document: {getElementById: id => containers[id]},
+    fetch: async url => ({
+      json: async () => url.endsWith('/events')
+        ? {items: ['workflow.completed', 'future.event']}
+        : url.includes('/deliveries')
+          ? {items: [
+            {event_type: 'workflow.completed', event_id: 'evt-ok', attempt: 1, delivered: true},
+            {event_type: 'ingestion.failed', event_id: 'evt-fail', attempt: 2, delivered: false, error: "HTTPConnectionPool(host='internal', port=443): Read timed out"},
+            {event_type: '<future.event>', event_id: 'evt-unknown', attempt: 1, delivered: true},
+          ]}
+          : {items: []},
+    }),
+  };
+  vm.runInNewContext(
+    html.slice(labelsStart, loadStart) + html.slice(loadStart, loadEnd),
+    sandbox,
+  );
+  await sandbox.loadWebhooks();
+
+  const deliveries = containers.webhookDeliveriesList.innerHTML;
+  assert.match(deliveries, /工作流完成/);
+  assert.match(deliveries, /入库失败/);
+  assert.match(deliveries, /未知事件（&lt;future\.event&gt;）/);
+  assert.match(deliveries, /Webhook 请求失败，请检查目标地址和网络后重试/);
+  assert.doesNotMatch(deliveries, /HTTPConnectionPool|internal|Read timed out/);
+  assert.match(deliveries, /evt-fail · 第2次 · 失败/);
+});
