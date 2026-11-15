@@ -447,7 +447,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       </div>
     </div>
     <div class="tab-content" id="tabWorkspaces">
-      <div class="test-purpose"><strong>本页面的目的：</strong>管理组织工作区、用户账号与 Agent 的生命周期。每个组织工作区都是对话、记忆、知识库、费用和权限的隔离边界。</div>
+      <details class="page-purpose"><summary>页面说明</summary><div class="test-purpose"><strong>本页面的目的：</strong>管理组织工作区、用户账号与 Agent 的生命周期。每个组织工作区都是对话、记忆、知识库、费用和权限的隔离边界。</div></details>
       <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 12px;gap:10px;flex-wrap:wrap">
         <span id="workspaceStatus" style="font-size:12px;color:var(--t2)">加载中...</span>
         <div style="display:flex;gap:8px"><button onclick="createFormalOrganization()" style="padding:6px 10px;background:var(--a);color:#fff;border:0;border-radius:6px;cursor:pointer">创建组织</button><button onclick="loadWorkspaces()" title="刷新组织工作区数据" style="padding:6px 10px;background:var(--b2);color:var(--t1);border:0;border-radius:6px;cursor:pointer">刷新</button></div>
@@ -491,7 +491,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       </section>
     </div>
     <div class="tab-content" id="tabNotifications">
-      <div class="test-purpose"><strong>本页面的目的：</strong>集中处理系统事件、审批、评测、入库和安全告警。通知按工作区隔离；标记已读、归档和跳转操作均会写入审计记录。</div>
+      <details class="page-purpose"><summary>页面说明</summary><div class="test-purpose"><strong>本页面的目的：</strong>集中处理系统事件、审批、评测、入库和安全告警。通知按工作区隔离；标记已读、归档和跳转操作均会写入审计记录。</div></details>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">
         <input id="notificationTenant" value="local-default" placeholder="工作区 ID" style="padding:7px 9px;border:1px solid var(--b2);border-radius:6px;min-width:160px">
         <select id="notificationStatusFilter" onchange="loadNotifications()" style="padding:7px 9px;border:1px solid var(--b2);border-radius:6px"><option value="">全部状态</option><option value="unread">未读</option><option value="read">已读</option><option value="archived">已归档</option></select>
@@ -1289,6 +1289,8 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
 .token-modal-card{position:relative;background:var(--card);border-radius:16px;padding:32px;width:360px;max-width:90vw;box-shadow:0 8px 40px rgba(0,0,0,.15)}
 .test-purpose{margin:0 0 14px;padding:8px 10px;border-left:3px solid var(--a);background:var(--bg);color:var(--t2);font-size:12px;line-height:1.6}
 .test-purpose strong{color:var(--t1);font-weight:600}
+.page-purpose{margin:0 0 12px;color:var(--t2);font-size:12px}
+.page-purpose>summary{width:fit-content;cursor:pointer}
 </style>
 
 <script>
