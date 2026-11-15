@@ -28,6 +28,54 @@ def test_document_stat_cards_keep_readable_columns_on_desktop_and_mobile():
     assert ".stat-item .info { min-width: 0; }" in content
 
 
+def test_ingestion_stats_are_grouped_by_measurement_scope():
+    page = (Path(__file__).parents[1] / "static" / "data_preview.html").read_text(encoding="utf-8")
+
+    class StatsGroupParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.groups = {}
+            self.scope = None
+            self.title_group = None
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == "section" and attrs.get("data-stat-scope"):
+                self.scope = attrs["data-stat-scope"]
+                self.groups[self.scope] = {"title": "", "ids": set()}
+            elif self.scope and tag == "h3":
+                self.title_group = self.scope
+            elif self.scope and attrs.get("id"):
+                self.groups[self.scope]["ids"].add(attrs["id"])
+
+        def handle_data(self, data):
+            if self.title_group:
+                self.groups[self.title_group]["title"] += data.strip()
+
+        def handle_endtag(self, tag):
+            if tag == "h3":
+                self.title_group = None
+            elif tag == "section" and self.scope:
+                self.scope = None
+
+    parser = StatsGroupParser()
+    parser.feed(page)
+
+    assert {scope: group["title"] for scope, group in parser.groups.items()} == {
+        "batch": "本次批次",
+        "knowledge-base": "知识库总量",
+        "retrieval-quality": "检索质量",
+    }
+    assert parser.groups["batch"]["ids"] == {
+        "totalCount", "successCount", "failCount", "pendingCount", "conflictCount",
+    }
+    assert parser.groups["knowledge-base"]["ids"] == {"faissCount", "chromaCount"}
+    assert parser.groups["retrieval-quality"]["ids"] == {
+        "retrievalDegradedRate", "retrievalEvalScore",
+        "degradationStageBreakdown", "degStages",
+    }
+
+
 def test_document_preview_escapes_untrusted_metadata_in_html_contexts():
     content = (Path(__file__).parents[1] / "static" / "data_preview.html").read_text(encoding="utf-8")
     render = content[content.index("function render() {"):content.index("function filterFiles() {")]
