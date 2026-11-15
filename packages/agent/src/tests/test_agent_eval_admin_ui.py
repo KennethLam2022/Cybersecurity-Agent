@@ -74,6 +74,17 @@ def test_agent_eval_admin_exposes_judge_replay_and_calibration_controls():
         assert fragment in html, fragment
 
 
+def test_agent_eval_kpi_values_keep_units_and_model_name_together():
+    html = ADMIN_HTML.read_text(encoding="utf-8")
+
+    assert "#agentEvalStats{grid-template-columns:repeat(3,minmax(0,1fr))}" in html
+    assert "#agentEvalStats .stat-card .num{overflow-wrap:normal;word-break:normal}" in html
+    assert "#agentEvalP95,#agentEvalTokens,#agentEvalModel{white-space:nowrap}" in html
+    assert "#agentEvalModel{white-space:normal;overflow-wrap:anywhere}" in html
+    assert "#agentEvalStats .stat-card .num{font-size:20px}" in html
+    assert 'class="stat-card agent-eval-model"' in html
+
+
 def test_admin_test_pages_explain_their_purpose():
     html = ADMIN_HTML.read_text(encoding="utf-8")
     for fragment in (
