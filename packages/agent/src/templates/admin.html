@@ -366,6 +366,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <button class="primary-nav-item" data-group="quality" onclick="switchPrimaryGroup('quality')">质量评测</button>
     </div>
     <p id="qualityAccessNotice" class="role-hidden role-access-note" data-org-admin-only role="note">质量评测仅限平台管理员访问</p>
+    <p id="restrictedAccessNotice" class="role-access-note" role="status" aria-live="polite" hidden></p>
     <div class="tab-bar" id="tabBar" role="tablist" aria-label="当前工作区子页面">
       <button class="tab-item active" data-group="operations" data-tab="detail" role="tab" aria-selected="true" aria-controls="tabDetail" onclick="switchTab('detail')">对话详情</button>
       <button class="tab-item" data-group="operations" data-tab="overview" role="tab" aria-selected="false" aria-controls="tabOverview" onclick="switchTab('overview')">概览看板</button>
@@ -1966,9 +1967,15 @@ function switchPrimaryGroup(group) {
 }
 
 function switchTab(name) {
+  const restrictedAccessNotice = document.getElementById('restrictedAccessNotice');
   if (adminPrincipal.authenticated && adminPrincipal.role !== 'platform_admin' && platformOnlyTabs.has(name)) {
-    showToast('该配置仅限平台管理员访问', 'error');
+    if (restrictedAccessNotice) {
+      restrictedAccessNotice.textContent = '该配置仅限平台管理员访问';
+      restrictedAccessNotice.hidden = false;
+    }
     name = document.querySelector('.tab-item:not(.role-hidden)')?.dataset.tab || 'detail';
+  } else if (restrictedAccessNotice) {
+    restrictedAccessNotice.hidden = true;
   }
   const target = document.querySelector(`.tab-item[data-tab="${CSS.escape(name)}"]`);
   if (!target || target.classList.contains('role-hidden')) {
