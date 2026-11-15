@@ -326,6 +326,11 @@ test('workspace card actions remain available as secondary actions', async () =>
   assert.doesNotMatch(cardActions, /background:var\(--a\);color:#fff;border:0/);
 });
 
+test('workspace cards can shrink to the narrow viewport', () => {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  assert.match(html, /#workspaceList \.chart-card\s*\{[^}]*min-width:\s*0/);
+});
+
 test('does not connect org admins to the platform event stream', async () => {
   const {eventSources, dotHidden, statusHidden} = await runAdminStartup('org_admin');
 
