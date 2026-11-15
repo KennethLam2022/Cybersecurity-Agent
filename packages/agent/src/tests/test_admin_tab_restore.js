@@ -17,6 +17,42 @@ function loadNavigationFunctions() {
   return html.slice(loaderStart, loaderEnd) + html.slice(switchStart, switchEnd);
 }
 
+async function renderWorkspaceList() {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  const start = html.indexOf('async function loadWorkspaces() {');
+  const end = html.indexOf('async function loadCustomRoles()', start);
+  assert.ok(start >= 0 && end > start);
+  const status = {textContent: ''};
+  const container = {innerHTML: ''};
+  const workspace = {
+    id: 'org-test',
+    name: 'Test workspace',
+    owner_name: 'Owner',
+    user_count: 1,
+    agent_count: 1,
+    knowledge_base_count: 0,
+    status: 'active',
+    users: [],
+    agents: [],
+  };
+  const sandbox = {
+    document: {getElementById(id) {
+      return id === 'workspaceStatus' ? status : id === 'workspaceList' ? container : null;
+    }},
+    fetch: async () => ({ok: true, json: async () => ({items: [workspace]})}),
+    escHtml: (value) => String(value ?? ''),
+    loadProfileProposals() {},
+    loadConflictProposals() {},
+    loadCustomRoles() {},
+    loadIndustryProfiles() {},
+    loadUserRegistrations() {},
+    loadLoginLocks() {},
+  };
+  vm.runInNewContext(html.slice(start, end), sandbox);
+  await sandbox.loadWorkspaces();
+  return container.innerHTML;
+}
+
 function loadAdminStartup() {
   const html = fs.readFileSync(templatePath, 'utf8');
   const loaderStart = html.indexOf('async function loadAdminPrincipal() {');
@@ -276,6 +312,23 @@ test('platform admin opens a restricted tab without a denial notice', async () =
   assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'overview');
   assert.deepEqual(messages, []);
   assert.equal(restrictedAccessNotice.hidden, true);
+});
+
+test('workspace card actions remain available as secondary actions', async () => {
+  const rendered = await renderWorkspaceList();
+  const actionStart = rendered.indexOf('<div style="display:flex;gap:6px;flex-wrap:wrap">');
+  const actionEnd = rendered.indexOf('</div></div><div style="display:grid', actionStart);
+  assert.ok(actionStart >= 0 && actionEnd > actionStart);
+  const cardActions = rendered.slice(actionStart, actionEnd);
+
+  assert.match(cardActions, /onclick="addWorkspaceUser\('org-test'\)"/);
+  assert.match(cardActions, /onclick="createWorkspaceAgent\('org-test'\)"/);
+  assert.doesNotMatch(cardActions, /background:var\(--a\);color:#fff;border:0/);
+});
+
+test('workspace cards can shrink to the narrow viewport', () => {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  assert.match(html, /#workspaceList \.chart-card\s*\{[^}]*min-width:\s*0/);
 });
 
 test('does not connect org admins to the platform event stream', async () => {
