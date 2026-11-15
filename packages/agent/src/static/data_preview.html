@@ -48,6 +48,9 @@
   .migration-history { padding: 3px 7px; border: 1px solid var(--b); border-radius: 5px; background: var(--card); color: var(--a); font-size: 11px; cursor: pointer; }
 
   .stat-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 14px; margin-bottom: 24px; }
+  .stat-groups { display: grid; gap: 16px; margin-bottom: 24px; }
+  .stat-group-title { margin: 0 0 8px; color: var(--t2); font-size: 13px; font-weight: 600; }
+  .stat-group .stat-bar { margin-bottom: 0; }
   .stat-item { min-width: 0; background: var(--card); border: 1px solid var(--b); border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; gap: 14px; }
   .stat-item .icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
   .stat-item .icon.purple { background: #0071e312; color: var(--a); }
@@ -315,47 +318,62 @@
   </div>
 
   <!-- 统计栏 -->
-  <div class="stat-bar">
-    <div class="stat-item">
-      <div class="icon purple">📄</div>
-      <div class="info"><div class="num" id="totalCount">0</div><div class="label">文档总数</div></div>
-    </div>
-    <div class="stat-item">
-      <div class="icon green">✅</div>
-      <div class="info"><div class="num" id="successCount">0</div><div class="label">处理成功</div></div>
-    </div>
-    <div class="stat-item">
-      <div class="icon red">❌</div>
-      <div class="info"><div class="num" id="failCount">0</div><div class="label">处理失败</div></div>
-    </div>
-    <div class="stat-item">
-      <div class="icon gray">⏸</div>
-      <div class="info"><div class="num pending" id="pendingCount">0</div><div class="label">待确认</div></div>
-    </div>
-    <div class="stat-item">
-      <div class="icon orange">⚠️</div>
-      <div class="info"><div class="num duplicate" id="conflictCount">0</div><div class="label">重名冲突</div></div>
-    </div>
-    <div class="stat-item">
-      <div class="icon blue">🔮</div>
-      <div class="info"><div class="num" id="faissCount">0</div><div class="label">FAISS 向量</div></div>
-    </div>
-    <div class="stat-item">
-      <div class="icon blue">📊</div>
-      <div class="info"><div class="num" id="chromaCount">0</div><div class="label">Chroma 向量</div></div>
-    </div>
-    <div class="stat-item">
-      <div class="icon orange">🔍</div>
-      <div class="info"><div class="num" id="retrievalDegradedRate">-</div><div class="label">检索降级率</div></div>
-    </div>
-    <div class="stat-item">
-      <div class="icon green">📈</div>
-      <div class="info"><div class="num" id="retrievalEvalScore">-</div><div class="label">检索评测 Recall@10</div></div>
-    </div>
-  </div>
-  <div id="degradationStageBreakdown" style="display:none; margin:-16px 0 20px 0; padding:8px 16px; background:var(--card); border:1px solid var(--b); border-radius:8px; font-size:11px; color:var(--t2);">
-    <span style="font-weight:600; margin-right:12px;">降级分布:</span>
-    <span id="degStages"></span>
+  <div class="stat-groups">
+    <section class="stat-group" data-stat-scope="batch">
+      <h3 class="stat-group-title">本次批次</h3>
+      <div class="stat-bar">
+        <div class="stat-item">
+          <div class="icon purple">📄</div>
+          <div class="info"><div class="num" id="totalCount">0</div><div class="label">文档总数</div></div>
+        </div>
+        <div class="stat-item">
+          <div class="icon green">✅</div>
+          <div class="info"><div class="num" id="successCount">0</div><div class="label">处理成功</div></div>
+        </div>
+        <div class="stat-item">
+          <div class="icon red">❌</div>
+          <div class="info"><div class="num" id="failCount">0</div><div class="label">处理失败</div></div>
+        </div>
+        <div class="stat-item">
+          <div class="icon gray">⏸</div>
+          <div class="info"><div class="num pending" id="pendingCount">0</div><div class="label">待确认</div></div>
+        </div>
+        <div class="stat-item">
+          <div class="icon orange">⚠️</div>
+          <div class="info"><div class="num duplicate" id="conflictCount">0</div><div class="label">重名冲突</div></div>
+        </div>
+      </div>
+    </section>
+    <section class="stat-group" data-stat-scope="knowledge-base">
+      <h3 class="stat-group-title">知识库总量</h3>
+      <div class="stat-bar">
+        <div class="stat-item">
+          <div class="icon blue">🔮</div>
+          <div class="info"><div class="num" id="faissCount">0</div><div class="label">FAISS 向量</div></div>
+        </div>
+        <div class="stat-item">
+          <div class="icon blue">📊</div>
+          <div class="info"><div class="num" id="chromaCount">0</div><div class="label">Chroma 向量</div></div>
+        </div>
+      </div>
+    </section>
+    <section class="stat-group" data-stat-scope="retrieval-quality">
+      <h3 class="stat-group-title">检索质量</h3>
+      <div class="stat-bar">
+        <div class="stat-item">
+          <div class="icon orange">🔍</div>
+          <div class="info"><div class="num" id="retrievalDegradedRate">-</div><div class="label">检索降级率</div></div>
+        </div>
+        <div class="stat-item">
+          <div class="icon green">📈</div>
+          <div class="info"><div class="num" id="retrievalEvalScore">-</div><div class="label">检索评测 Recall@10</div></div>
+        </div>
+      </div>
+      <div id="degradationStageBreakdown" style="display:none; margin:10px 0 0; padding:8px 16px; background:var(--card); border:1px solid var(--b); border-radius:8px; font-size:11px; color:var(--t2);">
+        <span style="font-weight:600; margin-right:12px;">降级分布:</span>
+        <span id="degStages"></span>
+      </div>
+    </section>
   </div>
 
   <!-- 操作栏 -->
