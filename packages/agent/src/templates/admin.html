@@ -2437,6 +2437,15 @@ function notificationSeverityLabel(severity) {
   return {info:'信息',success:'完成',warning:'提醒',error:'错误',critical:'高危'}[severity] || severity || '信息';
 }
 
+function notificationStatusLabel(status) {
+  const labels = adminLanguage === 'en-US'
+    ? {unread:'Unread', read:'Read'}
+    : {unread:'未读', read:'已读'};
+  if (labels[status]) return labels[status];
+  if (!status) return '-';
+  return adminLanguage === 'en-US' ? `Unknown (${status})` : `未知（${status}）`;
+}
+
 function notificationSeverityColor(severity) {
   return {info:'var(--a)',success:'var(--g)',warning:'var(--y)',error:'var(--r)',critical:'var(--r)'}[severity] || 'var(--t2)';
 }
@@ -2466,7 +2475,7 @@ async function loadNotifications() {
     const rows = items.map(item => {
       const target = item.user_id ? escHtml(item.user_id) : '工作区全体';
       const link = item.link_path ? '<button onclick="openNotificationLink(\'' + escHtml(item.link_path) + '\')" style="padding:4px 7px;border:1px solid var(--b2);border-radius:4px;background:transparent;cursor:pointer;font-size:11px">查看</button>' : '';
-      return '<tr><td><input class="notification-select" type="checkbox" value="' + escHtml(item.id) + '"></td><td><span style="color:' + notificationSeverityColor(item.severity) + ';font-weight:600">' + notificationSeverityLabel(item.severity) + '</span></td><td><div style="font-weight:600">' + escHtml(item.title) + '</div><div style="color:var(--t2);margin-top:3px;line-height:1.4">' + escHtml(item.body || '--') + '</div></td><td><code>' + target + '</code></td><td>' + escHtml(item.status) + '</td><td>' + escHtml(item.created_at || '--') + '</td><td style="white-space:nowrap">' + link + '</td></tr>';
+      return '<tr><td><input class="notification-select" type="checkbox" value="' + escHtml(item.id) + '"></td><td><span style="color:' + notificationSeverityColor(item.severity) + ';font-weight:600">' + notificationSeverityLabel(item.severity) + '</span></td><td><div style="font-weight:600">' + escHtml(item.title) + '</div><div style="color:var(--t2);margin-top:3px;line-height:1.4">' + escHtml(item.body || '--') + '</div></td><td><code>' + target + '</code></td><td>' + escHtml(notificationStatusLabel(item.status)) + '</td><td>' + escHtml(item.created_at || '--') + '</td><td style="white-space:nowrap">' + link + '</td></tr>';
     }).join('');
     container.innerHTML = '<table class="data-table" style="width:100%;font-size:12px"><thead><tr><th style="width:34px"><input type="checkbox" onchange="toggleAllNotifications(this.checked)" title="全选"></th><th>级别</th><th>通知</th><th>接收范围</th><th>状态</th><th>时间</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table>';
   } catch (error) {
