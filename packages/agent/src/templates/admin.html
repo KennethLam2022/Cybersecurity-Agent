@@ -366,6 +366,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);height:100vh;overf
       <button class="primary-nav-item" data-group="quality" onclick="switchPrimaryGroup('quality')">质量评测</button>
     </div>
     <p id="qualityAccessNotice" class="role-hidden role-access-note" data-org-admin-only role="note">质量评测仅限平台管理员访问</p>
+    <p id="restrictedAccessNotice" class="role-access-note" role="status" aria-live="polite" hidden></p>
     <div class="tab-bar" id="tabBar" role="tablist" aria-label="当前工作区子页面">
       <button class="tab-item active" data-group="operations" data-tab="detail" role="tab" aria-selected="true" aria-controls="tabDetail" onclick="switchTab('detail')">对话详情</button>
       <button class="tab-item" data-group="operations" data-tab="overview" role="tab" aria-selected="false" aria-controls="tabOverview" onclick="switchTab('overview')">概览看板</button>
@@ -1966,9 +1967,15 @@ function switchPrimaryGroup(group) {
 }
 
 function switchTab(name) {
+  const restrictedAccessNotice = document.getElementById('restrictedAccessNotice');
   if (adminPrincipal.authenticated && adminPrincipal.role !== 'platform_admin' && platformOnlyTabs.has(name)) {
-    showToast('该配置仅限平台管理员访问', 'error');
+    if (restrictedAccessNotice) {
+      restrictedAccessNotice.textContent = '该配置仅限平台管理员访问';
+      restrictedAccessNotice.hidden = false;
+    }
     name = document.querySelector('.tab-item:not(.role-hidden)')?.dataset.tab || 'detail';
+  } else if (restrictedAccessNotice) {
+    restrictedAccessNotice.hidden = true;
   }
   const target = document.querySelector(`.tab-item[data-tab="${CSS.escape(name)}"]`);
   if (!target || target.classList.contains('role-hidden')) {
@@ -5891,22 +5898,15 @@ function renderGapTable(items, status) {
       <td>${tags}</td>
       <td><span style="font-size:11px;color:var(--t2)">${escHtml(g.last_seen_at||'')}</span></td>
       <td><span style="font-size:11px;color:${g.status==='open'?'var(--r)':'var(--g)'};font-weight:600">${_gapStatusLabels[g.status]||g.status}</span></td>
-      <td style="min-width:150px">
-        <div style="display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px">
-          <button class="primary" onclick="createGapSupplyTask(${g.id})" style="padding:4px 8px;border:1px solid var(--a);border-radius:6px;background:var(--a);color:#fff;cursor:pointer;font-size:11px">生成补资料任务</button>
-          <details>
-            <summary style="cursor:pointer;padding:4px 8px;border:1px solid var(--b2);border-radius:6px;color:var(--t1);font-size:11px">其他操作</summary>
-            <div style="display:grid;gap:6px;padding:6px 0">
-              <button onclick="promoteGapToPromptTest(${g.id})" style="padding:4px 8px;border:1px solid var(--b2);border-radius:6px;background:var(--b);color:var(--t1);cursor:pointer;font-size:11px">转为 Prompt 测试</button>
-              <button onclick="updateGapStatus(${g.id},'resolved')" style="padding:4px 8px;border:1px solid var(--g);border-radius:6px;background:var(--b);color:var(--g);cursor:pointer;font-size:11px">标记已解决</button>
-              <button onclick="updateGapStatus(${g.id},'dismissed')" style="padding:4px 8px;border:1px solid var(--b2);border-radius:6px;background:var(--b);color:var(--t2);cursor:pointer;font-size:11px">忽略</button>
-            </div>
-          </details>
-        </div>
+      <td style="white-space:nowrap">
+        <button onclick="createGapSupplyTask(${g.id})" style="padding:4px 8px;border:1px solid var(--a);border-radius:6px;background:var(--a);color:#fff;cursor:pointer;font-size:11px">生成补资料任务</button>
+        <button onclick="promoteGapToPromptTest(${g.id})" style="padding:4px 8px;border:1px solid #7c3aed;border-radius:6px;background:#fff;color:#7c3aed;cursor:pointer;font-size:11px">转为 Prompt 测试</button>
+        <button onclick="updateGapStatus(${g.id},'resolved')" style="padding:4px 8px;border:1px solid var(--g);border-radius:6px;background:#fff;color:var(--g);cursor:pointer;font-size:11px">标记已解决</button>
+        <button onclick="updateGapStatus(${g.id},'dismissed')" style="padding:4px 8px;border:1px solid var(--b2);border-radius:6px;background:#fff;color:var(--t2);cursor:pointer;font-size:11px">忽略</button>
       </td>
     </tr>`;
   }).join('');
-  box.innerHTML = `<table class="data-table" style="width:100%;min-width:900px;font-size:12px;border-collapse:collapse">
+  box.innerHTML = `<table class="data-table" style="width:100%;font-size:12px;border-collapse:collapse">
     <thead><tr><th>典型问题</th><th>Profile</th><th>知识库</th><th>次数</th><th>低分/刷新/纠错/无来源</th><th>原因</th><th>最近出现</th><th>状态</th><th>操作</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
 }

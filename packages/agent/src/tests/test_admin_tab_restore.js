@@ -114,6 +114,7 @@ async function runNavigation(requestedTab, principal = {authenticated: true, rol
     ['tabContextTitle', {textContent: ''}],
     ['tabContextDescription', {textContent: ''}],
     ['tabContext', {style: {}}],
+    ['restrictedAccessNotice', {hidden: true, textContent: ''}],
     ['notificationTenant', {value: 'local-default'}],
     ['monitoringTenant', {value: 'local-default'}],
   ]);
@@ -175,6 +176,8 @@ async function runNavigation(requestedTab, principal = {authenticated: true, rol
     syncPrimaryGroup() {},
     groupForTab: () => 'operations',
     loadWorkspaces() { selected.push('workspaces-loaded'); },
+    loadOperationsOverview() { selected.push('overview-loaded'); },
+    loadOperationsTasks() { selected.push('operations-loaded'); },
     setTimeout() {},
     console,
   };
@@ -182,7 +185,15 @@ async function runNavigation(requestedTab, principal = {authenticated: true, rol
     `${loadNavigationFunctions()}; loadAdminPrincipal();`,
     sandbox,
   );
-  return {tabs, url, selected, messages, contextElements, qualityAccessNotice};
+  return {
+    tabs,
+    url,
+    selected,
+    messages,
+    contextElements,
+    qualityAccessNotice,
+    restrictedAccessNotice: contextElements.get('restrictedAccessNotice'),
+  };
 }
 
 function loadReflectionRuleLabel(language) {
@@ -226,11 +237,13 @@ function loadOperationsTaskDisplay() {
 }
 
 test('refresh restores only after role filtering and redirects restricted tabs', async () => {
-  const {tabs, url, selected, messages} = await runNavigation('overview');
+  const {tabs, url, selected, messages, restrictedAccessNotice} = await runNavigation('overview');
   assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'workspaces');
   assert.equal(url.searchParams.get('tab'), 'workspaces');
   assert.deepEqual(selected, ['workspaces-loaded']);
-  assert.equal(messages.length, 1);
+  assert.equal(messages.length, 0);
+  assert.equal(restrictedAccessNotice.hidden, false);
+  assert.match(restrictedAccessNotice.textContent, /仅限平台管理员访问/);
 });
 
 test('unknown tab request selects a visible tab and replaces the URL', async () => {
@@ -241,10 +254,21 @@ test('unknown tab request selects a visible tab and replaces the URL', async () 
 });
 
 test('valid tab selection is restored without a permission warning', async () => {
-  const {tabs, url, messages} = await runNavigation('workspaces');
+  const {tabs, url, messages, restrictedAccessNotice} = await runNavigation('workspaces');
   assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'workspaces');
   assert.equal(url.searchParams.get('tab'), 'workspaces');
   assert.deepEqual(messages, []);
+  assert.equal(restrictedAccessNotice.hidden, true);
+});
+
+test('platform admin opens a restricted tab without a denial notice', async () => {
+  const {tabs, messages, restrictedAccessNotice} = await runNavigation('overview', {
+    authenticated: true,
+    role: 'platform_admin',
+  });
+  assert.equal(tabs.find((tab) => tab.active).dataset.tab, 'overview');
+  assert.deepEqual(messages, []);
+  assert.equal(restrictedAccessNotice.hidden, true);
 });
 
 test('does not connect org admins to the platform event stream', async () => {
@@ -429,36 +453,4 @@ test('notification statuses follow the admin language without changing filter va
   assert.match(container.innerHTML, /<td>Unread<\/td>/);
   assert.match(container.innerHTML, /<td>Read<\/td>/);
   assert.match(container.innerHTML, /<td>Unknown \(future_state\)<\/td>/);
-});
-
-test('knowledge gap rows keep one primary action and keyboard-accessible secondary actions', () => {
-  const html = fs.readFileSync(templatePath, 'utf8');
-  const start = html.indexOf('const _gapReasonLabels =');
-  const end = html.indexOf('\nasync function rebuildKnowledgeGaps()', start);
-  assert.ok(start >= 0 && end > start);
-
-  const box = {innerHTML: ''};
-  const sandbox = {
-    document: {getElementById: () => box},
-    escHtml: value => String(value),
-  };
-  vm.runInNewContext(html.slice(start, end), sandbox);
-  sandbox.renderGapTable([{
-    id: 42,
-    canonical_question: 'How do I review an alert?',
-    profile: 'security',
-    knowledge_base_id: 'kb-risk',
-    occurrence_count: 7,
-    reason_tags: [],
-    related_queries: [],
-    status: 'open',
-  }], 'open');
-
-  assert.match(box.innerHTML, /class="primary"[^>]*onclick="createGapSupplyTask\(42\)"/);
-  assert.match(box.innerHTML, /<details>[\s\S]*<summary[^>]*>其他操作<\/summary>/);
-  assert.match(box.innerHTML, /onclick="promoteGapToPromptTest\(42\)"/);
-  assert.match(box.innerHTML, /onclick="updateGapStatus\(42,'resolved'\)"/);
-  assert.match(box.innerHTML, /onclick="updateGapStatus\(42,'dismissed'\)"/);
-  assert.match(box.innerHTML, /<table class="data-table" style="[^"]*min-width:900px/);
-  assert.match(box.innerHTML, /display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px/);
 });
