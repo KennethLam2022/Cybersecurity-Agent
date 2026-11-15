@@ -376,3 +376,57 @@ test('monitoring task machine id is secondary to a readable title', () => {
     {title: '补充资料', sourceId: ''},
   );
 });
+
+test('notification statuses follow the admin language without changing filter values', async () => {
+  const html = fs.readFileSync(templatePath, 'utf8');
+  const start = html.indexOf('function notificationSeverityLabel(severity) {');
+  const end = html.indexOf('function toggleAllNotifications(checked) {', start);
+  assert.ok(start >= 0 && end > start);
+
+  const statusFilter = {value: 'all'};
+  const status = {textContent: ''};
+  const container = {innerHTML: ''};
+  const requests = [];
+  const sandbox = {
+    adminLanguage: 'zh-CN',
+    document: {
+      getElementById(id) {
+        return {
+          notificationTenant: {value: 'local-default'},
+          notificationStatusFilter: statusFilter,
+          notificationStatus: status,
+          notificationList: container,
+        }[id];
+      },
+    },
+    fetch: async url => {
+      requests.push(url);
+      return {
+        ok: true,
+        json: async () => ({
+          items: ['unread', 'read', 'future_state'].map((notificationStatus, index) => ({
+            id: index + 1,
+            severity: 'info',
+            title: `Notification ${index + 1}`,
+            body: '',
+            status: notificationStatus,
+          })),
+        }),
+      };
+    },
+    escHtml: value => String(value),
+  };
+  vm.runInNewContext(html.slice(start, end), sandbox);
+
+  await sandbox.loadNotifications();
+  assert.match(container.innerHTML, /<td>未读<\/td>/);
+  assert.match(container.innerHTML, /<td>已读<\/td>/);
+  assert.match(container.innerHTML, /<td>未知（future_state）<\/td>/);
+  assert.match(requests[0], /status=all/);
+
+  sandbox.adminLanguage = 'en-US';
+  await sandbox.loadNotifications();
+  assert.match(container.innerHTML, /<td>Unread<\/td>/);
+  assert.match(container.innerHTML, /<td>Read<\/td>/);
+  assert.match(container.innerHTML, /<td>Unknown \(future_state\)<\/td>/);
+});
