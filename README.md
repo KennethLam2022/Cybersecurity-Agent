@@ -315,3 +315,9 @@ temporary password. Cancelling either input leaves credentials unchanged.
 The success message is read-only; editing a message never changes a password.
 Self-service password changes require the current password and matching new
 password confirmation.
+After an administrator reset, business pages redirect to `/change-password`
+and business APIs return `403 PASSWORD_CHANGE_REQUIRED` until the user sets a
+different password. Recovery accepts the current password plus two matching new
+password entries. Completion revokes existing sessions and requires login again.
+The additive recovery-state table is initialized on startup; existing accounts
+remain unaffected unless explicitly reset or marked for recovery.
