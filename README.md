@@ -307,3 +307,11 @@ Cybersecurity Agent 是 Kenneth Lam 独立开发的开源项目。本项目代�
 - 项目依赖的第三方库、模型服务、字体和其他组件继续遵循各自适用的许可证或服务条款；修改或分发时应保留其版权与许可证信息。
 - 本仓库不附带网络安全法律法规、国家标准、行业标准、内部制度或其他知识库原文，也不附带 demo 数据。
 - 用户自行导入的文档、数据库、向量索引、模型和其他资料不自动属于本项目代码的版权范围。用户应自行确认这些资料的获取、复制、处理、分发和使用权限。
+
+### Password recovery
+
+Administrator password resets require matching confirmation for a supplied
+temporary password. Cancelling either input leaves credentials unchanged.
+The success message is read-only; editing a message never changes a password.
+Self-service password changes require the current password and matching new
+password confirmation.

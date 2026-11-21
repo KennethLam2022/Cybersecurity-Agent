@@ -453,7 +453,7 @@ async function changeMyPassword() {
     const password_confirm = window.prompt('请再次输入新密码');
     if (password_confirm === null) return;
     if (new_password !== password_confirm) { alert('两次输入的新密码不一致。'); return; }
-    const response = await fetch('/api/auth/password', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({current_password, new_password})});
+    const response = await fetch('/api/auth/password', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({current_password, new_password, password_confirm})});
     const data = await response.json();
     if (!response.ok) { alert(data.detail || '密码修改失败'); return; }
     alert('密码已修改，请重新登录。');

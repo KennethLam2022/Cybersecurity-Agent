@@ -889,6 +889,8 @@ def change_current_password(request: Request, data: dict = Body(...)):
     if not principal.authenticated:
         raise HTTPException(status_code=401, detail="需要登录")
     try:
+        if not data.get("new_password") or data.get("new_password") != data.get("password_confirm"):
+            raise HTTPException(status_code=400, detail="两次输入的新密码不一致")
         if not agent.memory.change_password(principal.user_id, data.get("current_password", ""), data.get("new_password", "")):
             raise HTTPException(status_code=400, detail="当前密码错误")
         agent.memory.log_audit(principal.tenant_id, principal.user_id, principal.agent_id,
@@ -1474,6 +1476,8 @@ def admin_reset_user_password(tenant_id: str, user_id: str, request: Request, da
     try:
         principal, tenant_id = _tenant_admin_scope(request, tenant_id)
         new_password = str(data.get("new_password") or "")
+        if new_password and new_password != data.get("password_confirm"):
+            raise HTTPException(status_code=400, detail="两次输入的新密码不一致")
         if not new_password:
             new_password = "Secure-" + secrets.token_urlsafe(8) + "9A"
         if not agent.memory.reset_user_password(tenant_id, user_id, new_password, principal.user_id):
