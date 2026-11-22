@@ -23,6 +23,7 @@ from routes_api_agent_eval import router as api_agent_eval_router
 from routes_api import router as api_router
 from routes_api_governance import router as api_p8_router
 from routes_admin_pages import router as admin_pages_router
+from password_recovery import recovery_response, router as recovery_router
 from auth import is_admin_route, is_platform_only_admin_route
 from app_state import agent
 from identity import (ADMIN_CSRF_COOKIE, ADMIN_SESSION_COOKIE, FRONT_SESSION_COOKIE,
@@ -114,6 +115,7 @@ _validate_security_configuration()
 app = FastAPI(title="安枢 SecureNexus", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 app.include_router(admin_pages_router)
+app.include_router(recovery_router)
 app.include_router(api_router)
 app.include_router(api_p8_router)
 app.include_router(api_eval_router)
@@ -129,6 +131,9 @@ async def csp_middleware(request: Request, call_next):
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """Authenticate administration through individual user sessions and RBAC."""
+    recovery = recovery_response(request, agent.memory)
+    if recovery is not None:
+        return _with_html_csp(recovery)
     unsafe = request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
     admin_context = uses_admin_session(request)
     cookie_session = bool(request.cookies.get(ADMIN_SESSION_COOKIE if admin_context else FRONT_SESSION_COOKIE))

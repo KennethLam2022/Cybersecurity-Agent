@@ -148,6 +148,11 @@ class ConversationMemory:
                     FOREIGN KEY (tenant_id) REFERENCES organizations(id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id, status);
+                CREATE TABLE IF NOT EXISTS password_change_requirements (
+                    user_id TEXT PRIMARY KEY,
+                    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                );
                 CREATE TABLE IF NOT EXISTS custom_roles (
                     id TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL,
@@ -2483,13 +2488,17 @@ class ConversationMemory:
 
     def change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
         self._validate_account_password(new_password, "新密码")
+        if current_password == new_password:
+            raise ValueError("新密码不能与当前密码相同")
         with sqlite3.connect(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT password_hash, tenant_id FROM users WHERE id=? AND status='active'", (user_id,)).fetchone()
             if not row or not self._password_matches(current_password or "", row[0]):
                 return False
             conn.execute("UPDATE users SET password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                          (self._password_hash(new_password), user_id))
             conn.execute("UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL", (user_id,))
+            conn.execute("DELETE FROM password_change_requirements WHERE user_id=?", (user_id,))
         self.log_audit(row[1], user_id, action="user.password.change", resource_type="user", resource_id=user_id)
         return True
 
@@ -2550,6 +2559,7 @@ class ConversationMemory:
     def reset_user_password(self, tenant_id: str, user_id: str, new_password: str, reset_by: str) -> bool:
         self._validate_account_password(new_password, "新密码")
         with sqlite3.connect(self._db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT email FROM users WHERE id=? AND tenant_id=? AND status!='deactivated'", (user_id, tenant_id)).fetchone()
             if not row:
                 return False
@@ -2559,8 +2569,30 @@ class ConversationMemory:
             # A password reset is an administrative recovery action. Clear the
             # old failed-login lock so the newly issued credential can be used.
             conn.execute("DELETE FROM login_attempts WHERE email=?", (row[0],))
+            conn.execute("""INSERT INTO password_change_requirements (user_id) VALUES (?)
+                ON CONFLICT(user_id) DO NOTHING""", (user_id,))
         self.log_audit(tenant_id, reset_by, "", "user.password.reset", "user", user_id, {"email": row[0]})
         return True
+
+    def require_password_change(self, user_id: str, requested_by: str) -> None:
+        """Require recovery for an existing account without replacing its password.
+
+        Args: user_id: Account ID; requested_by: Audited recovery operator.
+        Returns: None.
+        Raises: ValueError if the account is missing.
+        Example: memory.require_password_change("local-owner", "local-owner").
+        """
+        with sqlite3.connect(self._db_path) as conn:
+            row = conn.execute("SELECT tenant_id FROM users WHERE id=?", (user_id,)).fetchone()
+            if not row:
+                raise ValueError("用户不存在")
+            conn.execute("""INSERT INTO password_change_requirements (user_id) VALUES (?)
+                ON CONFLICT(user_id) DO NOTHING""", (user_id,))
+            conn.execute(
+                "UPDATE auth_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL",
+                (user_id,),
+            )
+        self.log_audit(row[0], requested_by, "", "user.password.change_required", "user", user_id)
 
     def purge_due_deleted_accounts(self) -> list[dict]:
         """Purge due personal data and return private document IDs for index cleanup."""
@@ -4511,7 +4543,8 @@ class ConversationMemory:
         with sqlite3.connect(self._db_path) as conn:
             row = conn.execute("""
                 SELECT s.id, s.user_id, s.tenant_id, s.agent_id, om.role, u.email, u.display_name,
-                       s.ip_address, s.user_agent, s.last_seen_at
+                       s.ip_address, s.user_agent, s.last_seen_at,
+                       EXISTS(SELECT 1 FROM password_change_requirements p WHERE p.user_id=u.id)
                 FROM auth_sessions s
                 JOIN users u ON u.id=s.user_id
                 JOIN organization_memberships om ON om.user_id=s.user_id AND om.tenant_id=s.tenant_id
@@ -4529,7 +4562,8 @@ class ConversationMemory:
         return {"session_id": row[0], "user_id": row[1], "tenant_id": row[2], "agent_id": row[3],
                 "role": row[4], "email": row[5], "display_name": row[6],
                 "ip_address": row[7] or "", "user_agent": row[8] or "",
-                "last_seen_at": self._utc_to_local(row[9] or "") if row[9] else ""}
+                "last_seen_at": self._utc_to_local(row[9] or "") if row[9] else "",
+                "password_change_required": bool(row[10])}
 
     def revoke_auth_session(self, token: str) -> None:
         token_hash = hashlib.sha256(str(token).encode("utf-8")).hexdigest()

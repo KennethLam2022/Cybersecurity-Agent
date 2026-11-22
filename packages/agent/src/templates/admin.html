@@ -2668,13 +2668,20 @@ async function reviewUserRegistration(userId, action) {
 }
 
 async function resetWorkspaceUserPassword(tenantId, userId) {
-  const newPassword = window.prompt('请输入新密码（留空则自动生成临时密码）', '') || '';
+  const newPassword = window.prompt('请输入临时密码（至少8位，含大小写字母和数字；留空自动生成）', '');
+  if (newPassword === null) return;
+  const passwordConfirm = newPassword ? window.prompt('请再次输入临时密码') : '';
+  if (passwordConfirm === null) return;
+  if (newPassword !== passwordConfirm) { showToast('两次输入的密码不一致，未重置', 'error'); return; }
   if (!window.confirm('确认重置该用户密码并撤销其现有会话？')) return;
-  const response = await fetch(`/api/admin/workspaces/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}/password-reset`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({new_password:newPassword})});
-  const data = await response.json();
-  if (!response.ok) { showToast(data.detail || '密码重置失败', 'error'); return; }
-  window.prompt('密码已重置，请通过安全渠道交付给用户。临时密码仅显示一次：', data.temporary_password);
-  showToast('密码已重置');
+  try {
+    const response = await fetch(`/api/admin/workspaces/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}/password-reset`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({new_password:newPassword, password_confirm:passwordConfirm})});
+    const data = await response.json();
+    if (!response.ok) { showToast(data.detail || '密码重置失败', 'error'); return; }
+    window.alert('密码已重置。用户下次登录必须修改密码。\n临时密码：' + data.temporary_password);
+    const me = await fetch('/api/auth/me');
+    if (me.status === 401) location.assign('/admin/login');
+  } catch (error) { showToast('未能确认重置结果，请检查网络后重新登录验证', 'error'); }
 }
 
 async function resetWorkspaceUserPasswordByPrompt(tenantId) {
